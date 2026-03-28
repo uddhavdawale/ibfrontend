@@ -1,56 +1,51 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { Link } from 'react-router-dom';
 import './App.css';
-import Login from './Login/Login';
+
 function App() {
-  const [step, setStep] = useState(1);
-  const [loginData, setLoginData] = useState({});
-
-  const nextStep = () => setStep(step + 1);
-  const prevStep = () => setStep(step - 1);
-
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1> Inventory <br></br>And Billing Platform</h1>
+    <div className="app-landing">
+      <header className="landing-header">
+        <div className="logo">
+          <span className="logo-icon">📦</span>
+          <h1>Inventory & Billing Platform</h1>
+        </div>
+        <p>Professional dashboard for inventory management & billing</p>
       </header>
-      <main>
-        {step === 1 && <LoanApplicationForm nextStep={nextStep} setLoginData={setLoginData} loginData={loginData} />}
-        {step === 2 && <NbfcMatching loanData={loanData} />} 
+
+      <main className="landing-main">
+        <div className="login-promo">
+          <h2>Get Started</h2>
+          <p>Login to access your dashboard</p>
+          <Link to="/login" className="cta-button">
+            Login Now →
+          </Link>
+        </div>
+
+        <div className="features">
+          <div className="feature">
+            <span>📊</span>
+            <h3>Real-time Dashboard</h3>
+            <p>Sales, inventory, and metrics at a glance</p>
+          </div>
+          <div className="feature">
+            <span>📦</span>
+            <h3>Inventory Management</h3>
+            <p>Track stock, reorder, and manage products</p>
+          </div>
+          <div className="feature">
+            <span>💰</span>
+            <h3>Billing & Payments</h3>
+            <p>Manage invoices and track payments</p>
+          </div>
+        </div>
       </main>
+
+      <footer className="landing-footer">
+        <p>&copy; 2026 Inventory & Billing Platform</p>
+      </footer>
     </div>
   );
 }
 
-function LoanApplicationForm({ nextStep, setLoginData, loginData }) {
-  const [formData, setFormData] = useState(loginData);
-
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-     setLoginData(formData);
-    nextStep();
-  };
-
-  return (
-    <div>
-      <h2>Loan Application</h2>
-      <form onSubmit={handleSubmit}>
-        <input name="name" placeholder="Full Name" onChange={handleChange} required />
-        <input name="pan" placeholder="PAN Number" onChange={handleChange} required />
-        <input name="phone" placeholder="Phone Number" onChange={handleChange} required />
-        <input name="loanAmount" type="number" placeholder="Loan Amount (₹)" onChange={handleChange} required />
-        <button type="submit">Next</button>
-      </form>
-    </div>
-  );
-}
-
-
-
-
-
-
-export default App
+export default App;
