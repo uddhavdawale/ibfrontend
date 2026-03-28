@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './Login.css';
+import { useNavigate } from 'react-router-dom';
 
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
@@ -10,6 +11,8 @@ const Login = ({ onLogin }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const navigate = useNavigate();
+  
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData({
@@ -25,7 +28,7 @@ const handleSubmit = async (e) => {
 
   try {
     console.log('🔄 Calling backend...');
-    const response = await fetch('/api/login', {  // or localhost:8080
+    const response = await fetch('http://localhost:8080/api/login', {  // or localhost:8080
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -48,7 +51,9 @@ const handleSubmit = async (e) => {
       // FORCE REDIRECT (temporary)
       localStorage.setItem('isAuthenticated', 'true');
       localStorage.setItem('user', JSON.stringify(userData));
-      window.location.href = '/dashboard';
+      //window.location.href = '/dashboard';
+      onLogin(userData);
+      return;
       
     } else {
       setError(data.message || 'Invalid credentials');

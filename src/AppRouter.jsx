@@ -4,8 +4,11 @@ import Dashboard from './Dashboard/DashboardEntry.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
 import Login from './Login/Login.jsx';
 import App from './App.jsx';
+import { useNavigate } from 'react-router-dom';
 
 const AppRoutes = () => {
+    //navigate hook for programmatic navigation
+    const navigate = useNavigate();
   // Proper Auth State (NOT hardcoded true)
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
@@ -41,7 +44,7 @@ const AppRoutes = () => {
     setUser(userData);
     localStorage.setItem('isAuthenticated', 'true');
     localStorage.setItem('user', JSON.stringify(userData));
-    window.location.href = '/dashboard';
+     navigate('/dashboard', { replace: true }); 
   };
 
   // Logout handler
@@ -49,7 +52,7 @@ const AppRoutes = () => {
     setIsAuthenticated(false);
     setUser(null);
     localStorage.clear();
-    window.location.href = '/login';
+    navigate('/login', { replace: true });
   };
 
   // Loading screen
