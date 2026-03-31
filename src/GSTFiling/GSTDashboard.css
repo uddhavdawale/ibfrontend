@@ -1,0 +1,20 @@
+.gst-dashboard { max-width: 1400px; margin: 0 auto; padding: 20px; font-family: 'Segoe UI', sans-serif; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+.stat-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
+.stat-card h3 { font-size: 2.5em; margin: 0; color: #2563eb; }
+.stat-card.warning h3 { color: #f59e0b; }
+.chart-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); height: 400px; }
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+.returns-table table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.returns-table th, .returns-table td { padding: 15px; text-align: left; border-bottom: 1px solid #eee; }
+.returns-table th { background: #f8fafc; font-weight: 600; }
+.status { padding: 4px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 500; }
+.status.Ready { background: #dcfce7; color: #166534; }
+.status.Draft { background: #fef3c7; color: #92400e; }
+.status.Filed { background: #dbeafe; color: #1e40af; }
+.quick-actions { display: flex; gap: 15px; flex-wrap: wrap; }
+button { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; }
+.primary { background: #2563eb; color: white; }
+.primary:hover { background: #1d4ed8; }
+@media (max-width: 768px) { .charts-grid { grid-template-columns: 1fr; } }
