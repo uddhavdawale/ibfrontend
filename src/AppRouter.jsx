@@ -7,6 +7,7 @@ import App from './App.jsx';
 import { useNavigate } from 'react-router-dom';
 import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
+import SignupPage from './Login/SignupPage.jsx';
 const AppRoutes = () => {
     //navigate hook for programmatic navigation
     const navigate = useNavigate();
@@ -113,7 +114,8 @@ const AppRoutes = () => {
       {/* CATCH-ALL → LOGIN */}
       <Route path="*" element={<Navigate to="/login" replace />} />
       <Route path="/billing" element={<BillingPage />} />
-      <Route path="/inventory" element={<BillingPage />} />
+      <Route path="/inventory" element={<InventoryPage />} />
+      <Route path="/signup" element={<SignupPage />} /> 
     </Routes>
   );
 };

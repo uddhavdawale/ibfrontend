@@ -78,9 +78,10 @@ const InventoryPage = () => {
     <div className="inventory-page">
       {/* Top Bar with Back Button */}
       <header className="page-header">
-        <button className="back-btn" onClick={() => navigate('/dashboard')}>
+        <button className="back-btn" onClick={() => navigate(-1)}>
           ← Back to Dashboard
         </button>
+        
         <div>
           <h1>Inventory Management</h1>
           <p>{filteredInventory.length} of {inventoryData.length} products</p>

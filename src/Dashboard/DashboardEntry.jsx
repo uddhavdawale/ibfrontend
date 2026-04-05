@@ -8,6 +8,7 @@ import GSTDashboard from '../GSTFiling/GSTDashboard';
 import './Dashboard.css';
 import InventoryPage from '../Inventory/Inventory';
 import BillingPage from '../Billing/BillingPage';
+import { useConfig } from '../hooks/useConfig';
 
 function Dashboard({ username, onLogout }) {
   // ALL YOUR EXISTING STATE (UNCHANGED)
@@ -17,6 +18,7 @@ function Dashboard({ username, onLogout }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const { config } = useConfig();
   const navigate = useNavigate();
 
   // Interactive Inventory Data (UNCHANGED)
@@ -257,6 +259,7 @@ function Dashboard({ username, onLogout }) {
       <div className="top-bar">
         <div className="logo">
           <span className="logo-icon">📦</span>
+            <span>{config?.shop?.name || 'InventoryPro'}</span>
           <span>IB</span>
         </div>
         <div className="top-search">

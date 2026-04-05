@@ -27,13 +27,16 @@ const handleSubmit = async (e) => {
   setError('');
 
   try {
+     const hashedPassword = btoa(formData.password); 
     console.log('🔄 Calling backend...');
+    //http://localhost:8080/api/login
+    //
     const response = await fetch('https://ibbackend-production.up.railway.app/api/login', {  // or localhost:8080
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         username: formData.username,
-        password: formData.password
+        password: hashedPassword 
       }),
     });
 
@@ -154,6 +157,19 @@ const handleSubmit = async (e) => {
         <div className="demo-info">
           <p><strong>Demo:</strong> admin / admin123</p>
         </div>
+
+         {/* 👈 NEW SIGNUP SECTION */}
+        <div className="signup-section">
+          <p className="signup-text">New to IB Platform?</p>
+          <button 
+            className="signup-btn"
+            type="button"
+            onClick={() => navigate('/signup')}
+          >
+            ➕ Create Retailer/Partner Account
+          </button>
+        </div>
+
 
         {/* Footer */}
         <div className="login-footer">
