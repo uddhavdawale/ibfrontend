@@ -1,100 +1,127 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import './InventoryPage.css'; // New CSS below
+import './InventoryPage.css';
 
 const InventoryPage = () => {
   const navigate = useNavigate();
   
-  // ALL YOUR INVENTORY STATE (Moved from Dashboard)
+  const [products, setProducts] = useState([]);
+  const [totalPages, setTotalPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
-
-  const [inventoryData, setInventoryData] = useState([
-    { id: 1, name: 'Shirt', qty: 12, min: 20, price: 299, category: 'Clothing' },
-    { id: 2, name: 'Jeans', qty: 8, min: 15, price: 799, category: 'Clothing' },
-    { id: 3, name: 'Laptop', qty: 5, min: 10, price: 45999, category: 'Electronics' },
-    { id: 4, name: 'Mouse', qty: 25, min: 10, price: 499, category: 'Electronics' },
-    { id: 5, name: 'Book', qty: 45, min: 50, price: 199, category: 'Stationery' },
-  ]);
-
-  // Filter/Search
-  const filteredInventory = inventoryData.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  // ALL YOUR FUNCTIONS (Unchanged)
-  const deleteItem = (id) => {
-    setInventoryData(prev => prev.filter(item => item.id !== id));
-    alert(`Product deleted! ID: ${id}`);
+  
+  const PAGE_SIZE = 5;
+  
+  const fetchProducts = async (page = currentPage, search = searchTerm) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        size: PAGE_SIZE.toString(),
+        search,
+        sortBy: 'id',
+        sortDir: 'desc'
+      });
+      
+      const response = await fetch(`http://localhost:8080/api/products?${params}`);
+      const data = await response.json();
+      
+      setProducts(data.content);
+      setTotalPages(data.totalPages);
+      setCurrentPage(data.number);
+    } catch (error) {
+      console.error('Fetch error:', error);
+    } finally {
+      setLoading(false);
+    }
   };
-
+  
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+  
+  const handleSearch = (term) => {
+    setSearchTerm(term);
+    setCurrentPage(0);
+    fetchProducts(0, term);
+  };
+  
+  const goToPage = (page) => {
+    fetchProducts(page);
+  };
+  
+  const saveProduct = async (e, isEdit = false) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    
+    const product = {
+      name: formData.get('name'),
+      sku: formData.get('sku'),
+      quantity: parseInt(formData.get('quantity')),
+      minStock: parseInt(formData.get('minStock') || 0),
+      price:  parseFloat(formData.get('price') ? parseFloat(formData.get('price')) : 0)
+    };
+    
+    try {
+      let response;
+      if (isEdit && editingItem) {
+        response = await fetch(`http://localhost:8080/api/products/${editingItem.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(product)
+        });
+      } else {
+        response = await fetch('http://localhost:8080/api/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(product)
+        });
+      }
+      
+      if (response.ok) {
+        fetchProducts(currentPage, searchTerm);
+        setShowAddModal(false);
+        setEditingItem(null);
+        e.target.reset();
+      }
+    } catch (error) {
+      alert('Save failed');
+    }
+  };
+  
+  const deleteItem = async (id) => {
+    if (confirm('Delete product?')) {
+      await fetch(`http://localhost:8080/api/products/${id}`, { method: 'DELETE' });
+      fetchProducts(currentPage, searchTerm);
+    }
+  };
+  
   const editItem = (item) => {
     setEditingItem(item);
     setShowAddModal(true);
   };
 
-  const reorderItem = (item) => {
-    setInventoryData(prev =>
-      prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 50 } : i)
-    );
-    alert(`Reordered 50 units of ${item.name}`);
-  };
-
-  const addProduct = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const newProduct = {
-      id: Date.now(),
-      name: formData.get('name'),
-      qty: parseInt(formData.get('qty')),
-      min: parseInt(formData.get('min')),
-      price: parseInt(formData.get('price')),
-      category: formData.get('category')
-    };
-    setInventoryData(prev => [newProduct, ...prev]);
-    setShowAddModal(false);
-    e.target.reset();
-  };
-
-  const updateProduct = (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const updated = {
-      ...editingItem,
-      name: formData.get('name'),
-      qty: parseInt(formData.get('qty')),
-      min: parseInt(formData.get('min')),
-      price: parseInt(formData.get('price')),
-      category: formData.get('category')
-    };
-    setInventoryData(prev => prev.map(item => item.id === editingItem.id ? updated : item));
-    setShowAddModal(false);
-    setEditingItem(null);
-  };
-
   return (
     <div className="inventory-page">
-      {/* Top Bar with Back Button */}
       <header className="page-header">
         <button className="back-btn" onClick={() => navigate(-1)}>
           ← Back to Dashboard
         </button>
-        
         <div>
-          <h1>Inventory Management</h1>
-          <p>{filteredInventory.length} of {inventoryData.length} products</p>
+          <h1>📦 Inventory Management</h1>
+          <p>{products.length} of {totalPages * PAGE_SIZE} products</p>
         </div>
       </header>
 
-      {/* Search & Add */}
       <div className="inventory-controls">
         <input 
           type="text" 
-          placeholder="🔍 Search products..." 
+          placeholder="🔍 Search name/SKU..." 
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={(e) => handleSearch(e.target.value)}
           className="search-input"
         />
         <button className="add-btn primary" onClick={() => setShowAddModal(true)}>
@@ -102,34 +129,36 @@ const InventoryPage = () => {
         </button>
       </div>
 
-      {/* Inventory Table */}
+      {loading && <div className="loading">Loading products...</div>}
+
       <div className="table-container">
         <table className="inventory-table">
           <thead>
             <tr>
+              <th>ID</th>
               <th>Product</th>
+              <th>SKU</th>
               <th>Qty</th>
-              <th>Min</th>
+              <th>Min Stock</th>
               <th>Price</th>
-              <th>Category</th>
+              <th>Created</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            {filteredInventory.map((item) => (
-              <tr key={item.id} className={item.qty < item.min ? 'low-stock' : ''}>
+            {products.map((item) => (
+              <tr key={item.id} className={item.quantity < item.minStock ? 'low-stock' : ''}>
+                <td>#{item.id}</td>
                 <td>{item.name}</td>
-                <td className={item.qty < item.min ? 'alert' : ''}>
-                  {item.qty} {item.qty < item.min && '⚠️'}
+                <td>{item.sku || '-'}</td>
+                <td className={item.quantity < item.minStock ? 'alert' : ''}>
+                  {item.quantity} {item.quantity < item.minStock && '⚠️'}
                 </td>
-                <td>{item.min}</td>
-                <td>₹{item.price.toLocaleString()}</td>
-                <td>
-                  <span className="category-tag">{item.category}</span>
-                </td>
+                <td>{item.minStock || 0}</td>
+                <td>₹{item.price?.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                <td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '-'}</td>
                 <td>
                   <button className="action-btn edit" onClick={() => editItem(item)}>✏️</button>
-                  <button className="action-btn reorder" onClick={() => reorderItem(item)}>🔄</button>
                   <button className="action-btn delete" onClick={() => deleteItem(item.id)}>🗑️</button>
                 </td>
               </tr>
@@ -138,20 +167,29 @@ const InventoryPage = () => {
         </table>
       </div>
 
-      {/* Modal (Unchanged) */}
+      <div className="pagination">
+        <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 0}>
+          ← Previous
+        </button>
+        <span>Page {currentPage + 1} of {totalPages}</span>
+        <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage + 1 >= totalPages}>
+          Next →
+        </button>
+      </div>
+
       {showAddModal && (
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>{editingItem ? 'Edit Product' : 'Add New Product'}</h3>
-            <form onSubmit={editingItem ? updateProduct : addProduct}>
-              <input name="name" defaultValue={editingItem?.name || ''} placeholder="Product Name" required />
-              <input name="qty" type="number" defaultValue={editingItem?.qty || ''} placeholder="Quantity" required />
-              <input name="min" type="number" defaultValue={editingItem?.min || ''} placeholder="Min Stock" required />
-              <input name="price" type="number" defaultValue={editingItem?.price || ''} placeholder="Price ₹" required />
-              <input name="category" defaultValue={editingItem?.category || ''} placeholder="Category" required />
+            <form onSubmit={(e) => saveProduct(e, !!editingItem)}>
+              <input name="name" defaultValue={editingItem?.name || ''} placeholder="Product Name *" required />
+              <input name="sku" defaultValue={editingItem?.sku || ''} placeholder="SKU (optional)" />
+              <input name="quantity" type="number" defaultValue={editingItem?.quantity || 0} placeholder="Quantity *" required min="0" />
+              <input name="minStock" type="number" defaultValue={editingItem?.minStock || ''} placeholder="Min Stock" min="0" />
+              <input name="price" type="number" step="0.01" defaultValue={editingItem?.price || ''} placeholder="Price ₹ *" required min="0" />
               <div className="modal-actions">
                 <button type="button" className="btn cancel" onClick={() => setShowAddModal(false)}>Cancel</button>
-                <button type="submit" className="btn primary">Save</button>
+                <button type="submit" className="btn primary">Save Product</button>
               </div>
             </form>
           </div>

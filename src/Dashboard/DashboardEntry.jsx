@@ -9,6 +9,7 @@ import './Dashboard.css';
 import InventoryPage from '../Inventory/Inventory';
 import BillingPage from '../Billing/BillingPage';
 import { useConfig } from '../hooks/useConfig';
+import SellPage from '../sell/SellPage';
 
 function Dashboard({ username, onLogout }) {
   // ALL YOUR EXISTING STATE (UNCHANGED)
@@ -246,7 +247,10 @@ function Dashboard({ username, onLogout }) {
         return <InventoryPage />;
       case 'billing':
         return <BillingPage />;
-      
+
+      case 'sell':  // 👈 NEW CASE
+        return <SellPage />;
+
       default:
         return null;
     }
@@ -338,6 +342,14 @@ function Dashboard({ username, onLogout }) {
               <span className="nav-icon">💰</span>
               <span>Billing</span>
             </button>
+
+             <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => setActiveTab('sell')}>
+              <span className="nav-icon">📋</span>
+              <span>Sell Orders</span>
+            </button>
+
+              
+
           </nav>
         </aside>
 

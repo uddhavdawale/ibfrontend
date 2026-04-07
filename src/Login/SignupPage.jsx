@@ -48,7 +48,7 @@ const SignupPage = () => {
         passwordHash: btoa(formData.password)  // Frontend prep
       };
       //http://localhost:8080/api/signup
-      //  
+      //  https://ibbackend-production.up.railway.app/api/signup
       const response = await fetch('https://ibbackend-production.up.railway.app/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

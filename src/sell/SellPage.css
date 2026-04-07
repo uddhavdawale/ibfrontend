@@ -1,0 +1,213 @@
+.sell-dashboard {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 28px;
+  color: #111827;
+}
+
+.btn-new-order {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.orders-list {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.list-header {
+  display: grid;
+  grid-template-columns: 120px 200px 120px 120px 100px 80px;
+  gap: 16px;
+  padding: 20px 24px;
+  background: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.order-row {
+  display: grid;
+  grid-template-columns: 120px 200px 120px 120px 100px 80px;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.order-row:hover {
+  background: #f9fafb;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-badge.paid { background: #dcfce7; color: #166534; }
+.status-badge.pending { background: #fef3c7; color: #92400e; }
+
+.detail-container {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 32px;
+}
+
+.back-to-list {
+  background: none;
+  border: 1px solid #d1d5db;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin-bottom: 24px;
+  cursor: pointer;
+}
+
+.detail-header {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 32px;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 2px solid #000;  /* 👈 BLACK BORDER */
+  background: white;              /* 👈 NO COLOR */
+}
+
+.invoice-meta h2 {
+  margin: 0 0 12px 0;
+  font-size: 32px;
+  font-weight: bold;              /* 👈 PURE BLACK */
+  color: #000 !important;         /* 👈 BLACK TEXT */
+  letter-spacing: -0.5px;
+}
+
+.meta-row {
+  display: flex;
+  gap: 24px;
+  color: #000;                    /* 👈 BLACK */
+  font-weight: 500;
+}
+
+.customer-info h3 {
+  margin: 0 0 8px 0;
+  color: #000 !important;         /* 👈 BLACK */
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.contact-details {
+  color: #333;                    /* 👈 DARK GRAY */
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.items-list table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+}
+
+.items-list th {
+  background: #f9fafb;
+  padding: 16px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.items-list td {
+  padding: 16px 12px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.order-totals {
+  background: #f9fafb;
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.totals-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px 32px;
+  font-size: 16px;
+}
+
+.grand-total-row {
+  grid-column: 1 / -1;
+  padding-top: 16px;
+  border-top: 2px solid #e5e7eb;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-share-whatsapp {
+  background: #25d366;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.btn-share-email {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.btn-print {
+  background: #6b7280;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+@media print {
+  .detail-header {
+    border-bottom: 2px solid #000 !important;
+    background: white !important;
+  }
+  .invoice-meta h2 {
+    color: #000 !important;
+  }
+}
