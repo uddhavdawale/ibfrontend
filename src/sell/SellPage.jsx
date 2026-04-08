@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './SellPage.css';
-import jsPDF from 'jspdf';
+//import jsPDF from 'jspdf';
 
 import html2canvas from 'html2canvas';
 
@@ -58,7 +58,7 @@ const SellPage = () => {
       ]
     }
   ];
-
+/*
 const generatePDF = async (order) => {
   // 👈 FIX: Import INSIDE function
   const { autoTable } = await import('jspdf-autotable');
@@ -176,7 +176,7 @@ Date: ${order.date}`;
   // Open email client
   window.location.href = emailUrl;
 };
-
+*/
 const printReceipt = async (order) => {
   const pdf = await generatePDF(order);
   pdf.save(`receipt_${order.invoiceNo}.pdf`);
