@@ -211,3 +211,95 @@
     color: #000 !important;
   }
 }
+
+/* Seller + customer info header */
+.detail-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* shop info on left, customer on right */
+  gap: 32px;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 2px solid #000;
+  background: white;
+  align-items: flex-start;
+}
+
+.invoice-shop-info h2 {
+  margin: 0 0 8px 0;
+  font-size: 32px;
+  font-weight: bold;
+  color: #000;
+  letter-spacing: -0.5px;
+}
+
+.invoice-shop-info p {
+  margin: 2px 0;
+  font-size: 12px;
+  color: #333;
+}
+
+.invoice-shop-info strong {
+  color: #000;
+}
+
+.invoice-customer-info {
+  font-size: 14px;
+  color: #333;
+}
+
+.invoice-customer-info div {
+  margin: 2px 0;
+}
+
+/* Status badge reuse */
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-badge.paid { background: #dcfce7; color: #166534; }
+.status-badge.pending { background: #fef3c7; color: #92400e; }
+
+/* Extra styles for dashboard *//* No border lines, table‑style content */
+.items-list table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+}
+
+.items-list th {
+  background: #f9fafb;
+  padding: 14px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  font-size: 12px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.items-list td {
+  padding: 12px 8px;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 12px;
+}
+
+/* Footer – no signature line, just text */
+.invoice-footer {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed #9ca3af;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.footer-notes,
+.footer-terms {
+  margin: 6px 0;
+}
+
+/* Keep your existing button styles */
+.btn-share-whatsapp { background: #25d366; }
+.btn-share-email   { background: #007bff; }
+.btn-print         { background: #6b7280; }

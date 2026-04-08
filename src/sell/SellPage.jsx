@@ -2,14 +2,14 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 
+// ✅ Dynamic PDF libs (no require, Vite‑safe)
 const generatePDF = async (order) => {
-  // ✅ Pure ESM dynamic imports (no require)
   const { jsPDF } = await import("jspdf");
   const { autoTable } = await import("jspdf-autotable");
 
   const pdf = new jsPDF("p", "mm", "a4");
 
-  // Header
+  // Shop header
   pdf.setFontSize(20);
   pdf.setFont("helvetica", "bold");
   pdf.text("IB ENTERPRISES", 20, 25);
@@ -19,8 +19,9 @@ const generatePDF = async (order) => {
   pdf.text("GSTIN: 27ABCDE1234F1Z5", 20, 33);
   pdf.text("Aurangabad, Maharashtra 431001", 20, 39);
   pdf.text("📞 +91 98765 43210", 20, 45);
+  pdf.text("✉️ sales@ibenterprises.com", 20, 51);
 
-  // Invoice Details
+  // Invoice details
   pdf.setFontSize(16);
   pdf.setFont("helvetica", "bold");
   pdf.text(`INVOICE #${order.invoiceNo}`, 20, 65);
@@ -28,14 +29,13 @@ const generatePDF = async (order) => {
   pdf.setFontSize(11);
   pdf.setFont("helvetica", "normal");
   pdf.text(`Date: ${order.date}`, 20, 75);
+
   pdf.text(`Customer: ${order.customer.name}`, 20, 85);
   pdf.text(`Phone: ${order.customer.phone}`, 20, 92);
   pdf.text(`Payment: ${order.paymentMethod}`, 20, 99);
 
-  // Items Table
-  const columns = [
-    ["S.No", "Description", "HSN", "Qty", "Rate", "GST%", "Amount"],
-  ];
+  // Items table
+  const columns = [["S.No", "Description", "HSN", "Qty", "Rate", "GST%", "Amount"]];
   const rows = order.items.map((item) => [
     item.sn.toString(),
     item.item,
@@ -100,9 +100,7 @@ const sendWhatsAppPDF = async (order) => {
   alert(
     `✅ PDF Downloaded!\n\n📱 Open WhatsApp → Attach → Select Downloads folder → Send!`
   );
-  const whatsappUrl = `https://wa.me/${
-    order.customer.phone
-  }?text=🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
+  const whatsappUrl = `https://wa.me/${order.customer.phone}?text=🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
   window.open(whatsappUrl, "_blank");
 };
 
@@ -118,9 +116,9 @@ Receipt for Invoice ${order.invoiceNo} attached.
 Grand Total: ₹${order.grandTotal.toLocaleString()}
 Date: ${order.date}`;
 
-  const emailUrl = `mailto:${
-    order.customer.email
-  }?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const emailUrl = `mailto:${order.customer.email}?subject=${encodeURIComponent(
+    subject
+  )}&body=${encodeURIComponent(body)}`;
 
   const link = document.createElement("a");
   link.href = URL.createObjectURL(pdfBlob);
@@ -136,14 +134,12 @@ const printReceipt = async (order) => {
 };
 
 // ===================================================================
-// Vercel‑safe, static mock data
+// Vercel‑ready static data (no network required for view)
 // ===================================================================
 const SellPage = () => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
-  const [printMode, setPrintMode] = useState(false);
 
-  // ✅ Static, in‑memory mock data (safe for Vercel & client‑only)
   const sellOrders = [
     {
       id: 1,
@@ -155,7 +151,7 @@ const SellPage = () => {
         email: "uddhavdawale2@gmail.com",
       },
       paymentMethod: "UPI (PhonePe)",
-      subtotal: 2597.00,
+      subtotal: 2597.0,
       totalGst: 73.5,
       grandTotal: 2670.5,
       status: "paid",
@@ -230,7 +226,7 @@ const SellPage = () => {
       date: "05-Apr-2026",
       customer: {
         name: "Priya Sharma",
-        phone: "+",
+        phone: "+911234567890",
         email: "priya@sharma.com",
       },
       paymentMethod: "Card",
@@ -252,31 +248,52 @@ const SellPage = () => {
     },
   ];
 
-  const OrderDetail = ({ order }) => (
+const OrderDetail = ({ order }) => {
+  const totalQty = order.items.reduce((sum, i) => sum + i.qty, 0);
+
+  return (
     <div className="order-detail">
+      {/* Keep your header exactly as‑is */}
       <div className="detail-header">
-        <div className="invoice-meta">
-          <h2>Invoice #{order.invoiceNo}</h2>
-          <div className="meta-row">
-            <span>Date: {order.date}</span>
-            <span>
-              Status:{" "}
-              <span className={`status ${order.status}`}>
-                {order.status.toUpperCase()}
-              </span>
+        <div className="invoice-shop-info">
+          <h2>IB ENTERPRISES</h2>
+          <p>GSTIN: 27ABCDE1234F1Z5</p>
+          <p>Aurangabad, Maharashtra 431001</p>
+          <p>📞 +91 98765 43210</p>
+          <p>✉️ sales@ibenterprises.com</p>
+          <p>
+            <strong>Invoice:</strong> {order.invoiceNo} |{" "}
+            <strong>Date:</strong> {order.date}
+          </p>
+        </div>
+
+        <div className="invoice-customer-info">
+          <div>
+            <strong>Customer:</strong> {order.customer.name}
+          </div>
+          {order.customer.phone && (
+            <div>
+              <strong>Phone:</strong> {order.customer.phone}
+            </div>
+          )}
+          {order.customer.email && (
+            <div>
+              <strong>Email:</strong> {order.customer.email}
+            </div>
+          )}
+          <div>
+            <strong>Payment Method:</strong> {order.paymentMethod}
+          </div>
+          <div>
+            <strong>Status:</strong>{" "}
+            <span className={`status-badge ${order.status}`}>
+              {order.status}
             </span>
           </div>
         </div>
-        <div className="customer-info">
-          <h3>{order.customer.name}</h3>
-          <div className="contact-details">
-            📞 {order.customer.phone} | ✉️ {order.customer.email}
-          </div>
-          <div>Payment: {order.paymentMethod}</div>
-        </div>
       </div>
 
-      {/* Items table */}
+      {/* Updated invoice table – no border lines, just grid */}
       <div className="items-list">
         <table>
           <thead>
@@ -286,41 +303,68 @@ const SellPage = () => {
               <th>HSN</th>
               <th>Qty</th>
               <th>Rate</th>
-              <th>GST</th>
-              <th>Total</th>
+              <th>Amount (₹)</th>
+              <th>GST (%)</th>
+              <th>GST (₹)</th>
+              <th>Total (₹)</th>
             </tr>
           </thead>
           <tbody>
-            {order.items.map((item) => (
-              <tr key={item.sn}>
-                <td>{item.sn}</td>
-                <td>{item.item}</td>
-                <td>{item.hsn}</td>
-                <td>{item.qty}</td>
-                <td>₹{item.rate.toFixed(2)}</td>
-                <td>{item.gst}%</td>
-                <td>₹{item.total.toFixed(2)}</td>
-              </tr>
-            ))}
+            {order.items.map((item) => {
+              const amount = item.rate * item.qty;
+              const gstValue = item.total - amount;
+              return (
+                <tr key={item.sn}>
+                  <td>{item.sn}</td>
+                  <td>{item.item}</td>
+                  <td>{item.hsn}</td>
+                  <td>{item.qty}</td>
+                  <td>₹{item.rate.toFixed(2)}</td>
+                  <td>₹{amount.toFixed(2)}</td>
+                  <td>{item.gst}%</td>
+                  <td>₹{gstValue.toFixed(2)}</td>
+                  <td>₹{item.total.toFixed(2)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* Totals */}
+      {/* Totals + GST summary */}
       <div className="order-totals">
         <div className="totals-grid">
-          <div>Subtotal:</div>
+          <div>Total Qty:</div>
+          <div>{totalQty}</div>
+
+          <div>Subtotal (₹):</div>
           <div>₹{order.subtotal.toLocaleString()}</div>
-          <div>GST Total:</div>
+
+          <div>GST Total (₹):</div>
           <div>₹{order.totalGst.toLocaleString()}</div>
+
           <div className="grand-total-row">
-            <strong>Grand Total:</strong>
+            <strong>Grand Total (₹):</strong>
             <div>₹{order.grandTotal.toLocaleString()}</div>
           </div>
         </div>
       </div>
 
-      {/* PDF / WhatsApp / Email buttons */}
+      {/* Simple footer – no signature line */}
+      <div className="invoice-footer">
+        <div className="footer-notes">
+          <strong>Notes:</strong>{" "}
+          {order.notes ||
+            "Goods sold are non‑returnable unless defective or as per shop policy."}
+        </div>
+        <div className="footer-terms">
+          <strong>Terms:</strong>{" "}
+          Payment due within {order.dueInDays || 7} days. Late payments may
+          attract interest as per government guidelines.
+        </div>
+      </div>
+
+      {/* Action buttons – unchanged */}
       <div className="action-buttons">
         <button
           className="btn-share-whatsapp"
@@ -328,71 +372,66 @@ const SellPage = () => {
         >
           📱 WhatsApp PDF
         </button>
-
         <button
           className="btn-share-email"
           onClick={() => activeOrder && sendEmailPDF(activeOrder)}
         >
           ✉️ Email PDF
         </button>
-
-        <button className="btn-print" onClick={() => printReceipt(activeOrder)}>
+        <button
+          className="btn-print"
+          onClick={() => printReceipt(activeOrder)}
+        >
           💾 Download PDF
         </button>
       </div>
     </div>
   );
-
-  const printInvoice = (order) => {
-    setPrintMode(true);
-    window.print();
-    setPrintMode(false);
-  };
+};
 
   return (
-    <div className={`sell-dashboard ${printMode ? "print-mode" : ""}`}>
+    <div className="sell-dashboard">
       <div className="page-header">
         <h1>📋 Sell Orders ({sellOrders.length})</h1>
-        <button className="btn-new-order" onClick={() => navigate("/billing")}>
+        <button
+          className="btn-new-order"
+          onClick={() => navigate("/billing")}
+        >
           ➕ New Order
         </button>
       </div>
 
-      {/* Order list (non‑print) */}
-      {!printMode && (
-        <div className="orders-list">
-          <div className="list-header">
-            <span>Recent Orders</span>
-            <span>Customer</span>
-            <span>Amount</span>
-            <span>Date</span>
-            <span>Status</span>
-            <span>Actions</span>
-          </div>
-
-          {sellOrders.map((order) => (
-            <div
-              key={order.id}
-              className="order-row"
-              onClick={() => setActiveOrder(order)}
-            >
-              <span>#{order.invoiceNo}</span>
-              <span>{order.customer.name}</span>
-              <span>₹{order.grandTotal.toLocaleString()}</span>
-              <span>{order.date}</span>
-              <span>
-                <span className={`status-badge ${order.status}`}>
-                  {order.status}
-                </span>
-              </span>
-              <span>👁️</span>
-            </div>
-          ))}
+      <div className="orders-list">
+        <div className="list-header">
+          <span>Recent Orders</span>
+          <span>Customer</span>
+          <span>Amount</span>
+          <span>Date</span>
+          <span>Status</span>
+          <span>Actions</span>
         </div>
-      )}
 
-      {/* Order detail view */}
-      {activeOrder && !printMode && (
+        {sellOrders.map((order) => (
+          <div
+            key={order.id}
+            className="order-row"
+            onClick={() => setActiveOrder(order)}
+          >
+            <span>#{order.invoiceNo}</span>
+            <span>{order.customer.name}</span>
+            <span>₹{order.grandTotal.toLocaleString()}</span>
+            <span>{order.date}</span>
+            <span>
+              <span className={`status-badge ${order.status}`}>
+                {order.status}
+              </span>
+            </span>
+            <span>👁️</span>
+          </div>
+        ))}
+      </div>
+
+      {activeOrder && (
         <div className="detail-container">
           <button
             className="back-to-list"
@@ -403,9 +442,6 @@ const SellPage = () => {
           <OrderDetail order={activeOrder} />
         </div>
       )}
-
-      {/* Print‑only view */}
-      {printMode && activeOrder && <OrderDetail order={activeOrder} />}
     </div>
   );
 };
