@@ -26,7 +26,7 @@ const InventoryPage = () => {
         sortDir: 'desc'
       });
       
-      const response = await fetch(`http://localhost:8080/api/products?${params}`);
+      const response = await fetch(`https://ibbackend-production.up.railway.app/api/products?${params}`);
       const data = await response.json();
       
       setProducts(data.content);
@@ -74,7 +74,7 @@ const InventoryPage = () => {
           body: JSON.stringify(product)
         });
       } else {
-        response = await fetch('http://localhost:8080/api/products', {
+        response = await fetch('https://ibfrontendlive.vercel.app/api/products', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(product)
@@ -94,7 +94,7 @@ const InventoryPage = () => {
   
   const deleteItem = async (id) => {
     if (confirm('Delete product?')) {
-      await fetch(`http://localhost:8080/api/products/${id}`, { method: 'DELETE' });
+      await fetch(`https://ibbackend-production.up.railway.app/api/products/${id}`, { method: 'DELETE' });
       fetchProducts(currentPage, searchTerm);
     }
   };
