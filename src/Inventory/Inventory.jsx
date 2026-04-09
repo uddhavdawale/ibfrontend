@@ -74,7 +74,7 @@ const InventoryPage = () => {
           body: JSON.stringify(product)
         });
       } else {
-        response = await fetch('https://ibfrontendlive.vercel.app/api/products', {
+        response = await fetch('https://ibbackend-production.up.railway.app/api/products', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(product)
