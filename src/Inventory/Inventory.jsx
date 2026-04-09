@@ -68,7 +68,7 @@ const InventoryPage = () => {
     try {
       let response;
       if (isEdit && editingItem) {
-        response = await fetch(`https://ibfrontendlive.vercel.app/api/products/${editingItem.id}`, {
+        response = await fetch(`https://ibbackend-production.up.railway.app/api/products/${editingItem.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(product)
