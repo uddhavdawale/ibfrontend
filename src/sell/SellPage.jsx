@@ -4,6 +4,7 @@ import "./SellPage.css";
 
 // ✅ Dynamic PDF libs (no require, Vite‑safe)
 const generatePDF = async (order) => {
+  {/* comment added 4* */}
   const { jsPDF } = await import("jspdf");
   const { autoTable } = await import("jspdf-autotable");
 
