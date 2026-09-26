@@ -14,6 +14,7 @@ function App() {
 
   return (
     <div className="App">
+      {/* comment added 1* */}
       <header className="App-header">
         <h1>Inventory & <br />Billing Platform</h1>
         <p>Stock Management | Billing | Reports</p>

@@ -3,6 +3,7 @@ function SecurityCheck({ nextStep, prevStep, loginData }) {
   return (
     <div className="security-container">
       <h2>Security Check</h2>
+      {/* comment added 3* */}
       <p>Device verified for {loginData.email}</p>
       <button onClick={nextStep}>Continue</button>
       <button onClick={prevStep}>Back</button>
