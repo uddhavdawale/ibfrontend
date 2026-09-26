@@ -25,7 +25,7 @@ const InventoryPage = () => {
         sortBy: 'id',
         sortDir: 'desc'
       });
-      
+          {/* comment added 2* */}
       const response = await fetch(`https://ibbackend-production.up.railway.app/api/products?${params}`);
       const data = await response.json();
       
