@@ -10,11 +10,55 @@ import InventoryPage from '../Inventory/Inventory';
 import BillingPage from '../Billing/BillingPage';
 import { useConfig } from '../hooks/useConfig';
 import SellPage from '../sell/SellPage';
+import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
+
+const defaultMetrics = {
+  salesToday: 15420,
+  pendingPayments: 2500,
+  lowStock: 8,
+  ordersToday: 12
+};
+
+const defaultSalesData = [
+  { month: 'Jan', sales: 4000 },
+  { month: 'Feb', sales: 3000 },
+  { month: 'Mar', sales: 2000 },
+  { month: 'Apr', sales: 2780 },
+  { month: 'May', sales: 1890 },
+  { month: 'Jun', sales: 2390 }
+];
+
+const normalizeNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizeSalesSeries = (payload) => {
+  const items = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+  return items.map((entry, index) => ({
+    month: entry.month || entry.label || `M${index + 1}`,
+    sales: normalizeNumber(entry.sales ?? entry.amount ?? entry.total ?? 0, 0)
+  }));
+};
+
+const fetchJsonWithFallback = async (urls = []) => {
+  for (const url of urls) {
+    try {
+      const response = await apiFetch(url);
+      if (!response.ok) continue;
+      return await response.json();
+    } catch {
+      // continue to next URL
+    }
+  }
+  return null;
+};
 
 function Dashboard({ username, onLogout }) {
   // ALL YOUR EXISTING STATE (UNCHANGED)
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [language, setLanguage] = useState('EN');
+  const [theme, setTheme] = useState(() => localStorage.getItem('ib-theme') || 'light');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -31,22 +75,9 @@ function Dashboard({ username, onLogout }) {
     { id: 5, name: 'Book', qty: 45, min: 50, price: 199, category: 'Stationery' },
   ]);
 
-  // Metrics (UNCHANGED)
-  const [metrics, setMetrics] = useState({
-    salesToday: 15420,
-    pendingPayments: 2500,
-    lowStock: 8,
-    ordersToday: 12
-  });
-
-  const salesData = [
-    { month: 'Jan', sales: 4000 },
-    { month: 'Feb', sales: 3000 },
-    { month: 'Mar', sales: 2000 },
-    { month: 'Apr', sales: 2780 },
-    { month: 'May', sales: 1890 },
-    { month: 'Jun', sales: 2390 },
-  ];
+  // Metrics (defaults matched to the UI contract when the backend is unavailable)
+  const [metrics, setMetrics] = useState(defaultMetrics);
+  const [salesData, setSalesData] = useState(defaultSalesData);
 
   const filteredInventory = inventoryData.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -54,6 +85,11 @@ function Dashboard({ username, onLogout }) {
   );
 
   // ALL YOUR EXISTING EFFECTS & FUNCTIONS (UNCHANGED - just removed duplicate useEffect)
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('ib-theme', theme);
+  }, [theme]);
+
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (showProfileMenu && !event.target.closest('.user-profile')) {
@@ -65,14 +101,42 @@ function Dashboard({ username, onLogout }) {
   }, [showProfileMenu]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setMetrics(prev => ({
-        ...prev,
-        salesToday: prev.salesToday + Math.floor(Math.random() * 100),
-        ordersToday: prev.ordersToday + Math.floor(Math.random() * 2)
-      }));
-    }, 5000);
-    return () => clearInterval(interval);
+    let active = true;
+
+    const loadDashboardData = async () => {
+      try {
+        const summary = await fetchJsonWithFallback([
+          API_ENDPOINTS.dashboardSummary,
+          `${API_BASE_URL}/api/dashboard`,
+          `${API_BASE_URL}/api/metrics`
+        ]);
+
+        if (summary && active) {
+          setMetrics({
+            salesToday: normalizeNumber(summary.salesToday ?? summary.sales ?? 0, defaultMetrics.salesToday),
+            pendingPayments: normalizeNumber(summary.pendingPayments ?? summary.pending ?? 0, defaultMetrics.pendingPayments),
+            lowStock: normalizeNumber(summary.lowStock ?? summary.lowStockCount ?? 0, defaultMetrics.lowStock),
+            ordersToday: normalizeNumber(summary.ordersToday ?? summary.orders ?? 0, defaultMetrics.ordersToday)
+          });
+        }
+
+        const sales = await fetchJsonWithFallback([
+          API_ENDPOINTS.salesLastSixMonths
+        ]);
+
+        if (sales && active) {
+          const normalizedSales = normalizeSalesSeries(sales);
+          if (normalizedSales.length > 0) {
+            setSalesData(normalizedSales);
+          }
+        }
+      } catch {
+        // Keep the safe, preconfigured mock values if the backend is unavailable.
+      }
+    };
+
+    loadDashboardData();
+    return () => { active = false; };
   }, []);
 
   // ALL YOUR EXISTING FUNCTIONS (UNCHANGED)
@@ -258,7 +322,7 @@ function Dashboard({ username, onLogout }) {
 
   // YOUR EXISTING RETURN (ONLY SIDEBAR UPDATED)
   return (
-    <div className="dashboard">
+    <div className={`dashboard theme-${theme}`}>
       {/* TOP BAR - UNCHANGED */}
       <div className="top-bar">
         <div className="logo">
@@ -279,6 +343,12 @@ function Dashboard({ username, onLogout }) {
             <option>EN</option>
             <option>MR</option>
             <option>HI</option>
+          </select>
+
+          <select className="theme-select" value={theme} onChange={(e) => setTheme(e.target.value)}>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="aurora">Aurora</option>
           </select>
           
           <div className="user-profile">

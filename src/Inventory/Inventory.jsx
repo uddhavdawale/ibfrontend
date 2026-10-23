@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './InventoryPage.css';
+import { API_ENDPOINTS, apiFetch } from '../Config/api';
+import logger from '../utils/logger';
 
 const InventoryPage = () => {
   const navigate = useNavigate();
@@ -13,27 +15,43 @@ const InventoryPage = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   
-  const PAGE_SIZE = 5;
+  const PAGE_SIZE = 10;
+
+  const normalizePage = (page, fallback = 0) => {
+    const nextPage = Number(page);
+    if (!Number.isFinite(nextPage) || nextPage < 0) return fallback;
+    return Math.floor(nextPage);
+  };
   
   const fetchProducts = async (page = currentPage, search = searchTerm) => {
+    const requestedPage = normalizePage(page, 0);
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        page: page.toString(),
+        page: requestedPage.toString(),
         size: PAGE_SIZE.toString(),
-        search,
+        search: search || '',
         sortBy: 'id',
         sortDir: 'desc'
       });
-          {/* comment added 2* */}
-      const response = await fetch(`https://ibbackend-production.up.railway.app/api/products?${params}`);
+      const response = await apiFetch(`${API_ENDPOINTS.products}?${params}`);
+      if (!response.ok) {
+        throw new Error(`Could not load products (${response.status})`);
+      }
       const data = await response.json();
-      
-      setProducts(data.content);
-      setTotalPages(data.totalPages);
-      setCurrentPage(data.number);
+      const pagePayload = data && typeof data === 'object' && 'page' in data ? data.page : data;
+      const pageNumber = normalizePage(pagePayload?.number ?? requestedPage, requestedPage);
+      const totalPages = normalizePage(pagePayload?.totalPages ?? 0, 0);
+      const safeTotalPages = totalPages > 0 ? totalPages : 0;
+
+      setProducts(Array.isArray(data.content) ? data.content : []);
+      setTotalPages(safeTotalPages);
+      setCurrentPage(Math.min(pageNumber, safeTotalPages > 0 ? safeTotalPages - 1 : 0));
     } catch (error) {
-      console.error('Fetch error:', error);
+      logger.error('Product fetch failed', error);
+      setProducts([]);
+      setTotalPages(0);
+      setCurrentPage(0);
     } finally {
       setLoading(false);
     }
@@ -50,51 +68,59 @@ const InventoryPage = () => {
   };
   
   const goToPage = (page) => {
-    fetchProducts(page);
+    const nextPage = normalizePage(page, currentPage);
+    if (nextPage < 0 || (totalPages > 0 && nextPage >= totalPages)) {
+      return;
+    }
+    setCurrentPage(nextPage);
+    fetchProducts(nextPage, searchTerm);
   };
   
-  const saveProduct = async (e, isEdit = false) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    
-    const product = {
-      name: formData.get('name'),
-      sku: formData.get('sku'),
-      quantity: parseInt(formData.get('quantity')),
-      minStock: parseInt(formData.get('minStock') || 0),
-      price:  parseFloat(formData.get('price') ? parseFloat(formData.get('price')) : 0)
-    };
-    
-    try {
-      let response;
-      if (isEdit && editingItem) {
-        response = await fetch(`https://ibbackend-production.up.railway.app/api/products/${editingItem.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(product)
-        });
-      } else {
-        response = await fetch('https://ibbackend-production.up.railway.app/api/products', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(product)
-        });
-      }
-      
-      if (response.ok) {
-        fetchProducts(currentPage, searchTerm);
-        setShowAddModal(false);
-        setEditingItem(null);
-        e.target.reset();
-      }
-    } catch (error) {
-      alert('Save failed');
-    }
+const saveProduct = async (e, isEdit = false) => {
+  e.preventDefault();
+
+  const formData = new FormData(e.target);
+
+  const product = {
+    name: formData.get('name'),
+    sku: formData.get('sku'),
+    quantity: parseInt(formData.get('quantity') || 0),
+    minStock: parseInt(formData.get('minStock') || 0),
+    price: parseFloat(formData.get('price') || 0),
   };
+
+  try {
+    const response = await apiFetch(API_ENDPOINTS.products, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(product),
+    });
+
+    if (!response.ok) {
+      logger.warn('Product save rejected', { status: response.status });
+      alert(`Save failed: ${response.status}`);
+      return;
+    }
+
+    setShowAddModal(false);
+    setEditingItem(null);
+    e.target.reset();
+
+    fetchProducts(currentPage, searchTerm);
+  } catch (error) {
+    logger.error('Product save failed', error);
+    alert('Save failed');
+  }
+};
   
   const deleteItem = async (id) => {
     if (confirm('Delete product?')) {
-      await fetch(`https://ibbackend-production.up.railway.app/api/products/${id}`, { method: 'DELETE' });
+      const response = await apiFetch(API_ENDPOINTS.productById(id), {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error(`Delete failed (${response.status})`);
       fetchProducts(currentPage, searchTerm);
     }
   };
@@ -168,11 +194,11 @@ const InventoryPage = () => {
       </div>
 
       <div className="pagination">
-        <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 0}>
+        <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 0 || totalPages === 0}>
           ← Previous
         </button>
-        <span>Page {currentPage + 1} of {totalPages}</span>
-        <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage + 1 >= totalPages}>
+        <span>Page {Math.max(currentPage + 1, totalPages > 0 ? 1 : 0)} of {totalPages || 1}</span>
+        <button onClick={() => goToPage(currentPage + 1)} disabled={totalPages === 0 || currentPage + 1 >= totalPages}>
           Next →
         </button>
       </div>

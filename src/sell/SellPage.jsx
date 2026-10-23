@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
+import { API_BASE_URL, apiFetch } from "../Config/api";
 
 // ✅ Dynamic PDF libs (no require, Vite‑safe)
 const generatePDF = async (order) => {
@@ -8,7 +9,7 @@ const generatePDF = async (order) => {
   const { jsPDF } = await import("jspdf");
   const { autoTable } = await import("jspdf-autotable");
 
-  const pdf = new jsPDF("p", "mm", "a4");
+  const pdf = new jsPDF("p", "mm", "a4"); 
 
   // Shop header
   pdf.setFontSize(20);
@@ -134,120 +135,188 @@ const printReceipt = async (order) => {
   pdf.save(`receipt_${order.invoiceNo}.pdf`);
 };
 
-// ===================================================================
-// Vercel‑ready static data (no network required for view)
-// ===================================================================
+const fallbackSellOrders = [
+  {
+    id: 1,
+    invoiceNo: "INV-2026/001",
+    date: "07-Apr-2026",
+    customer: {
+      name: "Uddhav Dawale",
+      phone: "+919595934249",
+      email: "uddhavdawale2@gmail.com",
+    },
+    paymentMethod: "UPI (PhonePe)",
+    subtotal: 2597.0,
+    totalGst: 73.5,
+    grandTotal: 2670.5,
+    status: "paid",
+    items: [
+      {
+        sn: 1,
+        item: "Basmati Rice 5KG",
+        hsn: "1006",
+        qty: 4,
+        rate: 250.0,
+        gst: 5,
+        total: 1050.0,
+      },
+      {
+        sn: 2,
+        item: "Aashirvaad Atta 10KG",
+        hsn: "1101",
+        qty: 2,
+        rate: 450.0,
+        gst: 5,
+        total: 945.0,
+      },
+      {
+        sn: 3,
+        item: "Fortune Soya Oil 5L",
+        hsn: "1512",
+        qty: 3,
+        rate: 220.0,
+        gst: 18,
+        total: 602.0,
+      },
+    ],
+  },
+  {
+    id: 2,
+    invoiceNo: "INV-2026/002",
+    date: "06-Apr-2026",
+    customer: {
+      name: "Rajesh Patil",
+      phone: "+919595934249",
+      email: "uddhavdawale2@gmail.com",
+    },
+    paymentMethod: "Cash",
+    subtotal: 1845.0,
+    totalGst: 55.35,
+    grandTotal: 1900.35,
+    status: "paid",
+    items: [
+      {
+        sn: 1,
+        item: "Maida 5KG",
+        hsn: "1101",
+        qty: 3,
+        rate: 180.0,
+        gst: 5,
+        total: 567.0,
+      },
+      {
+        sn: 2,
+        item: "Sugar 10KG",
+        hsn: "1701",
+        qty: 2,
+        rate: 640.0,
+        gst: 5,
+        total: 1344.0,
+      },
+    ],
+  },
+  {
+    id: 3,
+    invoiceNo: "INV-2026/003",
+    date: "05-Apr-2026",
+    customer: {
+      name: "Priya Sharma",
+      phone: "+911234567890",
+      email: "priya@sharma.com",
+    },
+    paymentMethod: "Card",
+    subtotal: 1250.0,
+    totalGst: 112.5,
+    grandTotal: 1362.5,
+    status: "pending",
+    items: [
+      {
+        sn: 1,
+        item: "Detergent 1KG",
+        hsn: "3402",
+        qty: 5,
+        rate: 250.0,
+        gst: 18,
+        total: 1250.0,
+      },
+    ],
+  },
+];
+
+const normalizeInvoiceToOrder = (invoice, index = 0) => {
+  const items = Array.isArray(invoice.items) ? invoice.items : [];
+
+  const normalizedItems = items.map((item, itemIndex) => ({
+    sn: item.sn ?? itemIndex + 1,
+    item: item.name ?? item.item ?? `Item ${itemIndex + 1}`,
+    hsn: item.hsn ?? "9999",
+    qty: Number(item.qty ?? 0),
+    rate: Number(item.price ?? item.rate ?? 0),
+    gst: Number(item.gstRate ?? item.gst ?? 0),
+    total: Number(item.total ?? item.amount ?? (Number(item.price ?? item.rate ?? 0) * Number(item.qty ?? 0))),
+  }));
+
+  const subtotal = Number(invoice.subtotal ?? normalizedItems.reduce((sum, item) => sum + item.rate * item.qty, 0));
+  const totalGst = Number(invoice.totalGst ?? normalizedItems.reduce((sum, item) => sum + (item.rate * item.qty * item.gst) / 100, 0));
+  const grandTotal = Number(invoice.grandTotal ?? invoice.total ?? invoice.amount ?? subtotal + totalGst);
+
+  return {
+    id: invoice.id ?? invoice.invoiceId ?? `${invoice.invoiceNo ?? "INV"}-${index}`,
+    invoiceNo: invoice.invoiceNo ?? invoice.invoice_number ?? `INV-${index + 1}`,
+    date: invoice.date ?? invoice.createdAt ?? invoice.invoiceDate ?? "N/A",
+    customer: {
+      name: invoice.customerName ?? invoice.customer?.name ?? "Walk-in Customer",
+      phone: invoice.customerPhone ?? invoice.customer?.phone ?? "",
+      email: invoice.customerEmail ?? invoice.customer?.email ?? "",
+    },
+    paymentMethod: invoice.paymentMethod ?? "Cash",
+    subtotal,
+    totalGst,
+    grandTotal,
+    status: invoice.status ?? "paid",
+    items: normalizedItems,
+    notes: invoice.notes ?? "",
+    dueInDays: invoice.dueInDays ?? 7,
+  };
+};
+
 const SellPage = () => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
+  const [sellOrders, setSellOrders] = useState(fallbackSellOrders);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const sellOrders = [
-    {
-      id: 1,
-      invoiceNo: "INV-2026/001",
-      date: "07-Apr-2026",
-      customer: {
-        name: "Uddhav Dawale",
-        phone: "+919595934249",
-        email: "uddhavdawale2@gmail.com",
-      },
-      paymentMethod: "UPI (PhonePe)",
-      subtotal: 2597.0,
-      totalGst: 73.5,
-      grandTotal: 2670.5,
-      status: "paid",
-      items: [
-        {
-          sn: 1,
-          item: "Basmati Rice 5KG",
-          hsn: "1006",
-          qty: 4,
-          rate: 250.0,
-          gst: 5,
-          total: 1050.0,
-        },
-        {
-          sn: 2,
-          item: "Aashirvaad Atta 10KG",
-          hsn: "1101",
-          qty: 2,
-          rate: 450.0,
-          gst: 5,
-          total: 945.0,
-        },
-        {
-          sn: 3,
-          item: "Fortune Soya Oil 5L",
-          hsn: "1512",
-          qty: 3,
-          rate: 220.0,
-          gst: 18,
-          total: 602.0,
-        },
-      ],
-    },
-    {
-      id: 2,
-      invoiceNo: "INV-2026/002",
-      date: "06-Apr-2026",
-      customer: {
-        name: "Rajesh Patil",
-        phone: "+919595934249",
-        email: "uddhavdawale2@gmail.com",
-      },
-      paymentMethod: "Cash",
-      subtotal: 1845.0,
-      totalGst: 55.35,
-      grandTotal: 1900.35,
-      status: "paid",
-      items: [
-        {
-          sn: 1,
-          item: "Maida 5KG",
-          hsn: "1101",
-          qty: 3,
-          rate: 180.0,
-          gst: 5,
-          total: 567.0,
-        },
-        {
-          sn: 2,
-          item: "Sugar 10KG",
-          hsn: "1701",
-          qty: 2,
-          rate: 640.0,
-          gst: 5,
-          total: 1344.0,
-        },
-      ],
-    },
-    {
-      id: 3,
-      invoiceNo: "INV-2026/003",
-      date: "05-Apr-2026",
-      customer: {
-        name: "Priya Sharma",
-        phone: "+911234567890",
-        email: "priya@sharma.com",
-      },
-      paymentMethod: "Card",
-      subtotal: 1250.0,
-      totalGst: 112.5,
-      grandTotal: 1362.5,
-      status: "pending",
-      items: [
-        {
-          sn: 1,
-          item: "Detergent 1KG",
-          hsn: "3402",
-          qty: 5,
-          rate: 250.0,
-          gst: 18,
-          total: 1250.0,
-        },
-      ],
-    },
-  ];
+  useEffect(() => {
+    const fetchSellOrders = async () => {
+      try {
+        const response = await apiFetch(`${API_BASE_URL}/api/invoices?page=0&size=50`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const invoices = Array.isArray(data) ? data : data.content || data.invoices || data.data || [];
+        const normalizedOrders = invoices.map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
+
+        if (normalizedOrders.length > 0) {
+          normalizedOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
+          setSellOrders(normalizedOrders);
+          setActiveOrder((current) => current ?? normalizedOrders[0]);
+        } else {
+          setSellOrders(fallbackSellOrders);
+        }
+      } catch (fetchError) {
+        console.error("Sell orders fetch failed:", fetchError);
+        setError("Unable to load live orders. Showing saved fallback data.");
+        setSellOrders(fallbackSellOrders);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSellOrders();
+  }, []);
 
 const OrderDetail = ({ order }) => {
   const totalQty = order.items.reduce((sum, i) => sum + i.qty, 0);
@@ -394,6 +463,8 @@ const OrderDetail = ({ order }) => {
     <div className="sell-dashboard">
       <div className="page-header">
         <h1>📋 Sell Orders ({sellOrders.length})</h1>
+        {error && <p className="error-text">{error}</p>}
+        {loading && <p className="loading-text">🔄 Loading live sell orders...</p>}
         <button
           className="btn-new-order"
           onClick={() => navigate("/billing")}
@@ -416,7 +487,11 @@ const OrderDetail = ({ order }) => {
           <div
             key={order.id}
             className="order-row"
-            onClick={() => setActiveOrder(order)}
+            onClick={() =>
+              setActiveOrder((current) =>
+                current && current.id === order.id ? null : order
+              )
+            }
           >
             <span>#{order.invoiceNo}</span>
             <span>{order.customer.name}</span>

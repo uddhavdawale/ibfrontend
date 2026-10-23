@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './BillingPage.css';
+import logger from '../utils/logger';
+import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
 
 const BillingPage = () => {
   const navigate = useNavigate();
@@ -28,7 +30,7 @@ const BillingPage = () => {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const response = await fetch('https://ibbackend-production.up.railway.app/api/products?size=1000');
+        const response = await apiFetch(`${API_BASE_URL}/api/products?size=1000`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const data = await response.json();
@@ -39,11 +41,11 @@ const BillingPage = () => {
           price: parseFloat(product.price) || 0,
           hsn: product.hsn || '9999',
           gst: getGstSlab(parseFloat(product.price) || 0),
-          stock: product.quantity || 0
+          stock: product.ItemQty || 0
         }));
         setProducts(productsWithGst);
       } catch (error) {
-        console.error('Fetch products error:', error);
+        logger.error('Billing product fetch failed', error);
         // Fallback data
         setProducts([
           { id: 1, name: 'Shirt', hsn: '6109', price: 299, gst: 5, stock: 12 },
@@ -122,34 +124,58 @@ const BillingPage = () => {
   };
   
   // Generate invoice
-  const generateInvoice = () => {
+  const generateInvoice = async () => {
     if (cart.length === 0) {
       alert('Add items to cart first!');
       return;
     }
-    
-    const invoice = {
-      no: invoiceNo,
-      date: new Date().toLocaleDateString('en-IN'),
-      customer,
-      items: cart.map(item => ({
-        ...item,
-        itemGst: item.price * item.qty * item.gst / 100,
-        itemTotal: item.price * item.qty + (item.price * item.qty * item.gst / 100)
-      })),
-      subtotal,
-      gst: gstAmount,
-      total: grandTotal,
-      payment: paymentMethod
-    };
-    
-    console.log('Invoice:', invoice);
-    alert(`✅ Invoice ${invoiceNo} generated!\nTotal: ₹${grandTotal.toLocaleString()}`);
-    
-    // Reset form
-    setCart([]);
-    setCustomer({ name: '', phone: '', email: '' });
-    setInvoiceNo(generateInvoiceNo());
+
+    try {
+      const payload = {
+        customerName: customer.name || 'Walk-in Customer',
+        customerPhone: customer.phone || '0000000000',
+        paymentMethod,
+        items: cart.map((item) => ({
+          productId: item.id,
+          name: item.name,
+          sku: item.sku || '',
+          hsn: item.hsn || '9999',
+          gstRate: Number(item.gst) || 0,
+          price: Number(item.price) || 0,
+          qty: Number(item.qty) || 0,
+        }))
+      };
+
+      logger.info('Submitting invoice to backend', payload);
+      const response = await apiFetch(API_ENDPOINTS.invoices, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      let result;
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        result = await response.json();
+      } else {
+        result = await response.text();
+      }
+
+      if (!response.ok) {
+        throw new Error(typeof result === 'string' ? result : (result?.message || 'Invoice save failed'));
+      }
+
+      const generatedInvoiceNo = result?.invoiceNo || invoiceNo;
+      logger.info('Invoice generated and saved', result);
+      alert(`✅ Invoice ${generatedInvoiceNo} generated and saved!\nTotal: ₹${grandTotal.toLocaleString()}`);
+
+      setCart([]);
+      setCustomer({ name: '', phone: '', email: '' });
+      setInvoiceNo(generatedInvoiceNo);
+    } catch (error) {
+      logger.error('Invoice generation failed', error);
+      alert(`❌ ${error.message || 'Failed to generate invoice. Please try again.'}`);
+    }
   };
   
   if (loading) {

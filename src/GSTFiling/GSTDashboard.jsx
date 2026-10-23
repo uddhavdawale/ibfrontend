@@ -1,19 +1,38 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
 import './GSTDashboard.css';
+import logger from '../utils/logger';
+
+const normalizeNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const fetchJsonWithFallback = async (urls = []) => {
+  for (const url of urls) {
+    try {
+      const response = await apiFetch(url);
+      if (!response.ok) continue;
+      return await response.json();
+    } catch {
+      // continue to alternative endpoints
+    }
+  }
+  return null;
+};
 
 const GSTDashboard = () => {
   // Safe initial states with defaults
   const [period, setPeriod] = useState('monthly');
   const [returns, setReturns] = useState([]);
-  const [stats, setStats] = useState({ 
-    taxable: 0, 
-    taxPayable: 0, 
-    pending: 0 
+  const [stats, setStats] = useState({
+    taxable: 0,
+    taxPayable: 0,
+    pending: 0
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Mock data for offline development
   const mockReturns = [
     { id: 1, type: 'GSTR-1', period: 'Mar 2026', status: 'Ready', value: 1500000, tax: 90000, due: 'Apr 11' },
     { id: 2, type: 'GSTR-3B', period: 'Mar 2026', status: 'Draft', value: 1500000, tax: 90000, due: 'Apr 20' },
@@ -28,28 +47,47 @@ const GSTDashboard = () => {
       try {
         setLoading(true);
         setError(null);
-        
-        // Try API calls with fallback
-        const [statsRes, returnsRes] = await Promise.allSettled([
-          fetch(`/api/gst/stats`).then(r => r.ok ? r.json() : Promise.reject()),
-          fetch(`/api/gst/returns?period=${period}`).then(r => r.ok ? r.json() : Promise.reject())
+
+        const summaryPayload = await fetchJsonWithFallback([
+          API_ENDPOINTS.gstSummary,
+          `${API_BASE_URL}/api/gst/stats`,
+          `${API_BASE_URL}/api/gst/overview`
         ]);
 
-        if (statsRes.status === 'fulfilled') {
-          setStats(statsRes.value);
+        const filingsPayload = await fetchJsonWithFallback([
+          `${API_ENDPOINTS.gstFilings}?period=${period}`,
+          `${API_BASE_URL}/api/gst/returns?period=${period}`,
+          `${API_BASE_URL}/api/gst/filings?period=${period}`
+        ]);
+
+        if (summaryPayload) {
+          setStats({
+            taxable: normalizeNumber(summaryPayload.totalSales ?? summaryPayload.taxable ?? 0, mockStats.taxable),
+            taxPayable: normalizeNumber(summaryPayload.taxCollected ?? summaryPayload.taxPayable ?? 0, mockStats.taxPayable),
+            pending: normalizeNumber(summaryPayload.pendingFiling ?? summaryPayload.pending ?? 0, mockStats.pending)
+          });
         } else {
-          console.warn('Using mock stats (API not ready)');
+          logger.warn('GST summary API unavailable; using demo data');
           setStats(mockStats);
         }
 
-        if (returnsRes.status === 'fulfilled') {
-          setReturns(returnsRes.value);
+        if (filingsPayload) {
+          const rows = Array.isArray(filingsPayload) ? filingsPayload : Array.isArray(filingsPayload.data) ? filingsPayload.data : [];
+          setReturns(rows.map((item, index) => ({
+            id: item.id ?? index + 1,
+            type: item.type || item.name || 'GST Return',
+            period: item.month || item.period || 'N/A',
+            status: item.status || 'Pending',
+            value: normalizeNumber(item.amount ?? item.value ?? item.totalSales ?? 0, 0),
+            tax: normalizeNumber(item.taxCollected ?? item.tax ?? 0, 0),
+            due: item.submittedAt ? new Date(item.submittedAt).toLocaleDateString() : item.due || 'N/A'
+          })));
         } else {
-          console.warn('Using mock returns (API not ready)');
+          logger.warn('GST filings API unavailable; using demo data');
           setReturns(mockReturns);
         }
       } catch (err) {
-        console.error('GST API error:', err);
+        logger.error('GST API request failed', err);
         setError('Backend APIs coming soon - using demo data');
         setStats(mockStats);
         setReturns(mockReturns);
