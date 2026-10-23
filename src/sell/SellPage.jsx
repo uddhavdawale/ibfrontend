@@ -244,28 +244,60 @@ const fallbackSellOrders = [
 ];
 
 const normalizeInvoiceToOrder = (invoice, index = 0) => {
-  const items = Array.isArray(invoice.items) ? invoice.items : [];
+  const rawItems = Array.isArray(invoice.items)
+    ? invoice.items
+    : Array.isArray(invoice.lineItems)
+      ? invoice.lineItems
+      : Array.isArray(invoice.invoiceItems)
+        ? invoice.invoiceItems
+        : Array.isArray(invoice.products)
+          ? invoice.products
+          : Array.isArray(invoice.orderItems)
+            ? invoice.orderItems
+            : [];
 
-  const normalizedItems = items.map((item, itemIndex) => ({
-    sn: item.sn ?? itemIndex + 1,
-    item: item.name ?? item.item ?? `Item ${itemIndex + 1}`,
-    hsn: item.hsn ?? "9999",
-    qty: Number(item.qty ?? 0),
-    rate: Number(item.price ?? item.rate ?? 0),
-    gst: Number(item.gstRate ?? item.gst ?? 0),
-    total: Number(item.total ?? item.amount ?? (Number(item.price ?? item.rate ?? 0) * Number(item.qty ?? 0))),
-  }));
+  const normalizedItems = rawItems.map((item, itemIndex) => {
+    const quantity = Number(item.quantity ?? item.qty ?? item.count ?? 0);
+    const unitPrice = Number(item.price ?? item.unitPrice ?? item.rate ?? 0);
+    const gstRate = Number(item.gstRate ?? item.gst ?? item.taxRate ?? 0);
+    const lineTotal = Number(item.total ?? item.amount ?? item.lineTotal ?? (unitPrice * quantity));
 
-  const subtotal = Number(invoice.subtotal ?? normalizedItems.reduce((sum, item) => sum + item.rate * item.qty, 0));
-  const totalGst = Number(invoice.totalGst ?? normalizedItems.reduce((sum, item) => sum + (item.rate * item.qty * item.gst) / 100, 0));
-  const grandTotal = Number(invoice.grandTotal ?? invoice.total ?? invoice.amount ?? subtotal + totalGst);
+    return {
+      sn: item.sn ?? itemIndex + 1,
+      item: item.name ?? item.item ?? item.productName ?? `Item ${itemIndex + 1}`,
+      hsn: item.hsn ?? item.hsnCode ?? "9999",
+      qty: quantity,
+      rate: unitPrice,
+      gst: gstRate,
+      total: lineTotal,
+    };
+  });
+
+  const subtotal = Number(
+    invoice.subtotal ??
+    invoice.totalAmount ??
+    invoice.amount ??
+    normalizedItems.reduce((sum, item) => sum + item.rate * item.qty, 0)
+  );
+  const totalGst = Number(
+    invoice.totalGst ??
+    invoice.gstAmount ??
+    invoice.tax ??
+    normalizedItems.reduce((sum, item) => sum + (item.rate * item.qty * item.gst) / 100, 0)
+  );
+  const grandTotal = Number(
+    invoice.grandTotal ??
+    invoice.total ??
+    invoice.amount ??
+    subtotal + totalGst
+  );
 
   return {
     id: invoice.id ?? invoice.invoiceId ?? `${invoice.invoiceNo ?? "INV"}-${index}`,
     invoiceNo: invoice.invoiceNo ?? invoice.invoice_number ?? `INV-${index + 1}`,
     date: invoice.date ?? invoice.createdAt ?? invoice.invoiceDate ?? "N/A",
     customer: {
-      name: invoice.customerName ?? invoice.customer?.name ?? "Walk-in Customer",
+      name: invoice.customerName ?? invoice.customer?.name ?? invoice.customerName ?? "Walk-in Customer",
       phone: invoice.customerPhone ?? invoice.customer?.phone ?? "",
       email: invoice.customerEmail ?? invoice.customer?.email ?? "",
     },
@@ -273,7 +305,7 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
     subtotal,
     totalGst,
     grandTotal,
-    status: invoice.status ?? "paid",
+    status: String(invoice.status ?? "paid").toLowerCase(),
     items: normalizedItems,
     notes: invoice.notes ?? "",
     dueInDays: invoice.dueInDays ?? 7,
@@ -364,42 +396,48 @@ const OrderDetail = ({ order }) => {
       </div>
 
       {/* Updated invoice table – no border lines, just grid */}
-      <div className="items-list">
-        <table>
-          <thead>
-            <tr>
-              <th>S.No</th>
-              <th>Item</th>
-              <th>HSN</th>
-              <th>Qty</th>
-              <th>Rate</th>
-              <th>Amount (₹)</th>
-              <th>GST (%)</th>
-              <th>GST (₹)</th>
-              <th>Total (₹)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {order.items.map((item) => {
-              const amount = item.rate * item.qty;
-              const gstValue = item.total - amount;
-              return (
-                <tr key={item.sn}>
-                  <td>{item.sn}</td>
-                  <td>{item.item}</td>
-                  <td>{item.hsn}</td>
-                  <td>{item.qty}</td>
-                  <td>₹{item.rate.toFixed(2)}</td>
-                  <td>₹{amount.toFixed(2)}</td>
-                  <td>{item.gst}%</td>
-                  <td>₹{gstValue.toFixed(2)}</td>
-                  <td>₹{item.total.toFixed(2)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {order.items.length > 0 ? (
+        <div className="items-list">
+          <table>
+            <thead>
+              <tr>
+                <th>S.No</th>
+                <th>Item</th>
+                <th>HSN</th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Amount (₹)</th>
+                <th>GST (%)</th>
+                <th>GST (₹)</th>
+                <th>Total (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.items.map((item) => {
+                const amount = item.rate * item.qty;
+                const gstValue = item.total - amount;
+                return (
+                  <tr key={item.sn}>
+                    <td>{item.sn}</td>
+                    <td>{item.item}</td>
+                    <td>{item.hsn}</td>
+                    <td>{item.qty}</td>
+                    <td>₹{item.rate.toFixed(2)}</td>
+                    <td>₹{amount.toFixed(2)}</td>
+                    <td>{item.gst}%</td>
+                    <td>₹{gstValue.toFixed(2)}</td>
+                    <td>₹{item.total.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty-order-state">
+          <p>No item details are available for this invoice. This backend response appears to be a summary-only invoice record.</p>
+        </div>
+      )}
 
       {/* Totals + GST summary */}
       <div className="order-totals">

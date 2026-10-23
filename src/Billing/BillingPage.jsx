@@ -34,14 +34,15 @@ const BillingPage = () => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const data = await response.json();
-        const productsWithGst = data.content.map(product => ({
-          id: product.id,
+        const productList = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+        const productsWithGst = productList.map(product => ({
+          id: product.id ?? product.productId,
           name: product.name,
-          sku: product.sku,
-          price: parseFloat(product.price) || 0,
+          sku: product.sku || product.code || '',
+          price: Number(product.price ?? product.unitPrice ?? 0) || 0,
           hsn: product.hsn || '9999',
-          gst: getGstSlab(parseFloat(product.price) || 0),
-          stock: product.ItemQty || 0
+          gst: getGstSlab(Number(product.price ?? product.unitPrice ?? 0) || 0),
+          stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0
         }));
         setProducts(productsWithGst);
       } catch (error) {
