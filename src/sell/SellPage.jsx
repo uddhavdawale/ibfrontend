@@ -548,6 +548,16 @@ const OrderDetail = ({ order }) => {
   );
 };
 
+  const revenueSummary = sellOrders.reduce(
+    (totals, order) => {
+      totals.revenue += Number(order.grandTotal || 0);
+      totals.paid += order.status === "paid" ? 1 : 0;
+      totals.pending += order.status === "pending" ? 1 : 0;
+      return totals;
+    },
+    { revenue: 0, paid: 0, pending: 0 }
+  );
+
   return (
     <div className="sell-dashboard">
       <div className="page-header">
@@ -560,6 +570,24 @@ const OrderDetail = ({ order }) => {
         >
           ➕ New Order
         </button>
+      </div>
+
+      <div className="sell-kpi-row">
+        <div className="sell-kpi-card primary">
+          <span className="kpi-label">Total revenue</span>
+          <strong>₹{revenueSummary.revenue.toLocaleString('en-IN')}</strong>
+          <small>Across recent sales</small>
+        </div>
+        <div className="sell-kpi-card success">
+          <span className="kpi-label">Paid orders</span>
+          <strong>{revenueSummary.paid}</strong>
+          <small>Collected successfully</small>
+        </div>
+        <div className="sell-kpi-card warning">
+          <span className="kpi-label">Pending</span>
+          <strong>{revenueSummary.pending}</strong>
+          <small>Awaiting payment</small>
+        </div>
       </div>
 
       <div className="orders-list">
