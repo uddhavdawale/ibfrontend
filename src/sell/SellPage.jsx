@@ -312,12 +312,54 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
   };
 };
 
+const fetchInvoiceDetail = async (invoiceSummary) => {
+  const invoiceId = invoiceSummary?.id ?? invoiceSummary?.invoiceId;
+  if (!invoiceId) return invoiceSummary;
+
+  const candidateUrls = [
+    `${API_BASE_URL}/api/invoices/${invoiceId}`,
+    `${API_BASE_URL}/api/invoices/${invoiceId}/details`,
+    `${API_BASE_URL}/api/invoices/${invoiceId}/items`,
+    `${API_BASE_URL}/api/invoice/${invoiceId}`,
+    `${API_BASE_URL}/api/invoice-detail/${invoiceId}`
+  ];
+
+  for (const url of candidateUrls) {
+    try {
+      const response = await apiFetch(url);
+      if (!response.ok) continue;
+      const detailData = await response.json();
+      if (!detailData) continue;
+      return normalizeInvoiceToOrder({ ...invoiceSummary, ...detailData }, 0);
+    } catch (error) {
+      console.warn("Invoice detail lookup failed for:", url, error);
+    }
+  }
+
+  return invoiceSummary;
+};
+
 const SellPage = () => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
   const [sellOrders, setSellOrders] = useState(fallbackSellOrders);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const selectOrder = async (order) => {
+    if (!order) {
+      setActiveOrder(null);
+      return;
+    }
+
+    if (Array.isArray(order.items) && order.items.length > 0) {
+      setActiveOrder((current) => (current && current.id === order.id ? null : order));
+      return;
+    }
+
+    const refreshedOrder = await fetchInvoiceDetail(order);
+    setActiveOrder((current) => (current && current.id === order.id ? null : refreshedOrder));
+  };
 
   useEffect(() => {
     const fetchSellOrders = async () => {
@@ -329,7 +371,14 @@ const SellPage = () => {
 
         const data = await response.json();
         const invoices = Array.isArray(data) ? data : data.content || data.invoices || data.data || [];
-        const normalizedOrders = invoices.map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
+        let normalizedOrders = invoices.map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
+
+        normalizedOrders = await Promise.all(
+          normalizedOrders.map(async (order) => {
+            if (Array.isArray(order.items) && order.items.length > 0) return order;
+            return fetchInvoiceDetail(order);
+          })
+        );
 
         if (normalizedOrders.length > 0) {
           normalizedOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -351,7 +400,9 @@ const SellPage = () => {
   }, []);
 
 const OrderDetail = ({ order }) => {
-  const totalQty = order.items.reduce((sum, i) => sum + i.qty, 0);
+  const totalQty = Array.isArray(order?.items)
+    ? order.items.reduce((sum, i) => sum + Number(i.qty || 0), 0)
+    : 0;
 
   return (
     <div className="order-detail">
@@ -525,11 +576,7 @@ const OrderDetail = ({ order }) => {
           <div
             key={order.id}
             className="order-row"
-            onClick={() =>
-              setActiveOrder((current) =>
-                current && current.id === order.id ? null : order
-              )
-            }
+            onClick={() => selectOrder(order)}
           >
             <span>#{order.invoiceNo}</span>
             <span>{order.customer.name}</span>
