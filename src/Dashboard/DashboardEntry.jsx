@@ -11,6 +11,7 @@ import BillingPage from '../Billing/BillingPage';
 import { useConfig } from '../hooks/useConfig';
 import SellPage from '../sell/SellPage';
 import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
+import { getCurrentShopProfile, readStoredShopProfile, getShopDisplayName } from '../modules/shopProfile/shopProfileService';
 
 const defaultMetrics = {
   salesToday: 15420,
@@ -112,8 +113,13 @@ function Dashboard({ username, onLogout }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const { config } = useConfig();
   const navigate = useNavigate();
+  const shopDisplayName = getShopDisplayName(shopProfile);
+  const currentShopName = shopDisplayName && shopDisplayName !== 'IB ENTERPRISES'
+    ? shopDisplayName
+    : (config?.shop?.name || shopDisplayName);
 
   // Interactive Inventory Data (UNCHANGED)
   const [inventoryData, setInventoryData] = useState([
@@ -172,6 +178,14 @@ function Dashboard({ username, onLogout }) {
 
   useEffect(() => {
     let active = true;
+
+    getCurrentShopProfile()
+      .then((profile) => {
+        if (active) setShopProfile(profile);
+      })
+      .catch(() => {
+        if (active) setShopProfile(readStoredShopProfile());
+      });
 
     const loadDashboardData = async () => {
       try {
@@ -535,8 +549,7 @@ function Dashboard({ username, onLogout }) {
       <div className="top-bar">
         <div className="logo">
           <span className="logo-icon">📦</span>
-            <span>{config?.shop?.name || 'InventoryPro'}</span>
-          <span>IB</span>
+          <span>{currentShopName}</span>
         </div>
         <div className="top-search">
           <input 

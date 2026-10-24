@@ -1,10 +1,13 @@
 import { normalizeInvoiceData } from './invoiceData';
+import { getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 
 export const buildInvoicePdf = async (invoiceData = {}) => {
   const { jsPDF } = await import('jspdf');
   const { autoTable } = await import('jspdf-autotable');
 
   const normalized = normalizeInvoiceData(invoiceData);
+  const activeShopProfile = invoiceData.shopProfile || readStoredShopProfile();
+  const shopDisplayName = getShopDisplayName(activeShopProfile);
   const { rows, subtotal, gstTotal, grandTotal, totalQty, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
 
   const rupeeSymbol = 'Rs.';
@@ -62,14 +65,14 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   pdf.setTextColor(15, 23, 42);
   pdf.setFont('helvetica', 'extraBold');
   pdf.setFontSize(24);
-  pdf.text('IB ENTERPRISES', left, 25);
+  pdf.text(shopDisplayName, left, 25);
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(9.8);
-  pdf.text('GSTIN: 27ABCDE1234F1Z5', left, 36);
-  pdf.text('Aurangabad, Maharashtra 431001', left, 42);
-  pdf.text('☎ +91 98765 43210', left, 50);
-  pdf.text('✉ sales@ibenterprises.com', left, 56);
+  pdf.text(`GSTIN: ${activeShopProfile.gstin || activeShopProfile.gstNumber || '27ABCDE1234F1Z5'}`, left, 36);
+  pdf.text(activeShopProfile.address || 'Aurangabad, Maharashtra 431001', left, 42);
+  pdf.text(`Contact: ${activeShopProfile.phone || activeShopProfile.contactNumber || '+91 98765 43210'}`, left, 50);
+  pdf.text(`Mail: ${activeShopProfile.email || activeShopProfile.supportEmail || 'sales@ibenterprises.com'}`, left, 56);
 
   pdf.setTextColor(15, 23, 42);
   pdf.setFont('helvetica', 'bold');

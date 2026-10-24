@@ -28,6 +28,7 @@ const clearAuthStorage = () => {
   clearAuthState();
   setAccessToken(null);
   localStorage.removeItem('pendingMfaUser');
+  localStorage.removeItem('shopProfile');
   sessionStorage.removeItem('mfaVerified');
 };
 
@@ -147,6 +148,7 @@ const AppRoutes = () => {
     setUser(normalizedUser);
     localStorage.setItem('user', JSON.stringify(normalizedUser));
     localStorage.removeItem('pendingMfaUser');
+    localStorage.removeItem('shopProfile');
     navigate('/dashboard', { replace: true });
   };
 

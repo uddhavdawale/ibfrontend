@@ -4,6 +4,7 @@ import './BillingPage.css';
 import logger from '../utils/logger';
 import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
+import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 
 const BillingPage = () => {
   const navigate = useNavigate();
@@ -20,7 +21,9 @@ const BillingPage = () => {
   
   // Dynamic Products
   const [products, setProducts] = useState([]);
+  const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [loading, setLoading] = useState(true);
+  const shopDisplayName = getShopDisplayName(shopProfile);
   
   // ✅ FIXED: GST SLAB FUNCTION
   const getGstSlab = (price) => {
@@ -31,6 +34,16 @@ const BillingPage = () => {
   
   // Fetch products
   useEffect(() => {
+    let active = true;
+
+    getCurrentShopProfile()
+      .then((profile) => {
+        if (active) setShopProfile(profile);
+      })
+      .catch(() => {
+        if (active) setShopProfile(readStoredShopProfile());
+      });
+
     const fetchProducts = async () => {
       try {
         const response = await apiFetch(`${API_BASE_URL}/api/products?size=1000`);
@@ -58,10 +71,11 @@ const BillingPage = () => {
           { id: 3, name: 'Laptop', hsn: '8471', price: 45999, gst: 18, stock: 5 }
         ]);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     fetchProducts();
+    return () => { active = false; };
   }, []);
   
   // Filtered products - prioritize the most active / popular items at the top of billing catalog
@@ -159,7 +173,7 @@ const BillingPage = () => {
     return { subtotal, gst, grandTotal };
   };
 
-  const generateInvoicePdf = async (invoiceData) => buildInvoicePdf(invoiceData);
+  const generateInvoicePdf = async (invoiceData) => buildInvoicePdf({ ...invoiceData, shopProfile });
 
   const shareInvoiceViaWhatsApp = async (invoiceData) => {
     const pdf = await generateInvoicePdf(invoiceData);
@@ -203,6 +217,7 @@ const BillingPage = () => {
       return;
     }
 
+    const invoiceShopProfile = invoiceData.shopProfile || shopProfile;
     const invoiceRows = invoiceData.items.map((item) => {
       const amount = Number(item.price) * Number(item.qty);
       const gstValue = (amount * Number(item.gst || 0)) / 100;
@@ -461,8 +476,8 @@ const BillingPage = () => {
             <div class="invoice-header-band">
               <div class="invoice-header-grid">
                 <div>
-                  <h1>IB ENTERPRISES</h1>
-                  <div class="brand-meta">GSTIN: 27ABCDE1234F1Z5<br> Aurangabad, Maharashtra 431001<br> +91 98765 43210<br> sales@ibenterprises.com</div>
+                  <h1>${getShopDisplayName(invoiceShopProfile)}</h1>
+                  <div class="brand-meta">GSTIN: ${invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || '27ABCDE1234F1Z5'}<br> ${invoiceShopProfile.address || 'Aurangabad, Maharashtra 431001'}<br> ${invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '+91 98765 43210'}<br> ${invoiceShopProfile.email || invoiceShopProfile.supportEmail || 'sales@ibenterprises.com'}</div>
                 </div>
                 <div class="invoice-summary">
                   <div><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>

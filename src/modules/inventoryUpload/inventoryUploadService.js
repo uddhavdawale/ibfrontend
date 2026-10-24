@@ -93,10 +93,28 @@ export const uploadInventorySheet = async (file) => {
   }
 
   const parsedRecords = await parseInventorySheet(file);
+  const storedUser = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || '{}');
+    } catch {
+      return {};
+    }
+  })();
+
+  const tenantId = storedUser.tenantId ?? storedUser.tenant_id ?? null;
+  const userId = storedUser.id ?? storedUser.userId ?? null;
+  const tenantAwareRecords = parsedRecords.map((item) => ({
+    ...item,
+    ...(tenantId !== null ? { tenantId } : {}),
+    ...(userId !== null ? { userId } : {}),
+  }));
+
   const formData = new FormData();
   formData.append('file', file, file.name);
   formData.append('source', 'inventory-upload');
-  formData.append('records', JSON.stringify(parsedRecords));
+  formData.append('records', JSON.stringify(tenantAwareRecords));
+  if (tenantId !== null) formData.append('tenantId', String(tenantId));
+  if (userId !== null) formData.append('userId', String(userId));
 
   const response = await apiFetch(API_ENDPOINTS.inventoryBulkUpload, {
     method: 'POST',
@@ -110,7 +128,7 @@ export const uploadInventorySheet = async (file) => {
 
   const payload = await response.json().catch(() => ({}));
   return {
-    records: parsedRecords,
+    records: tenantAwareRecords,
     response: payload,
   };
 };

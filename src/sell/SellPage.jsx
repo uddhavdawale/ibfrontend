@@ -3,11 +3,12 @@ import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 import { API_BASE_URL, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
+import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
 
-const generatePDF = async (order) => buildInvoicePdf(order);
+const generatePDF = async (order, shopProfile = readStoredShopProfile()) => buildInvoicePdf({ ...order, shopProfile });
 
-const sendWhatsAppPDF = async (order) => {
-  const pdf = await generatePDF(order);
+const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
+  const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
 
   const url = URL.createObjectURL(pdfBlob);
@@ -23,8 +24,8 @@ const sendWhatsAppPDF = async (order) => {
   window.open(whatsappUrl, "_blank");
 };
 
-const sendEmailPDF = async (order) => {
-  const pdf = await generatePDF(order);
+const sendEmailPDF = async (order, shopProfile = readStoredShopProfile()) => {
+  const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
 
   const subject = `Invoice ${order.invoiceNo} - Receipt`;
@@ -47,9 +48,9 @@ Date: ${order.date}`;
   window.location.href = emailUrl;
 };
 
-const printReceipt = async (order) => {
+const printReceipt = async (order, shopProfile = readStoredShopProfile()) => {
   if (!order) return;
-  const pdf = await generatePDF(order);
+  const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
   const url = URL.createObjectURL(pdfBlob);
   const printWindow = window.open(url, "_blank");
@@ -171,6 +172,35 @@ const fallbackSellOrders = [
   },
 ];
 
+const resolvePaymentStatus = (invoice, grandTotal) => {
+  const rawPaymentStatus = String(
+    invoice.paymentStatus ??
+    invoice.payment_status ??
+    invoice.status ??
+    "pending"
+  ).trim().toLowerCase();
+
+  const paidAmount = Number(
+    invoice.paidAmount ??
+    invoice.amountPaid ??
+    invoice.totalPaid ??
+    invoice.receivedAmount ??
+    0
+  );
+
+  const totalAmount = Number(
+    invoice.totalAmount ??
+    invoice.grandTotal ??
+    invoice.total ??
+    grandTotal ??
+    0
+  );
+
+  if (["paid", "complete", "completed", "settled"].includes(rawPaymentStatus)) return "paid";
+  if (paidAmount >= totalAmount) return "paid";
+  return "pending";
+};
+
 const normalizeInvoiceToOrder = (invoice, index = 0) => {
   const rawItems = Array.isArray(invoice.items)
     ? invoice.items
@@ -220,6 +250,8 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
     subtotal + totalGst
   );
 
+  const resolvedStatus = resolvePaymentStatus(invoice, grandTotal);
+
   return {
     id: invoice.id ?? invoice.invoiceId ?? `${invoice.invoiceNo ?? "INV"}-${index}`,
     invoiceNo: invoice.invoiceNo ?? invoice.invoice_number ?? `INV-${index + 1}`,
@@ -233,7 +265,7 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
     subtotal,
     totalGst,
     grandTotal,
-    status: String(invoice.status ?? "paid").toLowerCase(),
+    status: resolvedStatus,
     items: normalizedItems,
     notes: invoice.notes ?? "",
     dueInDays: invoice.dueInDays ?? 7,
@@ -271,10 +303,26 @@ const SellPage = () => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
   const [sellOrders, setSellOrders] = useState(fallbackSellOrders);
+  const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
+
+  useEffect(() => {
+    let active = true;
+    getCurrentShopProfile()
+      .then((profile) => {
+        if (active) setShopProfile(profile);
+      })
+      .catch(() => {
+        if (active) setShopProfile(readStoredShopProfile());
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selectOrder = async (order) => {
     if (!order) {
@@ -336,14 +384,13 @@ const OrderDetail = ({ order }) => {
 
   return (
     <div className="order-detail">
-      {/* Keep your header exactly as‑is */}
       <div className="detail-header">
         <div className="invoice-shop-info">
-          <h2>IB ENTERPRISES</h2>
-          <p>GSTIN: 27ABCDE1234F1Z5</p>
-          <p>Aurangabad, Maharashtra 431001</p>
-          <p>📞 +91 98765 43210</p>
-          <p>✉️ sales@ibenterprises.com</p>
+          <h2>{getShopDisplayName(shopProfile)}</h2>
+          <p>GSTIN: {shopProfile.gstin || shopProfile.gstNumber || '27ABCDE1234F1Z5'}</p>
+          <p>{shopProfile.address || 'Aurangabad, Maharashtra 431001'}</p>
+          <p>📞 {shopProfile.phone || shopProfile.contactNumber || '+91 98765 43210'}</p>
+          <p>✉️ {shopProfile.email || shopProfile.supportEmail || 'sales@ibenterprises.com'}</p>
           <p>
             <strong>Invoice:</strong> {order.invoiceNo} |{" "}
             <strong>Date:</strong> {order.date}
@@ -457,19 +504,19 @@ const OrderDetail = ({ order }) => {
       <div className="action-buttons">
         <button
           className="btn-share-whatsapp"
-          onClick={() => activeOrder && sendWhatsAppPDF(activeOrder)}
+          onClick={() => activeOrder && sendWhatsAppPDF(activeOrder, shopProfile)}
         >
           📱 WhatsApp PDF
         </button>
         <button
           className="btn-share-email"
-          onClick={() => activeOrder && sendEmailPDF(activeOrder)}
+          onClick={() => activeOrder && sendEmailPDF(activeOrder, shopProfile)}
         >
           ✉️ Email PDF
         </button>
         <button
           className="btn-print"
-          onClick={() => printReceipt(activeOrder)}
+          onClick={() => printReceipt(activeOrder, shopProfile)}
         >
           💾 Download PDF
         </button>

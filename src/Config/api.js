@@ -6,6 +6,7 @@ export const API_ENDPOINTS = {
   refresh: `${API_BASE_URL}/api/auth/refresh`,
   logout: `${API_BASE_URL}/api/auth/logout`,
   userProfile: `${API_BASE_URL}/api/users/me`,
+  shopProfile: `${API_BASE_URL}/api/shop/me`,
   userDashboard: `${API_BASE_URL}/api/users/me/dashboard`,
   products: `${API_BASE_URL}/api/products`,
   productById: (id) => `${API_BASE_URL}/api/products/${id}`,
@@ -32,6 +33,7 @@ export const clearAuthState = () => {
   sessionStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
   localStorage.removeItem('username');
+  localStorage.removeItem('shopProfile');
   localStorage.removeItem('auth_logout');
   if (typeof document !== 'undefined') {
     document.cookie = 'refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax';
@@ -148,6 +150,25 @@ export async function getCurrentUserProfile() {
 
   const payload = await response.json().catch(() => ({}));
   return payload.user || payload.data || payload;
+}
+
+export async function getCurrentShopProfile() {
+  const response = await apiFetch(API_ENDPOINTS.shopProfile, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `Unable to load shop profile (${response.status})`);
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  const shop = payload.shop || payload.data || payload;
+  if (shop && typeof window !== 'undefined') {
+    localStorage.setItem('shopProfile', JSON.stringify(shop));
+  }
+  return shop;
 }
 
 export default API_BASE_URL;
