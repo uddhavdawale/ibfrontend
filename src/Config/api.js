@@ -7,6 +7,8 @@ export const API_ENDPOINTS = {
   logout: `${API_BASE_URL}/api/auth/logout`,
   products: `${API_BASE_URL}/api/products`,
   productById: (id) => `${API_BASE_URL}/api/products/${id}`,
+  inventoryBulkUpload: `${API_BASE_URL}/api/inventory/upload`,
+  inventoryUploadTemplate: `${API_BASE_URL}/api/inventory/upload-template`,
   invoices: `${API_BASE_URL}/api/invoices`,
   dashboardSummary: `${API_BASE_URL}/api/dashboard/summary`,
   salesLastSixMonths: `${API_BASE_URL}/api/sales/last-six-months`,

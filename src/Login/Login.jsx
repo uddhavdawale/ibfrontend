@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import './Login.css';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL, setAccessToken } from '../Config/api';
+import { resolveMfaContext } from '../auth/mfa/mfaService';
 import logger from '../utils/logger';
 
 const themeOptions = [
@@ -9,6 +10,18 @@ const themeOptions = [
   { value: 'dark', label: 'Dark' },
   { value: 'aurora', label: 'Aurora' }
 ];
+
+const readBackendConfig = async () => {
+  try {
+    const response = await fetch('/config.json', { cache: 'no-store' });
+    if (!response.ok) return {};
+    const config = await response.json();
+    return config || {};
+  } catch (error) {
+    logger.warn('Backend config load failed; continuing with defaults', error);
+    return {};
+  }
+};
 
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
@@ -64,28 +77,47 @@ const handleSubmit = async (e) => {
     const accessToken = data.accessToken || data.token;
     const userPayload = data.user || {};
     const username = userPayload.username || userPayload.name || data.username || formData.username;
+    const backendConfig = {
+      ...(await readBackendConfig()),
+      ...(data.config || data.authConfig || data.securityConfig || {}),
+      ...(userPayload.config || userPayload.security || {})
+    };
+    const mfaContext = resolveMfaContext({ ...data, ...userPayload, config: backendConfig }, { username, email: userPayload.email || data.email || '' });
     const resolvedUser = {
       id: userPayload.id ?? data.id ?? null,
       username,
       name: userPayload.name || username,
       email: userPayload.email || data.email || '',
-      role: userPayload.role || data.role || 'ADMIN'
+      role: userPayload.role || data.role || 'ADMIN',
+      config: backendConfig,
+      mfaRequired: mfaContext.enabled
     };
 
-    if (response.ok && accessToken && data.success !== false) {
-      logger.info('Login succeeded');
-      setAccessToken(accessToken);
-      localStorage.removeItem('auth_logout');
-      if (data.refreshToken) sessionStorage.setItem('refreshToken', data.refreshToken);
-      localStorage.setItem('username', username);
-      localStorage.setItem('user', JSON.stringify(resolvedUser));
-      onLogin(resolvedUser);
-      return;
-    } else {
-      setError(data.message || (response.status === 401
-        ? 'Invalid username or password.'
-        : `Login failed (${response.status}). Please try again.`));
+    if (response.ok && data.success !== false) {
+      if (mfaContext.enabled) {
+        logger.info('Login succeeded; MFA required before final session activation');
+        setAccessToken(null);
+        localStorage.removeItem('auth_logout');
+        localStorage.setItem('username', username);
+        onLogin({ ...resolvedUser, mfaRequired: true });
+        return;
+      }
+
+      if (accessToken) {
+        logger.info('Login succeeded');
+        setAccessToken(accessToken);
+        localStorage.removeItem('auth_logout');
+        if (data.refreshToken) sessionStorage.setItem('refreshToken', data.refreshToken);
+        localStorage.setItem('username', username);
+        localStorage.setItem('user', JSON.stringify(resolvedUser));
+        onLogin(resolvedUser);
+        return;
+      }
     }
+
+    setError(data.message || (response.status === 401
+      ? 'Invalid username or password.'
+      : `Login failed (${response.status}). Please try again.`));
   } catch (error) {
     logger.error('Login request failed', error);
     setError('Backend error. Check console.');

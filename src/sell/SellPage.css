@@ -335,6 +335,36 @@
   margin: 6px 0;
 }
 
+.sell-dashboard .sell-pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 10px 4px 0;
+  color: var(--sell-text-soft);
+}
+
+.sell-dashboard .sell-pagination button {
+  border: 1px solid var(--sell-border);
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--sell-text-soft);
+  padding: 9px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sell-dashboard .sell-pagination button:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.sell-dashboard .sell-pagination button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .sell-dashboard .action-buttons {
   display: flex;
   justify-content: flex-end;

@@ -2,92 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 import { API_BASE_URL, apiFetch } from "../Config/api";
+import { buildInvoicePdf } from "../utils/invoicePdf";
 
-// ✅ Dynamic PDF libs (no require, Vite‑safe)
-const generatePDF = async (order) => {
-  {/* comment added 4* */}
-  const { jsPDF } = await import("jspdf");
-  const { autoTable } = await import("jspdf-autotable");
-
-  const pdf = new jsPDF("p", "mm", "a4"); 
-
-  // Shop header
-  pdf.setFontSize(20);
-  pdf.setFont("helvetica", "bold");
-  pdf.text("IB ENTERPRISES", 20, 25);
-
-  pdf.setFontSize(10);
-  pdf.setFont("helvetica", "normal");
-  pdf.text("GSTIN: 27ABCDE1234F1Z5", 20, 33);
-  pdf.text("Aurangabad, Maharashtra 431001", 20, 39);
-  pdf.text("📞 +91 98765 43210", 20, 45);
-  pdf.text("✉️ sales@ibenterprises.com", 20, 51);
-
-  // Invoice details
-  pdf.setFontSize(16);
-  pdf.setFont("helvetica", "bold");
-  pdf.text(`INVOICE #${order.invoiceNo}`, 20, 65);
-
-  pdf.setFontSize(11);
-  pdf.setFont("helvetica", "normal");
-  pdf.text(`Date: ${order.date}`, 20, 75);
-
-  pdf.text(`Customer: ${order.customer.name}`, 20, 85);
-  pdf.text(`Phone: ${order.customer.phone}`, 20, 92);
-  pdf.text(`Payment: ${order.paymentMethod}`, 20, 99);
-
-  // Items table
-  const columns = [["S.No", "Description", "HSN", "Qty", "Rate", "GST%", "Amount"]];
-  const rows = order.items.map((item) => [
-    item.sn.toString(),
-    item.item,
-    item.hsn,
-    item.qty.toString(),
-    `₹${item.rate.toFixed(2)}`,
-    `${item.gst}%`,
-    `₹${item.total.toFixed(2)}`,
-  ]);
-
-  autoTable(pdf, {
-    head: columns,
-    body: rows,
-    startY: 110,
-    theme: "grid",
-    styles: {
-      fontSize: 9,
-      cellPadding: 4,
-      overflow: "linebreak",
-    },
-    headStyles: {
-      fillColor: [76, 175, 80],
-      textColor: 255,
-      fontStyle: "bold",
-      fontSize: 10,
-    },
-    columnStyles: {
-      0: { cellWidth: 10 },
-      1: { cellWidth: 45 },
-      6: { halign: "right" },
-    },
-  });
-
-  const finalY = pdf.lastAutoTable.finalY + 15;
-  pdf.setFontSize(14);
-  pdf.setFont("helvetica", "bold");
-  pdf.text(
-    `Grand Total: ₹${order.grandTotal.toLocaleString()}`,
-    140,
-    finalY,
-    { align: "right" }
-  );
-
-  pdf.setFontSize(8);
-  pdf.setFont("helvetica", "normal");
-  pdf.text("Thank you for your business!", 20, 270);
-  pdf.text("IB ENTERPRISES - Computer Generated Invoice", 20, 285);
-
-  return pdf;
-};
+const generatePDF = async (order) => buildInvoicePdf(order);
 
 const sendWhatsAppPDF = async (order) => {
   const pdf = await generatePDF(order);
@@ -131,8 +48,19 @@ Date: ${order.date}`;
 };
 
 const printReceipt = async (order) => {
+  if (!order) return;
   const pdf = await generatePDF(order);
-  pdf.save(`receipt_${order.invoiceNo}.pdf`);
+  const pdfBlob = pdf.output("blob");
+  const url = URL.createObjectURL(pdfBlob);
+  const printWindow = window.open(url, "_blank");
+  if (printWindow) {
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 300);
+  } else {
+    pdf.save(`receipt_${order.invoiceNo}.pdf`);
+  }
 };
 
 const fallbackSellOrders = [
@@ -345,6 +273,8 @@ const SellPage = () => {
   const [sellOrders, setSellOrders] = useState(fallbackSellOrders);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 5;
 
   const selectOrder = async (order) => {
     if (!order) {
@@ -558,6 +488,15 @@ const OrderDetail = ({ order }) => {
     { revenue: 0, paid: 0, pending: 0 }
   );
 
+  const totalPages = Math.max(1, Math.ceil(sellOrders.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  useEffect(() => {
+    setCurrentPage((prev) => Math.min(prev, totalPages));
+  }, [totalPages]);
+
+  const visibleOrders = sellOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+
   return (
     <div className="sell-dashboard">
       <div className="page-header">
@@ -600,7 +539,7 @@ const OrderDetail = ({ order }) => {
           <span>Actions</span>
         </div>
 
-        {sellOrders.map((order) => (
+        {visibleOrders.map((order) => (
           <div
             key={order.id}
             className="order-row"
@@ -618,6 +557,24 @@ const OrderDetail = ({ order }) => {
             <span>👁️</span>
           </div>
         ))}
+      </div>
+
+      <div className="sell-pagination">
+        <button
+          type="button"
+          onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+          disabled={safeCurrentPage <= 1}
+        >
+          ← Previous
+        </button>
+        <span>Page {safeCurrentPage} of {totalPages}</span>
+        <button
+          type="button"
+          onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+          disabled={safeCurrentPage >= totalPages}
+        >
+          Next →
+        </button>
       </div>
 
       {activeOrder && (

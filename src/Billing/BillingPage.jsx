@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import './BillingPage.css';
 import logger from '../utils/logger';
 import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
+import { buildInvoicePdf } from '../utils/invoicePdf';
 
 const BillingPage = () => {
   const navigate = useNavigate();
@@ -139,71 +140,26 @@ const BillingPage = () => {
     return `INV-${(num + 1).toString().padStart(3, '0')}`;
   };
   
-  const generateInvoicePdf = async (invoiceData) => {
-    const { jsPDF } = await import('jspdf');
-    const { autoTable } = await import('jspdf-autotable');
-
-    const pdf = new jsPDF('p', 'mm', 'a4');
-
-    pdf.setFontSize(20);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('IB ENTERPRISES', 20, 25);
-
-    pdf.setFontSize(10);
-    pdf.setFont('helvetica', 'normal');
-    pdf.text('GSTIN: 27ABCDE1234F1Z5', 20, 33);
-    pdf.text('Aurangabad, Maharashtra 431001', 20, 39);
-    pdf.text('📞 +91 98765 43210', 20, 45);
-    pdf.text('✉️ sales@ibenterprises.com', 20, 51);
-
-    pdf.setFontSize(16);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text(`INVOICE #${invoiceData.invoiceNo}`, 20, 65);
-
-    pdf.setFontSize(11);
-    pdf.setFont('helvetica', 'normal');
-    pdf.text(`Date: ${new Date().toLocaleDateString('en-IN')}`, 20, 75);
-    pdf.text(`Customer: ${invoiceData.customerName}`, 20, 85);
-    pdf.text(`Phone: ${invoiceData.customerPhone}`, 20, 92);
-    pdf.text(`Payment: ${invoiceData.paymentMethod}`, 20, 99);
-
-    const rows = invoiceData.items.map((item, index) => {
-      const amount = Number(item.price) * Number(item.qty);
-      const gstValue = (amount * Number(item.gst || 0)) / 100;
-      return [
-        String(index + 1),
-        item.name,
-        item.hsn || '9999',
-        String(item.qty),
-        `₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-        `${item.gst || 0}%`,
-        `₹${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-        `₹${(amount + gstValue).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-      ];
+  const formatMoney = (value) => {
+    const numericValue = Number(value || 0);
+    return numericValue.toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     });
-
-    autoTable(pdf, {
-      head: [['S.No', 'Description', 'HSN', 'Qty', 'Rate', 'GST%', 'GST', 'Amount']],
-      body: rows,
-      startY: 110,
-      theme: 'grid',
-      styles: { fontSize: 9, cellPadding: 4, overflow: 'linebreak' },
-      headStyles: { fillColor: [76, 175, 80], textColor: 255, fontStyle: 'bold', fontSize: 10 },
-      columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 45 }, 7: { halign: 'right' } },
-    });
-
-    const finalY = pdf.lastAutoTable.finalY + 15;
-    pdf.setFontSize(14);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text(`Grand Total: ₹${invoiceData.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 140, finalY, { align: 'right' });
-
-    pdf.setFontSize(8);
-    pdf.setFont('helvetica', 'normal');
-    pdf.text('Thank you for your business!', 20, 270);
-    pdf.text('IB ENTERPRISES - Computer Generated Invoice', 20, 285);
-
-    return pdf;
   };
+
+  const calculateInvoiceTotals = (items) => {
+    const subtotal = items.reduce((sum, item) => sum + (Number(item.price || 0) * Number(item.qty || 0)), 0);
+    const gst = items.reduce((sum, item) => {
+      const amount = Number(item.price || 0) * Number(item.qty || 0);
+      return sum + (amount * Number(item.gst || 0)) / 100;
+    }, 0);
+    const grandTotal = subtotal + gst;
+
+    return { subtotal, gst, grandTotal };
+  };
+
+  const generateInvoicePdf = async (invoiceData) => buildInvoicePdf(invoiceData);
 
   const shareInvoiceViaWhatsApp = async (invoiceData) => {
     const pdf = await generateInvoicePdf(invoiceData);
@@ -275,87 +231,101 @@ const BillingPage = () => {
         <head>
           <title>Invoice ${invoiceData.invoiceNo}</title>
           <style>
-            body {
-              font-family: 'Segoe UI', Arial, sans-serif;
-              margin: 0;
-              background: #f5f7fb;
-              color: #111827;
+            :root {
+              --invoice-green: #1b8d54;
+              --invoice-dark: #0f172a;
+              --invoice-gray: #475569;
+              --invoice-border: #e2e8f0;
+              --invoice-soft: #f8fafc;
+              --invoice-shadow: rgba(15, 23, 42, 0.08);
             }
+
+            @page {
+              size: A4;
+              margin: 12mm;
+            }
+
+            * { box-sizing: border-box; }
+
+            html, body {
+              margin: 0;
+              padding: 0;
+              color: var(--invoice-dark);
+              background: #eef2f7;
+              font-family: 'Segoe UI', Arial, sans-serif;
+            }
+
+            body {
+              min-height: 100vh;
+              padding: 24px;
+            }
+
             .invoice-shell {
               max-width: 980px;
-              margin: 24px auto;
+              margin: 0 auto;
               background: #ffffff;
-              padding: 20px 22px 18px;
-              border-radius: 12px;
-              box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+              padding: 0 0 20px;
+              border-radius: 16px;
+              box-shadow: 0 20px 40px var(--invoice-shadow);
+              border: 1px solid rgba(148, 163, 184, 0.2);
+              overflow: hidden;
             }
-            .header {
-              display: grid;
-              grid-template-columns: 1.2fr 0.8fr;
-              gap: 20px;
-              padding-bottom: 16px;
-              border-bottom: 2px solid #111827;
+
+            .invoice-header-band {
+              background: linear-gradient(135deg, var(--invoice-green), #0f766e);
+              color: #fff;
+              padding: 16px 26px 14px;
             }
-            h1 {
-              margin: 0 0 8px;
-              font-size: 28px;
-              font-weight: 700;
+
+            .invoice-header-band h1 {
+              margin: 0;
+              font-size: 30px;
+              font-weight: 800;
               letter-spacing: -0.04em;
             }
-            .small {
-              color: #374151;
-              font-size: 12px;
-              line-height: 1.6;
-            }
-            .meta {
+
+            .invoice-header-grid {
               display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 10px 18px;
-              margin: 18px 0;
-              font-size: 14px;
+              grid-template-columns: 1.4fr 0.6fr;
+              gap: 18px;
+              align-items: end;
             }
-            .meta strong {
-              display: inline-block;
-              min-width: 90px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 4px;
-            }
-            th, td {
-              padding: 10px 8px;
-              border-bottom: 1px solid #eef2f7;
-              text-align: left;
+
+            .brand-meta {
               font-size: 12px;
+              line-height: 1.7;
+              opacity: 0.95;
             }
-            th {
-              background: #f9fafb;
-              color: #374151;
-              font-weight: 700;
+
+            .invoice-summary {
+              background: rgba(255,255,255,0.1);
+              border: 1px solid rgba(255,255,255,0.18);
+              border-radius: 12px;
+              padding: 12px 14px;
+              font-size: 12px;
+              line-height: 1.8;
             }
-            .totals {
-              margin-top: 18px;
-              margin-left: auto;
-              width: 320px;
-              background: #f9fafb;
-              padding: 16px 18px;
-              border-radius: 8px;
+
+            .invoice-body {
+              padding: 24px 26px 10px;
             }
-            .totals-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 8px 0;
+
+            .customer-grid {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(180px, 1fr));
+              gap: 14px 20px;
+              padding: 10px 0 18px;
+              border-bottom: 2px solid var(--invoice-border);
               font-size: 14px;
-              border-bottom: 1px solid #e5e7eb;
+              color: var(--invoice-gray);
             }
-            .grand {
-              padding-top: 12px;
-              border-top: 2px solid #e5e7eb;
-              font-size: 18px;
-              font-weight: 700;
-              border-bottom: none;
+
+            .customer-grid strong {
+              display: inline-block;
+              min-width: 86px;
+              color: var(--invoice-dark);
             }
+
             .status-pill {
               display: inline-block;
               padding: 4px 10px;
@@ -366,105 +336,197 @@ const BillingPage = () => {
             }
             .status-paid { background: #dcfce7; color: #166534; }
             .status-pending { background: #fef3c7; color: #92400e; }
-            .notes-wrap {
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
               margin-top: 18px;
-              font-size: 13px;
-              color: #374151;
-              line-height: 1.7;
             }
-            .notes-wrap strong {
+
+            th, td {
+              padding: 10px 8px;
+              border-bottom: 1px solid var(--invoice-border);
+              text-align: left;
+              font-size: 12px;
+              vertical-align: middle;
+            }
+
+            th {
+              background: var(--invoice-green);
+              color: white;
               font-weight: 700;
             }
+
+            tbody tr:nth-child(even) {
+              background: #f8fafc;
+            }
+
+            .totals {
+              margin-top: 18px;
+              margin-left: auto;
+              width: min(360px, 100%);
+              background: #f8fafc;
+              border: 1px solid var(--invoice-border);
+              border-radius: 12px;
+              padding: 12px 14px;
+            }
+
+            .totals-row {
+              display: flex;
+              justify-content: space-between;
+              gap: 12px;
+              padding: 8px 0;
+              font-size: 13px;
+              color: var(--invoice-gray);
+              border-bottom: 1px solid var(--invoice-border);
+            }
+
+            .totals-row:last-child {
+              border-bottom: none;
+            }
+
+            .grand {
+              padding-top: 10px;
+              font-size: 22px;
+              font-weight: 800;
+              letter-spacing: -0.04em;
+              color: var(--invoice-dark);
+            }
+
+            .notes-wrap {
+              margin: 20px 0 8px;
+              font-size: 12px;
+              line-height: 1.7;
+              color: var(--invoice-gray);
+            }
+
+            .notes-wrap strong {
+              color: var(--invoice-dark);
+            }
+
             .toolbar {
               display: flex;
               justify-content: flex-end;
               gap: 12px;
               flex-wrap: wrap;
               margin-top: 18px;
+              padding: 0 26px 26px;
             }
+
             .share-btn {
               border: none;
               border-radius: 10px;
               color: white;
               font-weight: 700;
-              font-size: 15px;
-              padding: 12px 18px;
+              font-size: 14px;
+              padding: 11px 16px;
               cursor: pointer;
               min-width: 170px;
-              box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+              box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
             }
             .whatsapp { background: linear-gradient(135deg, #22c55e, #16a34a); }
             .email { background: linear-gradient(135deg, #3b82f6, #2563eb); }
-            .download { background: linear-gradient(135deg, #6b7280, #4b5563); }
+            .download { background: linear-gradient(135deg, #64748b, #475569); }
+
+            @media print {
+              html, body {
+                background: #fff;
+                padding: 0;
+              }
+
+              body {
+                zoom: 1;
+              }
+
+              .invoice-shell {
+                max-width: none;
+                width: 100%;
+                border: none;
+                box-shadow: none;
+                border-radius: 0;
+              }
+
+              .toolbar {
+                display: none !important;
+              }
+
+              .notes-wrap {
+                page-break-inside: avoid;
+              }
+            }
           </style>
         </head>
         <body>
           <div class="invoice-shell">
-            <div class="header">
-              <div>
-                <h1>IB ENTERPRISES</h1>
-                <div class="small">GSTIN: 27ABCDE1234F1Z5<br> Aurangabad, Maharashtra 431001<br> 📞 +91 98765 43210<br> ✉️ sales@ibenterprises.com</div>
+            <div class="invoice-header-band">
+              <div class="invoice-header-grid">
+                <div>
+                  <h1>IB ENTERPRISES</h1>
+                  <div class="brand-meta">GSTIN: 27ABCDE1234F1Z5<br> Aurangabad, Maharashtra 431001<br> +91 98765 43210<br> sales@ibenterprises.com</div>
+                </div>
+                <div class="invoice-summary">
+                  <div><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>
+                  <div><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}</div>
+                  <div><strong>Status:</strong> <span class="status-pill ${invoiceData.paymentStatus === 'paid' ? 'status-paid' : 'status-pending'}">${invoiceData.paymentStatus}</span></div>
+                </div>
               </div>
-              <div>
-                <div class="small"><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>
-                <div class="small"><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}</div>
-                <div class="small"><strong>Status:</strong> <span class="status-pill ${invoiceData.paymentStatus === 'paid' ? 'status-paid' : 'status-pending'}">${invoiceData.paymentStatus}</span></div>
+            </div>
+
+            <div class="invoice-body">
+              <div class="customer-grid">
+                <div><strong>Customer:</strong> ${invoiceData.customerName}</div>
+                <div><strong>Phone:</strong> ${invoiceData.customerPhone}</div>
+                <div><strong>Email:</strong> ${invoiceData.customerEmail || 'N/A'}</div>
+                <div><strong>Payment:</strong> ${invoiceData.paymentMethod}</div>
               </div>
-            </div>
 
-            <div class="meta">
-              <div><strong>Customer:</strong> ${invoiceData.customerName}</div>
-              <div><strong>Phone:</strong> ${invoiceData.customerPhone}</div>
-              <div><strong>Email:</strong> ${invoiceData.customerEmail || 'N/A'}</div>
-              <div><strong>Payment:</strong> ${invoiceData.paymentMethod}</div>
-            </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>S.No</th>
+                    <th>Item</th>
+                    <th>HSN</th>
+                    <th>Qty</th>
+                    <th>Rate</th>
+                    <th>Amount</th>
+                    <th>GST%</th>
+                    <th>GST</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${invoiceData.items.map((item, index) => {
+                    const amount = Number(item.price) * Number(item.qty);
+                    const gstValue = (amount * Number(item.gst || 0)) / 100;
+                    const total = amount + gstValue;
+                    return `
+                      <tr>
+                        <td>${index + 1}</td>
+                        <td>${item.name}</td>
+                        <td>${item.hsn || '9999'}</td>
+                        <td>${item.qty}</td>
+                        <td>₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td>${item.gst || 0}%</td>
+                        <td>₹${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
 
-            <table>
-              <thead>
-                <tr>
-                  <th>S.No</th>
-                  <th>Item</th>
-                  <th>HSN</th>
-                  <th>Qty</th>
-                  <th>Rate</th>
-                  <th>Amount</th>
-                  <th>GST%</th>
-                  <th>GST</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${invoiceData.items.map((item, index) => {
-                  const amount = Number(item.price) * Number(item.qty);
-                  const gstValue = (amount * Number(item.gst || 0)) / 100;
-                  const total = amount + gstValue;
-                  return `
-                    <tr>
-                      <td>${index + 1}</td>
-                      <td>${item.name}</td>
-                      <td>${item.hsn || '9999'}</td>
-                      <td>${item.qty}</td>
-                      <td>₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                      <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                      <td>${item.gst || 0}%</td>
-                      <td>₹${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                      <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
+              <div class="totals">
+                <div class="totals-row"><span>Total Qty</span><span>${invoiceData.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</span></div>
+                <div class="totals-row"><span>Subtotal</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div class="totals-row"><span>GST Total</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div class="totals-row grand"><span>Grand Total</span><span>₹${invoiceData.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+              </div>
 
-            <div class="totals">
-              <div class="totals-row"><span>Total Qty</span><span>${invoiceData.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</span></div>
-              <div class="totals-row"><span>Subtotal</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-              <div class="totals-row"><span>GST Total</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-              <div class="totals-row grand"><span>Grand Total</span><span>₹${invoiceData.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-            </div>
-
-            <div class="notes-wrap">
-              <div><strong>Notes:</strong> Goods sold are non-returnable unless defective or as per shop policy.</div>
-              <div><strong>Terms:</strong> Payment due within 7 days. Late payments may attract interest as per government guidelines.</div>
+              <div class="notes-wrap">
+                <div><strong>Notes:</strong> Goods sold are non-returnable unless defective or as per shop policy.</div>
+                <div><strong>Terms:</strong> Payment due within 7 days. Late payments may attract interest as per government guidelines.</div>
+              </div>
             </div>
 
             <div class="toolbar">

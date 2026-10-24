@@ -106,6 +106,13 @@
   align-items: center;
 }
 
+.inventory-page .inventory-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
 .inventory-page .search-input {
   flex: 1;
   max-width: 420px;
@@ -133,6 +140,16 @@
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
+}
+
+.inventory-page .add-btn.secondary {
+  background: #e2e8f0;
+  color: #0f172a;
+  border: 1px solid var(--inv-border);
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .inventory-page .inventory-insights {

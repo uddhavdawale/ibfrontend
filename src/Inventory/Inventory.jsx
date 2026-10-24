@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import './InventoryPage.css';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import logger from '../utils/logger';
+import InventoryUploadDialog from '../modules/inventoryUpload/InventoryUploadDialog';
 
 const InventoryPage = () => {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ const InventoryPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   
   const PAGE_SIZE = 10;
@@ -130,6 +132,22 @@ const saveProduct = async (e, isEdit = false) => {
     setShowAddModal(true);
   };
 
+  const handleInventoryUploadSuccess = async () => {
+    await fetchProducts(currentPage, searchTerm);
+    setShowUploadModal(false);
+  };
+
+  const lowStockProducts = products.filter(item => Number(item.quantity || 0) <= Number(item.minStock || 0));
+  const totalUnits = products.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const totalInventoryValue = products.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);
+  const topCategories = Object.entries(
+    products.reduce((acc, item) => {
+      const category = item.category || item.group || 'General';
+      acc[category] = (acc[category] || 0) + Number(item.quantity || 0);
+      return acc;
+    }, {})
+  ).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
   return (
     <div className="inventory-page">
       <header className="page-header">
@@ -150,9 +168,57 @@ const saveProduct = async (e, isEdit = false) => {
           onChange={(e) => handleSearch(e.target.value)}
           className="search-input"
         />
-        <button className="add-btn primary" onClick={() => setShowAddModal(true)}>
-          ➕ Add Product
-        </button>
+        <div className="inventory-actions">
+          <button className="add-btn secondary" onClick={() => setShowUploadModal(true)}>
+            ⬆️ Upload Inventory
+          </button>
+          <button className="add-btn primary" onClick={() => setShowAddModal(true)}>
+            ➕ Add Product
+          </button>
+        </div>
+      </div>
+
+      <div className="inventory-insights">
+        <div className="insight-card">
+          <span className="insight-label">Total stock</span>
+          <strong>{totalUnits}</strong>
+          <small>Units available</small>
+        </div>
+        <div className="insight-card alert-card">
+          <span className="insight-label">Low stock</span>
+          <strong>{lowStockProducts.length}</strong>
+          <small>Products need reorder</small>
+        </div>
+        <div className="insight-card">
+          <span className="insight-label">Inventory value</span>
+          <strong>₹{totalInventoryValue.toLocaleString('en-IN')}</strong>
+          <small>Stock at current price</small>
+        </div>
+        <div className="insight-card">
+          <span className="insight-label">Top category</span>
+          <strong>{topCategories[0]?.[0] || 'General'}</strong>
+          <small>{topCategories[0]?.[1] || 0} units</small>
+        </div>
+      </div>
+
+      <div className="inventory-reminder-row">
+        <div className="reminder-card">
+          <h3>Retailer action queue</h3>
+          <ul>
+            {lowStockProducts.length > 0 ? lowStockProducts.slice(0, 4).map(item => (
+              <li key={item.id}><span>{item.name}</span><strong>{item.quantity} left</strong></li>
+            )) : <li><span>All good</span><strong>Stock healthy</strong></li>}
+          </ul>
+        </div>
+
+        <div className="reminder-card">
+          <h3>Category snapshot</h3>
+          <ul>
+            {topCategories.length > 0 ? topCategories.map(([category, count]) => (
+              <li key={category}><span>{category}</span><strong>{count} pcs</strong></li>
+            )) : <li><span>No data</span><strong>0 pcs</strong></li>}
+          </ul>
+        </div>
       </div>
 
       {loading && <div className="loading">Loading products...</div>}
@@ -221,6 +287,12 @@ const saveProduct = async (e, isEdit = false) => {
           </div>
         </div>
       )}
+
+      <InventoryUploadDialog
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onUploadSuccess={handleInventoryUploadSuccess}
+      />
     </div>
   );
 };
