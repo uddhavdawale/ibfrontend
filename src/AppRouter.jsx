@@ -10,7 +10,7 @@ import SignupPage from './Login/SignupPage.jsx';
 import SellPage from './sell/SellPage.jsx';
 import MfaScreen from './auth/mfa/MfaScreen.jsx';
 import { resolveMfaContext } from './auth/mfa/mfaService.js';
-import { refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast } from './Config/api.js';
+import { refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile } from './Config/api.js';
 
 const readPendingMfaUser = () => {
   const stored = localStorage.getItem('pendingMfaUser');
@@ -90,10 +90,29 @@ const AppRoutes = () => {
         const storedUser = localStorage.getItem('user');
         const parsedUser = storedUser ? JSON.parse(storedUser) : null;
         if (!parsedUser) return;
+
         await refreshAccessToken(localStorage.getItem('username') || parsedUser.name || '');
+
+        let nextUser = parsedUser;
+        try {
+          const profile = await getCurrentUserProfile();
+          nextUser = {
+            ...parsedUser,
+            ...profile,
+            id: profile.id ?? parsedUser.id ?? null,
+            username: profile.username || profile.ownerName || profile.name || parsedUser.username || parsedUser.name || 'user',
+            name: profile.ownerName || profile.name || profile.businessName || parsedUser.name || parsedUser.username || 'User',
+            email: profile.email || parsedUser.email || '',
+            role: profile.role || parsedUser.role || 'ADMIN',
+          };
+        } catch {
+          // Fall back to the stored session user if the profile endpoint is unavailable.
+        }
+
         if (active) {
-          setUser(parsedUser);
+          setUser(nextUser);
           setIsAuthenticated(true);
+          localStorage.setItem('user', JSON.stringify(nextUser));
         }
       } catch {
         clearAuthStorage();

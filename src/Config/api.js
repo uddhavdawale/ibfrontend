@@ -5,6 +5,8 @@ export const API_ENDPOINTS = {
   login: `${API_BASE_URL}/api/login`,
   refresh: `${API_BASE_URL}/api/auth/refresh`,
   logout: `${API_BASE_URL}/api/auth/logout`,
+  userProfile: `${API_BASE_URL}/api/users/me`,
+  userDashboard: `${API_BASE_URL}/api/users/me/dashboard`,
   products: `${API_BASE_URL}/api/products`,
   productById: (id) => `${API_BASE_URL}/api/products/${id}`,
   inventoryBulkUpload: `${API_BASE_URL}/api/inventory/upload`,
@@ -131,6 +133,21 @@ export async function logoutRequest() {
     setAccessToken(null);
     saveRefreshTokenFallback(null);
   }
+}
+
+export async function getCurrentUserProfile() {
+  const response = await apiFetch(API_ENDPOINTS.userProfile, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `Unable to load profile (${response.status})`);
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  return payload.user || payload.data || payload;
 }
 
 export default API_BASE_URL;
