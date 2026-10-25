@@ -1,0 +1,13 @@
+{
+  "shop": {
+    "name": "IB ENTERPRISES",
+    "gstin": "27ABCDE1234F1Z5",
+    "address": "Aurangabad, MH 431001",
+    "phone": "+91 98765 43210",
+    "email": "sales@ibenterprises.com"
+  },
+  "features": {
+    "gst_enabled": true,
+    "offline_mode": true
+  }
+}

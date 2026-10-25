@@ -26,7 +26,7 @@ const InventoryPage = () => {
         sortDir: 'desc'
       });
       
-      const response = await fetch(`https://ibbackend-production.up.railway.app/api/products?${params}`);
+      const response = await fetch(`http://localhost:8080/api/products?${params}`);
       const data = await response.json();
       
       setProducts(data.content);
@@ -62,19 +62,20 @@ const InventoryPage = () => {
       sku: formData.get('sku'),
       quantity: parseInt(formData.get('quantity')),
       minStock: parseInt(formData.get('minStock') || 0),
-      price:  parseFloat(formData.get('price') ? parseFloat(formData.get('price')) : 0)
+      price: parseFloat(formData.get('price') ? parseFloat(formData.get('price')) : 0),
+      expiryDate: formData.get('expiryDate') || null  // ✅ Added expiryDate
     };
     
     try {
       let response;
       if (isEdit && editingItem) {
-        response = await fetch(`https://ibfrontendlive.vercel.app/api/products/${editingItem.id}`, {
+        response = await fetch(`http://localhost:8080/api/products/${editingItem.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(product)
         });
       } else {
-        response = await fetch('https://ibfrontendlive.vercel.app/api/products', {
+        response = await fetch('http://localhost:8080/api/products', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(product)
@@ -94,7 +95,7 @@ const InventoryPage = () => {
   
   const deleteItem = async (id) => {
     if (confirm('Delete product?')) {
-      await fetch(`https://ibbackend-production.up.railway.app/api/products/${id}`, { method: 'DELETE' });
+      await fetch(`http://localhost:8080/api/products/${id}`, { method: 'DELETE' });
       fetchProducts(currentPage, searchTerm);
     }
   };
@@ -142,6 +143,7 @@ const InventoryPage = () => {
               <th>Min Stock</th>
               <th>Price</th>
               <th>Created</th>
+              <th>Expiry Date</th>  {/* ✅ Fixed column order */}
               <th>Action</th>
             </tr>
           </thead>
@@ -157,6 +159,10 @@ const InventoryPage = () => {
                 <td>{item.minStock || 0}</td>
                 <td>₹{item.price?.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                 <td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '-'}</td>
+                <td className={item.expiryDate ? (new Date(item.expiryDate) < new Date() ? 'expired' : '') : ''}>
+                  {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString('en-IN') : '-'}
+                  {item.expiryDate && new Date(item.expiryDate) < new Date() && ' ⛔'}
+                </td>
                 <td>
                   <button className="action-btn edit" onClick={() => editItem(item)}>✏️</button>
                   <button className="action-btn delete" onClick={() => deleteItem(item.id)}>🗑️</button>
@@ -187,6 +193,13 @@ const InventoryPage = () => {
               <input name="quantity" type="number" defaultValue={editingItem?.quantity || 0} placeholder="Quantity *" required min="0" />
               <input name="minStock" type="number" defaultValue={editingItem?.minStock || ''} placeholder="Min Stock" min="0" />
               <input name="price" type="number" step="0.01" defaultValue={editingItem?.price || ''} placeholder="Price ₹ *" required min="0" />
+              <input 
+                name="expiryDate" 
+                type="date" 
+                defaultValue={editingItem?.expiryDate ? new Date(editingItem.expiryDate).toISOString().split('T')[0] : ''} 
+                placeholder="Expiry Date (optional)" 
+              />
+              
               <div className="modal-actions">
                 <button type="button" className="btn cancel" onClick={() => setShowAddModal(false)}>Cancel</button>
                 <button type="submit" className="btn primary">Save Product</button>

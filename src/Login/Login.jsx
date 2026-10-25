@@ -31,7 +31,7 @@ const handleSubmit = async (e) => {
     console.log('🔄 Calling backend...');
     //http://localhost:8080/api/login
     //https://ibbackend-production.up.railway.app/api/login
-    const response = await fetch('https://ibbackend-production.up.railway.app/api/login', {  // or localhost:8080
+    const response = await fetch('http://localhost:8080/api/login', {  // or localhost:8080
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -1,54 +1,56 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import './BillingPage.css';
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import "./BillingPage.css";
 
-const BillingPage = () => {
+const BillingPage = ({setActiveTab }) => {
   const navigate = useNavigate();
-  
+
   // POS State
   const [cart, setCart] = useState([]);
-  const [customer, setCustomer] = useState({ name: '', phone: '', email: '' });
-  const [searchProduct, setSearchProduct] = useState('');
-  const [invoiceNo, setInvoiceNo] = useState('INV-001');
-  const [paymentMethod, setPaymentMethod] = useState('UPI');
+  const [customer, setCustomer] = useState({ name: "", phone: "", email: "" });
+  const [searchProduct, setSearchProduct] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState("INV-001");
+  const [paymentMethod, setPaymentMethod] = useState("UPI");
   const [editingPriceId, setEditingPriceId] = useState(null);
-  
+
   // Dynamic Products
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // ✅ FIXED: GST SLAB FUNCTION
   const getGstSlab = (price) => {
     if (price < 500) return 5;
     if (price < 1500) return 12;
     return 18;
   };
-  
+
   // Fetch products
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const response = await fetch('https://ibbackend-production.up.railway.app/api/products?size=1000');
+        const response = await fetch(
+          "http://localhost:8080/api/products?size=1000"
+        );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
+
         const data = await response.json();
-        const productsWithGst = data.content.map(product => ({
+        const productsWithGst = data.content.map((product) => ({
           id: product.id,
           name: product.name,
           sku: product.sku,
           price: parseFloat(product.price) || 0,
-          hsn: product.hsn || '9999',
+          hsn: product.hsn || "9999",
           gst: getGstSlab(parseFloat(product.price) || 0),
-          stock: product.quantity || 0
+          stock: product.quantity || 0,
         }));
         setProducts(productsWithGst);
       } catch (error) {
-        console.error('Fetch products error:', error);
+        console.error("Fetch products error:", error);
         // Fallback data
         setProducts([
-          { id: 1, name: 'Shirt', hsn: '6109', price: 299, gst: 5, stock: 12 },
-          { id: 2, name: 'Jeans', hsn: '6203', price: 799, gst: 12, stock: 8 },
-          { id: 3, name: 'Laptop', hsn: '8471', price: 45999, gst: 18, stock: 5 }
+          { id: 1, name: "Shirt", hsn: "6109", price: 299, gst: 5, stock: 12 },
+          { id: 2, name: "Jeans", hsn: "6203", price: 799, gst: 12, stock: 8 },
+          { id: 3, name: "Laptop", hsn: "8471", price: 45999, gst: 18, stock: 5 },
         ]);
       } finally {
         setLoading(false);
@@ -56,102 +58,155 @@ const BillingPage = () => {
     };
     fetchProducts();
   }, []);
-  
+
   // Filtered products
-  const filteredProducts = products.filter(p =>
-    p.name.toLowerCase().includes(searchProduct.toLowerCase()) ||
-    p.sku?.toLowerCase().includes(searchProduct.toLowerCase())
+  const filteredProducts = products.filter(
+    (p) =>
+      p.name.toLowerCase().includes(searchProduct.toLowerCase()) ||
+      p.sku?.toLowerCase().includes(searchProduct.toLowerCase())
   );
-  
+
   // Cart totals
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-  const gstAmount = cart.reduce((sum, item) => sum + (item.price * item.qty * item.gst / 100), 0);
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const gstAmount = cart.reduce(
+    (sum, item) => sum + item.price * item.qty * item.gst / 100,
+    0
+  );
   const grandTotal = subtotal + gstAmount;
-  
+
   // ✅ FIXED: Update price
   const updatePrice = (id, newPrice) => {
-    setCart(cart.map(item => 
-      item.id === id ? { ...item, price: parseFloat(newPrice) || item.price } : item
-    ));
+    setCart(
+      cart.map((item) =>
+        item.id === id
+          ? { ...item, price: parseFloat(newPrice) || item.price }
+          : item
+      )
+    );
   };
-  
+
   // Add to cart
   const addToCart = (product) => {
     if (product.stock <= 0) {
       alert(`${product.name} - Out of stock!`);
       return;
     }
-    const existing = cart.find(item => item.id === product.id);
+    const existing = cart.find((item) => item.id === product.id);
     if (existing) {
       if (existing.qty >= product.stock) {
-        alert('Stock limit reached!');
+        alert("Stock limit reached!");
         return;
       }
-      setCart(cart.map(item => 
-        item.id === product.id ? { ...item, qty: item.qty + 1 } : item
-      ));
+      setCart(
+        cart.map((item) =>
+          item.id === product.id ? { ...item, qty: item.qty + 1 } : item
+        )
+      );
     } else {
       setCart([...cart, { ...product, qty: 1 }]);
     }
   };
-  
+
   // Update quantity
   const updateQty = (id, qty) => {
     if (qty <= 0) {
       removeFromCart(id);
       return;
     }
-    const productStock = products.find(p => p.id === id)?.stock || 0;
+    const productStock = products.find((p) => p.id === id)?.stock || 0;
     if (qty > productStock) {
-      alert('Stock exceeded!');
+      alert("Stock exceeded!");
       return;
     }
-    setCart(cart.map(item => 
-      item.id === id ? { ...item, qty } : item
-    ));
+    setCart(
+      cart.map((item) =>
+        item.id === id ? { ...item, qty } : item
+      )
+    );
   };
-  
+
   const removeFromCart = (id) => {
-    setCart(cart.filter(item => item.id !== id));
+    setCart(cart.filter((item) => item.id !== id));
   };
-  
-  // ✅ FIXED: Invoice number generation
+
   const generateInvoiceNo = () => {
-    const num = parseInt(invoiceNo.split('-')[1]) || 1;
-    return `INV-${(num + 1).toString().padStart(3, '0')}`;
+    const num = parseInt(invoiceNo.split("-")[1]) || 1;
+    return `INV-${(num + 1).toString().padStart(3, "0")}`;
   };
-  
-  // Generate invoice
-  const generateInvoice = () => {
+
+  // ✅ NEW: confirmation before payment
+  const handlePayClick = () => {
+    const proceed = window.confirm(
+      "Have you collected the payment?\n\n" +
+      "Click Proceed to generate the invoice and move to Sell page,\n" +
+      "or click Cancel to stay on this page."
+    );
+
+    if (!proceed) return; // stay on Billing page
+
+    handlePay(); // proceed with actual payment flow
+  };
+
+  const handlePay = async () => {
     if (cart.length === 0) {
-      alert('Add items to cart first!');
+      alert("Add items to cart first!");
       return;
     }
-    
-    const invoice = {
-      no: invoiceNo,
-      date: new Date().toLocaleDateString('en-IN'),
-      customer,
-      items: cart.map(item => ({
-        ...item,
-        itemGst: item.price * item.qty * item.gst / 100,
-        itemTotal: item.price * item.qty + (item.price * item.qty * item.gst / 100)
+
+    if (!customer.name || !customer.phone) {
+      alert("Please enter customer name and phone!");
+      return;
+    }
+
+    const invoiceRequest = {
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      paymentMethod: paymentMethod,
+      items: cart.map((item) => ({
+        productId: Number(item.id),
+        name: item.name,
+        hsn: item.hsn || "9999",
+        gstRate: Number(item.gst),
+        price: Number(item.price),
+        qty: Number(item.qty) || 1,
       })),
-      subtotal,
-      gst: gstAmount,
-      total: grandTotal,
-      payment: paymentMethod
     };
-    
-    console.log('Invoice:', invoice);
-    alert(`✅ Invoice ${invoiceNo} generated!\nTotal: ₹${grandTotal.toLocaleString()}`);
-    
-    // Reset form
-    setCart([]);
-    setCustomer({ name: '', phone: '', email: '' });
-    setInvoiceNo(generateInvoiceNo());
+
+    try {
+      console.log("Sending:", JSON.stringify(invoiceRequest, null, 2));
+      const response = await fetch("http://localhost:8080/api/invoices", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(invoiceRequest),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || `HTTP ${response.status}`);
+      }
+
+      const savedInvoice = await response.json();
+
+      alert(
+        `✅ Invoice ${savedInvoice.invoiceNo} generated!\n` +
+        `Total: ₹${grandTotal.toLocaleString()}\n` +
+        "Stock deducted successfully!"
+      );
+
+      // Reset form & navigate
+      setCart([]);
+      setCustomer({ name: "", phone: "", email: "" });
+      if (setActiveTab) {
+      setActiveTab("sell");
+    } // show new invoice on Sell page
+    } catch (error) {
+      console.error("Invoice creation failed:", error);
+      alert(`❌ Payment failed: ${error.message}`);
+    }
   };
-  
+
   if (loading) {
     return (
       <div className="billing-page">
@@ -159,16 +214,24 @@ const BillingPage = () => {
       </div>
     );
   }
-  
+const backOnDashboard = () => {
+    // Switch to Billing tab from Sell
+    if (setActiveTab) {
+      setActiveTab("dashboard");
+    }
+  };
   return (
     <div className="billing-page">
       <header className="page-header">
-        <button className="back-btn" onClick={() => navigate('/dashboard')}>
+         <button className="back-btn" onClick={backOnDashboard}>
           ← Back to Dashboard
         </button>
         <div>
           <h1>🛒 POS Billing</h1>
-          <p>Invoice #{invoiceNo} | Cart: {cart.reduce((sum, i) => sum + i.qty, 0)} items</p>
+          <p>
+            Invoice #{invoiceNo} | Cart:{" "}
+            {cart.reduce((sum, i) => sum + i.qty, 0)} items
+          </p>
         </div>
       </header>
 
@@ -177,22 +240,28 @@ const BillingPage = () => {
         <div className="billing-left">
           <div className="customer-section">
             <h3>👤 Customer Details</h3>
-            <input 
-              placeholder="Customer Name" 
+            <input
+              placeholder="Customer Name"
               value={customer.name}
-              onChange={e => setCustomer({...customer, name: e.target.value})}
+              onChange={(e) =>
+                setCustomer({ ...customer, name: e.target.value })
+              }
               className="input-field"
             />
-            <input 
-              placeholder="📱 Phone" 
+            <input
+              placeholder="📱 Phone"
               value={customer.phone}
-              onChange={e => setCustomer({...customer, phone: e.target.value})}
+              onChange={(e) =>
+                setCustomer({ ...customer, phone: e.target.value })
+              }
               className="input-field"
             />
-            <input 
-              placeholder="✉️ Email (optional)" 
+            <input
+              placeholder="✉️ Email (optional)"
               value={customer.email}
-              onChange={e => setCustomer({...customer, email: e.target.value})}
+              onChange={(e) =>
+                setCustomer({ ...customer, email: e.target.value })
+              }
               className="input-field"
             />
           </div>
@@ -200,21 +269,29 @@ const BillingPage = () => {
           <div className="products-section">
             <div className="section-header">
               <h3>📦 Products ({filteredProducts.length})</h3>
-              <input 
+              <input
                 className="search-input"
                 placeholder="🔍 Search products or scan barcode..."
                 value={searchProduct}
-                onChange={e => setSearchProduct(e.target.value)}
+                onChange={(e) => setSearchProduct(e.target.value)}
               />
             </div>
             <div className="products-grid">
               {filteredProducts.length > 0 ? (
-                filteredProducts.map(product => (
-                  <div key={product.id} className="product-card" onClick={() => addToCart(product)}>
+                filteredProducts.map((product) => (
+                  <div
+                    key={product.id}
+                    className="product-card"
+                    onClick={() => addToCart(product)}
+                  >
                     <div className="product-info">
                       <h4>{product.name}</h4>
-                      <p className="price-gst">₹{product.price.toLocaleString()} + {product.gst}% GST</p>
-                      <small>HSN: {product.hsn} | Stock: {product.stock}</small>
+                      <p className="price-gst">
+                        ₹{product.price.toLocaleString()} + {product.gst}% GST
+                      </p>
+                      <small>
+                        HSN: {product.hsn} | Stock: {product.stock}
+                      </small>
                     </div>
                   </div>
                 ))
@@ -228,48 +305,79 @@ const BillingPage = () => {
         {/* Right: Cart + Payment */}
         <div className="billing-right">
           <div className="cart-section">
-            <h3>🛒 Cart ({cart.reduce((sum, i) => sum + i.qty, 0)} items)</h3>
+            <h3>
+              🛒 Cart ({cart.reduce((sum, i) => sum + i.qty, 0)} items)
+            </h3>
             <div className="cart-items">
-              {cart.map(item => {
-                const itemGstAmount = (item.price * item.qty * item.gst / 100);
-                const itemTotalWithGst = (item.price * item.qty) + itemGstAmount;
-                
+              {cart.map((item) => {
+                const itemGstAmount =
+                  (item.price * item.qty * item.gst) / 100;
+                const itemTotalWithGst =
+                  item.price * item.qty + itemGstAmount;
+
                 return (
                   <div key={item.id} className="cart-item">
                     <div className="cart-item-left">
                       <h4>{item.name}</h4>
                       <div className="cart-price-row">
                         {editingPriceId === item.id ? (
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             step="0.01"
-                            value={item.price} 
-                            onChange={(e) => updatePrice(item.id, e.target.value)}
+                            value={item.price}
+                            onChange={(e) =>
+                              updatePrice(item.id, e.target.value)
+                            }
                             onBlur={() => setEditingPriceId(null)}
                             autoFocus
                             className="price-input"
                           />
                         ) : (
-                          <span 
+                          <span
                             className="price-display"
                             onClick={() => setEditingPriceId(item.id)}
                           >
-                            ₹{item.price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                            ₹{item.price.toLocaleString("en-IN", {
+                              minimumFractionDigits: 2,
+                            })}
                           </span>
                         )}
-                        <span className="gst-equation">+ {item.gst}% GST</span>
+                        <span className="gst-equation">
+                          + {item.gst}% GST
+                        </span>
                         <span className="item-total-equation">
-                          = ₹{itemTotalWithGst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                          = ₹{itemTotalWithGst.toLocaleString("en-IN", {
+                            minimumFractionDigits: 2,
+                          })}
                         </span>
                       </div>
-                      <p className="qty-text">Qty: {item.qty} | Stock: {item.stock}</p>
+                      <p className="qty-text">
+                        Qty: {item.qty} | Stock: {item.stock}
+                      </p>
                     </div>
                     <div className="cart-item-right">
                       <div className="qty-controls">
-                        <button onClick={() => updateQty(item.id, item.qty - 1)}>-</button>
+                        <button
+                          onClick={() =>
+                            updateQty(item.id, item.qty - 1)
+                          }
+                        >
+                          -
+                        </button>
                         <span>{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, item.qty + 1)}>+</button>
-                        <button className="remove" onClick={() => removeFromCart(item.id)}>✕</button>
+                        <button
+                          onClick={() =>
+                            updateQty(item.id, item.qty + 1)
+                          }
+                        >
+                          +
+                        </button>
+                        <button
+                          className="remove"
+                          onClick={() => removeFromCart(item.id)}
+                        >
+                          ✕
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -283,7 +391,13 @@ const BillingPage = () => {
                 <span>₹{subtotal.toLocaleString()}</span>
               </div>
               <div className="total-row gst-row">
-                <span>GST ({cart.length > 0 ? `${((gstAmount/subtotal)*100).toFixed(1)}%` : '0%'}):</span>
+                <span>
+                  GST (
+                  {cart.length > 0
+                    ? `${((gstAmount / subtotal) * 100).toFixed(1)}%`
+                    : "0%"}
+                  ):
+                </span>
                 <span>₹{gstAmount.toLocaleString()}</span>
               </div>
               <div className="grand-total">
@@ -293,13 +407,20 @@ const BillingPage = () => {
             </div>
 
             <div className="payment-section">
-              <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="payment-select">
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="payment-select"
+              >
                 <option>UPI (PhonePe/GPay)</option>
                 <option>Card</option>
                 <option>Cash</option>
                 <option>Wallet</option>
               </select>
-              <button className="pay-btn primary" onClick={generateInvoice}>
+              <button
+                className="pay-btn primary"
+                onClick={handlePayClick}
+              >
                 💳 Pay ₹{grandTotal.toLocaleString()}
               </button>
             </div>

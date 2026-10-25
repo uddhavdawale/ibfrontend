@@ -37,3 +37,11 @@
 /* Reuse existing modal styles from Dashboard.css */
 
 
+.expired {
+  color: #e74c3c !important;
+  font-weight: bold;
+}
+
+.low-stock td.expired {
+  background: #ffebee;
+}

@@ -49,7 +49,7 @@ const SignupPage = () => {
       };
       //http://localhost:8080/api/signup
       //  https://ibbackend-production.up.railway.app/api/signup
-      const response = await fetch('https://ibbackend-production.up.railway.app/api/signup', {
+      const response = await fetch('http://localhost:8080/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

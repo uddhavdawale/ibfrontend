@@ -6,9 +6,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://ibbackend-production.up.railway.app',
-        changeOrigin: true,
-        secure: false,
+        target: 'http://localhost:8080',  // Fixed: Added //
+       // changeOrigin: true,
+       // secure: false,
       }
     }
   }

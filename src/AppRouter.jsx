@@ -9,6 +9,7 @@ import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
 import SignupPage from './Login/SignupPage.jsx';
 import SellPage from './sell/SellPage.jsx';
+import SoonExpiryItems from '././Inventory/SoonExpiryItems.jsx';
 
 const AppRoutes = () => {
     //navigate hook for programmatic navigation
@@ -112,14 +113,25 @@ const AppRoutes = () => {
             : <Navigate to="/login" replace />
         }
       />
+      <Route 
+        path="/billing" 
+        element={
+          isAuthenticated 
+            ? <BillingPage />
+            : <Navigate to="/login" replace />
+        }
+      />
+       <Route  path="/sell" element={  isAuthenticated   ? <SellPage />  : <Navigate to="/login" replace />  }      />
   
-
+    <Route  path="/inventory" element={  isAuthenticated   ? <InventoryPage />  : <Navigate to="/login" replace />  }      />
+  
       {/* CATCH-ALL → LOGIN */}
       <Route path="*" element={<Navigate to="/login" replace />} />
-      <Route path="/billing" element={<BillingPage />} />
-      <Route path="/inventory" element={<InventoryPage />} />
+   
+  
       <Route path="/signup" element={<SignupPage />} /> 
-      <Route path="/sell" element={<SellPage />} />
+     
+      <Route path="/inventory/soon-expiry" element={<SoonExpiryItems />} />
     </Routes>
   );
 };

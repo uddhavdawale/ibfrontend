@@ -3,15 +3,27 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  /* HD Inventory Dashboard Background */
+  background: 
+    /* Dark overlay for readability */
+    linear-gradient(rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.7) 100%),
+    /* Your HD image */
+    url('/images/IB-bg.png');
+  background-size: cover;
+  background-position: center 30%;
+  background-repeat: no-repeat;
   padding: 20px;
   font-family: 'Segoe UI', Roboto, sans-serif;
+  position: relative;
 }
 
 .login-card {
-  background: white;
+  background: rgba(255, 255, 255, 0.95);  /* Slightly transparent */
+  backdrop-filter: blur(20px);            /* Glass effect */
+  border: 1px solid rgba(255,255,255,0.3);
+  /* Keep all your existing properties */
   border-radius: 24px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
   width: 100%;
   max-width: 420px;
   padding: 48px 40px;

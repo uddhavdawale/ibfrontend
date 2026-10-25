@@ -511,3 +511,16 @@ tr.low-stock:hover {
   .username-text { display: none; }
   .dropdown-icon { display: none; }
 }
+
+.expiry-alert {
+  background: linear-gradient(135deg, #fef5e7 0%, #ffecd2 100%);
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+
+.expiry-row.priority-high { background: #fee2e2; }
+.expiry-row.priority-medium { background: #fef3c7; }
+
+.days-urgent { color: #dc2626; font-weight: 700; }
+.days-warning { color: #ea580c; font-weight: 600; }

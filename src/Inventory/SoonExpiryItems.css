@@ -1,0 +1,27 @@
+/* Soon Expiry Table */
+.soon-expiry-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.soon-expiry-table th,
+.soon-expiry-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.soon-expiry-table th {
+  background: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.soon-expiry-table .status-warning {
+  background: #fffbeb;
+}
+
+.soon-expiry-table .status-critical {
+  background: #fef2f2;
+}
