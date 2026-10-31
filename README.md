@@ -16,6 +16,19 @@ A React application that pre-screens EV bike loan applications using CIBIL API, 
 3. Start the development server: `npm run dev`
 4. Open http://localhost:5173 in your browser
 
+## Frontend logging
+
+Use the shared logger from `src/utils/logger.js` instead of calling `console` directly:
+
+```js
+import logger from './utils/logger';
+
+logger.info('Action completed');
+logger.error('Request failed', error);
+```
+
+Development defaults to `debug`; production defaults to `warn`. Set `VITE_LOG_LEVEL` to `debug`, `info`, `warn`, `error`, or `silent` to override the level. The logger redacts common credentials and personal fields before writing to the browser console.
+
 ## Business Model
 
 - Pre-screen loans to reduce rejections

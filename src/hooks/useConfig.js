@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import logger from '../utils/logger';
 
 export const useConfig = () => {
   const [config, setConfig] = useState(null);
@@ -9,7 +10,7 @@ export const useConfig = () => {
       .then(res => res.json())
       .then(setConfig)
       .catch(err => {
-        console.warn('Config not found, using defaults');
+        logger.warn('Config fetch failed; using defaults', err);
         setConfig({
           shop: { name: 'Your Shop Name', gstin: '', address: '', phone: '' },
           features: { gst_enabled: true, offline_mode: true }

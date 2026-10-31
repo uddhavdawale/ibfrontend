@@ -1,0 +1,11 @@
+Product,SKU,Qty,Min Stock,Price,Category
+Rice,RICE-001,20,5,250,Groceries
+Wheat,WHEAT-002,35,10,180,Groceries
+Soap,SOAP-003,50,15,80,Personal Care
+Milk,MILK-004,18,8,55,Dairy
+Tea,TEA-005,42,12,220,Beverages
+Laptop,LAPTOP-006,7,2,45000,Electronics
+Notebook,NOTEBOOK-007,120,30,35,Stationery
+Shampoo,SHAMP-008,60,20,180,Personal Care
+Salt,SALT-009,90,25,40,Groceries
+Coffee,COFFEE-010,15,5,320,Beverages

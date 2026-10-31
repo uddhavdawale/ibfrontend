@@ -1,126 +1,205 @@
-import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Dashboard from './Dashboard/DashboardEntry.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
 import Login from './Login/Login.jsx';
 import App from './App.jsx';
-import { useNavigate } from 'react-router-dom';
 import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
 import SignupPage from './Login/SignupPage.jsx';
 import SellPage from './sell/SellPage.jsx';
+import MfaScreen from './auth/mfa/MfaScreen.jsx';
+import { resolveMfaContext } from './auth/mfa/mfaService.js';
+import { refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile } from './Config/api.js';
+
+const readPendingMfaUser = () => {
+  const stored = localStorage.getItem('pendingMfaUser');
+  if (!stored) return null;
+
+  try {
+    return JSON.parse(stored);
+  } catch {
+    localStorage.removeItem('pendingMfaUser');
+    return null;
+  }
+};
+
+const clearAuthStorage = () => {
+  clearAuthState();
+  setAccessToken(null);
+  localStorage.removeItem('pendingMfaUser');
+  localStorage.removeItem('shopProfile');
+  sessionStorage.removeItem('mfaVerified');
+};
 
 const AppRoutes = () => {
-    //navigate hook for programmatic navigation
-    const navigate = useNavigate();
-  // Proper Auth State (NOT hardcoded true)
+  const navigate = useNavigate();
+  const location = useLocation();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const location = useLocation();
+  const [toast, setToast] = useState(null);
 
-  // Check localStorage on load
-  useEffect(() => {
-
-  // localStorage.removeItem('isAuthenticated');
-  //  localStorage.removeItem('user');
-    
-    // Production: Check valid auth
-    const auth = localStorage.getItem('isAuthenticated');
-    const storedUser = localStorage.getItem('user');
-    if (auth === 'true' && storedUser) {
-      setIsAuthenticated(true);
-      setUser(JSON.parse(storedUser));
+  const logoutUser = useCallback(async (callBackend = true) => {
+    try {
+      if (callBackend) await logoutRequest().catch(() => {});
+    } finally {
+      clearAuthStorage();
+      emitAuthLogout();
+      setIsAuthenticated(false);
+      setUser(null);
+      if (window.location.pathname !== '/login') {
+        navigate('/login', { replace: true });
+      }
     }
-    setLoading(false);
+  }, [navigate]);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => logoutUser(false));
+    return () => setUnauthorizedHandler(null);
+  }, [logoutUser]);
+
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key === 'auth_logout') {
+        clearAuthStorage();
+        emitAuthToast('Your session expired. Please log in again.');
+        setIsAuthenticated(false);
+        setUser(null);
+        navigate('/login', { replace: true });
+      }
+    };
+
+    const onToast = (event) => {
+      const message = event?.detail?.message || 'Your session expired. Please log in again.';
+      setToast(message);
+      window.setTimeout(() => setToast(null), 3200);
+    };
+
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('auth:toast', onToast);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('auth:toast', onToast);
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    let active = true;
+    const restoreSession = async () => {
+      try {
+        const storedUser = localStorage.getItem('user');
+        const parsedUser = storedUser ? JSON.parse(storedUser) : null;
+        if (!parsedUser) return;
+
+        await refreshAccessToken(localStorage.getItem('username') || parsedUser.name || '');
+
+        let nextUser = parsedUser;
+        try {
+          const profile = await getCurrentUserProfile();
+          nextUser = {
+            ...parsedUser,
+            ...profile,
+            id: profile.id ?? parsedUser.id ?? null,
+            username: profile.username || profile.ownerName || profile.name || parsedUser.username || parsedUser.name || 'user',
+            name: profile.ownerName || profile.name || profile.businessName || parsedUser.name || parsedUser.username || 'User',
+            email: profile.email || parsedUser.email || '',
+            role: profile.role || parsedUser.role || 'ADMIN',
+          };
+        } catch {
+          // Fall back to the stored session user if the profile endpoint is unavailable.
+        }
+
+        if (active) {
+          setUser(nextUser);
+          setIsAuthenticated(true);
+          localStorage.setItem('user', JSON.stringify(nextUser));
+        }
+      } catch {
+        clearAuthStorage();
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    restoreSession();
+    return () => { active = false; };
   }, []);
 
-  // Block browser back (professional UX)
+  const loginUser = (userData) => {
+    const normalizedUser = {
+      ...userData,
+      username: userData?.username || userData?.name || 'user',
+      name: userData?.name || userData?.username || 'User'
+    };
+
+    const backendConfig = userData?.config || {};
+    const mfaEnabled = resolveMfaContext(backendConfig, userData).enabled;
+
+    if (mfaEnabled) {
+      const pendingUser = { ...normalizedUser, mfaRequired: true, config: backendConfig };
+      setIsAuthenticated(false);
+      setUser(pendingUser);
+      localStorage.setItem('pendingMfaUser', JSON.stringify(pendingUser));
+      navigate('/mfa', { replace: true });
+      return;
+    }
+
+    setIsAuthenticated(true);
+    setUser(normalizedUser);
+    localStorage.setItem('user', JSON.stringify(normalizedUser));
+    localStorage.removeItem('pendingMfaUser');
+    localStorage.removeItem('shopProfile');
+    navigate('/dashboard', { replace: true });
+  };
+
+  const handleMfaVerified = (verifiedUser) => {
+    const normalizedUser = {
+      ...verifiedUser,
+      username: verifiedUser?.username || verifiedUser?.name || 'user',
+      name: verifiedUser?.name || verifiedUser?.username || 'User'
+    };
+
+    setIsAuthenticated(true);
+    setUser(normalizedUser);
+    localStorage.setItem('user', JSON.stringify(normalizedUser));
+    localStorage.removeItem('pendingMfaUser');
+    sessionStorage.setItem('mfaVerified', 'true');
+    navigate('/dashboard', { replace: true });
+  };
+
   useEffect(() => {
-    if (isAuthenticated && (location.pathname === '/dashboard' || location.pathname === '/profile')) {
+    if (isAuthenticated && ['/dashboard', '/profile'].includes(location.pathname)) {
       window.history.pushState(null, null, location.pathname);
     }
   }, [isAuthenticated, location]);
 
-  // Login success handler
-  const loginUser = (userData) => {
-    setIsAuthenticated(true);
-    setUser(userData);
-    localStorage.setItem('isAuthenticated', 'true');
-    localStorage.setItem('user', JSON.stringify(userData));
-     navigate('/dashboard', { replace: true }); 
-  };
-
-  // Logout handler
-  const logoutUser = () => {
-    setIsAuthenticated(false);
-    setUser(null);
-    localStorage.clear();
-    navigate('/login', { replace: true });
-  };
-
-  // Loading screen
   if (loading) {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#f8fafc',
-        fontSize: '18px',
-        fontFamily: 'Segoe UI, Roboto, sans-serif'
-      }}>
-        Loading...
-      </div>
-    );
+    return <div className="loading-screen">Loading...</div>;
   }
 
+  const pendingMfaUser = readPendingMfaUser();
+
   return (
-    <Routes>
-      {/* LOGIN ALWAYS FIRST */}
-      <Route 
-        path="/login" 
-        element={<Login onLogin={loginUser} />}
-      />
+    <>
+      {toast && (
+        <div className="session-toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
 
-      {/* Loan App - Public only */}
-      <Route 
-        path="/" 
-        element={
-          !isAuthenticated 
-            ? <App />
-            : <Navigate to="/dashboard" replace />
-        }
-      />
-
-      {/* PROTECTED ROUTES - Login REQUIRED */}
-      <Route 
-        path="/dashboard" 
-        element={
-          isAuthenticated 
-            ? <Dashboard username={user?.name || 'Uddhav'} onLogout={logoutUser} />
-            : <Navigate to="/login" replace />
-        }
-      />
-      
-      <Route 
-        path="/profile" 
-        element={
-          isAuthenticated 
-            ? <ProfilePage username={user?.name || 'Uddhav Dawale'} onLogout={logoutUser} />
-            : <Navigate to="/login" replace />
-        }
-      />
-  
-
-      {/* CATCH-ALL → LOGIN */}
+      <Routes>
+      <Route path="/login" element={<Login onLogin={loginUser} />} />
+      <Route path="/mfa" element={user?.mfaRequired || pendingMfaUser ? <MfaScreen user={user || pendingMfaUser} onVerified={handleMfaVerified} onCancel={logoutUser} /> : <Navigate to="/login" replace />} />
+      <Route path="/" element={!isAuthenticated ? <App /> : <Navigate to="/dashboard" replace />} />
+      <Route path="/dashboard" element={isAuthenticated ? <Dashboard username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
+      <Route path="/profile" element={isAuthenticated ? <ProfilePage username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
+      <Route path="/billing" element={isAuthenticated ? <BillingPage /> : <Navigate to="/login" replace />} />
+      <Route path="/inventory" element={isAuthenticated ? <InventoryPage /> : <Navigate to="/login" replace />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/sell" element={isAuthenticated ? <SellPage /> : <Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
-      <Route path="/billing" element={<BillingPage />} />
-      <Route path="/inventory" element={<InventoryPage />} />
-      <Route path="/signup" element={<SignupPage />} /> 
-      <Route path="/sell" element={<SellPage />} />
     </Routes>
+    </>
   );
 };
 

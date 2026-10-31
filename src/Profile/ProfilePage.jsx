@@ -1,18 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './ProfilePage.css';
 import { useNavigate } from 'react-router-dom';
+import { getCurrentUserProfile } from '../Config/api';
 
-const ProfilePage = ({ username = "Uddhav Dawale", onLogout }) => {
+const ProfilePage = ({ username = "User", onLogout }) => {
   const [isEditing, setIsEditing] = useState(false);
-    const navigate = useNavigate();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState('');
   const [profileData, setProfileData] = useState({
     name: username,
-    email: "uddhav.dawale@example.com",
-    phone: "+91 98765 43210",
-    business: "EV Loan Platform",
-    location: "Pune, Maharashtra",
-    joined: "March 2026"
+    email: '',
+    phone: '',
+    business: '',
+    location: '',
+    joined: 'Recent'
   });
+
+  useEffect(() => {
+    let active = true;
+
+    const loadUserProfile = async () => {
+      try {
+        const profile = await getCurrentUserProfile();
+        if (!active) return;
+
+        const locationParts = [profile.city, profile.address].filter(Boolean);
+        setProfileData({
+          name: profile.ownerName || profile.name || profile.businessName || username,
+          email: profile.email || '',
+          phone: profile.phone || '',
+          business: profile.businessName || profile.business || '',
+          location: locationParts.join(', ') || 'N/A',
+          joined: profile.createdAt ? new Date(profile.createdAt).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) : 'Recent'
+        });
+      } catch (error) {
+        if (!active) return;
+        setProfileError(error.message || 'Unable to load profile');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadUserProfile();
+    return () => { active = false; };
+  }, [username]);
 
   const handleEditToggle = () => {
     setIsEditing(!isEditing);
@@ -21,7 +53,7 @@ const ProfilePage = ({ username = "Uddhav Dawale", onLogout }) => {
   const handleSave = (e) => {
     e.preventDefault();
     setIsEditing(false);
-    // Here you would typically save to backend
+    // Profile update should be sent to a backend update endpoint in a future API version.
   };
 
   return (
@@ -55,6 +87,13 @@ const ProfilePage = ({ username = "Uddhav Dawale", onLogout }) => {
 
       {/* PROFILE CONTENT */}
       <div className="profile-content">
+        {profileError && (
+          <div className="profile-error">{profileError}</div>
+        )}
+
+        {loading ? (
+          <div className="profile-card loading-state">Loading profile...</div>
+        ) : (
         <div className="profile-card">
           <h2>Account Details</h2>
           <div className="profile-field">
@@ -117,6 +156,7 @@ const ProfilePage = ({ username = "Uddhav Dawale", onLogout }) => {
             <span>{profileData.joined}</span>
           </div>
         </div>
+        )}
 
         {/* ACTIONS */}
         <div className="profile-actions">

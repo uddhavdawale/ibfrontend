@@ -1,9 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './SignupPage.css';
+import { API_BASE_URL } from '../Config/api';
+
+const themeOptions = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'aurora', label: 'Aurora' }
+];
 
 const SignupPage = () => {
   const navigate = useNavigate();
+  const [theme, setTheme] = useState(() => localStorage.getItem('ib-theme') || 'light');
   
   const [role, setRole] = useState('retailer');
   const [formData, setFormData] = useState({
@@ -20,6 +28,11 @@ const SignupPage = () => {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('ib-theme', theme);
+  }, [theme]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -42,26 +55,37 @@ const SignupPage = () => {
     setLoading(true);
     try {
       // 👈 ENCRYPTION READY
+      const signupFields = { ...formData };
+      delete signupFields.confirmPassword;
       const payload = {
         role,
-        ...formData,
-        passwordHash: btoa(formData.password)  // Frontend prep
+        ...signupFields,
+        // Preserve the backend's existing passwordHash request field.
+        // This is Base64 encoding, not BCrypt; the backend must BCrypt-hash it.
+        passwordHash: btoa(formData.password),
       };
       //http://localhost:8080/api/signup
       //  https://ibbackend-production.up.railway.app/api/signup
-      const response = await fetch('https://ibbackend-production.up.railway.app/api/signup', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = { message: responseText };
+      }
       
-      if (data.success) {
+      if (response.ok && data.success !== false) {
         alert(`${role.toUpperCase()} Account Created!`);
         navigate('/login');
       } else {
-        setError(data.message || 'Signup failed');
+        setError(data.message || `Signup failed (${response.status}). Check the backend logs.`);
       }
     } catch (err) {
       setError('Network error');
@@ -74,18 +98,67 @@ const SignupPage = () => {
   const isPartner = role === 'partner';
 
   return (
-    <div className="signup-container">
-      <div className="signup-card">
-        {/* Header */}
-        <div className="auth-logo">
-          <span className="logo-icon">📦</span>
-          <span className="logo-text">IB Platform</span>
-        </div>
-        
-        <h1>Create Account</h1>
-        <p>Join as Retailer or CA Partner</p>
+    <div className={`signup-page theme-${theme}`}>
+      <div className="signup-visual">
+        <div className="brand-row">
+          <div className="auth-logo">
+            <span className="logo-icon">📦</span>
+            <span className="logo-text">Veyra</span>
+          </div>
 
-        {/* Role Dropdown */}
+          <div className="signup-theme-switcher" aria-label="Theme selector">
+            {themeOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={theme === option.value ? 'theme-option active' : 'theme-option'}
+                onClick={() => setTheme(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <h1>Launch smarter operations from day one.</h1>
+        <p>
+          Build your retail or advisory practice with one dashboard for inventory, billing,
+          collections, and GST-ready reporting.
+        </p>
+
+        <div className="visual-stats">
+          <div className="mini-stat">
+            <strong>18k+</strong>
+            <span>Accounts onboarded</span>
+          </div>
+          <div className="mini-stat">
+            <strong>99.2%</strong>
+            <span>Data accuracy</span>
+          </div>
+          <div className="mini-stat">
+            <strong>24/7</strong>
+            <span>Monitoring</span>
+          </div>
+        </div>
+
+        <div className="feature-list">
+          <div>Fast onboarding</div>
+          <div>GST ready</div>
+          <div>Inventory aware</div>
+          <div>Partner friendly</div>
+        </div>
+      </div>
+
+      <div className="signup-card">
+        <div className="login-header">
+          <div className="logo">
+            <span className="logo-icon">📦</span>
+            <span className="logo-text">Create Account</span>
+          </div>
+          <h1>Join Veyra</h1>
+          <p>Set up your retailer or CA partner profile.</p>
+        </div>
+
         <div className="input-group">
           <label>Account Type *</label>
           <div className="select-wrapper">
@@ -101,16 +174,13 @@ const SignupPage = () => {
           </div>
         </div>
 
-        {/* Error */}
         {error && (
           <div className="error-message">
             <span>⚠️</span> {error}
           </div>
         )}
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="signup-form">
-          {/* Common Fields */}
           <div className="input-group">
             <label>{isRetailer ? 'Shop Name' : 'Practice Name'} *</label>
             <div className="input-wrapper">
@@ -150,7 +220,6 @@ const SignupPage = () => {
             </div>
           </div>
 
-          {/* Role-Specific Fields */}
           {isRetailer && (
             <>
               <div className="input-group">
@@ -206,7 +275,6 @@ const SignupPage = () => {
             </>
           )}
 
-          {/* Password */}
           <div className="input-group">
             <label>Password *</label>
             <div className="input-wrapper">
@@ -223,7 +291,6 @@ const SignupPage = () => {
             </div>
           </div>
 
-          {/* Address */}
           <div className="input-group">
             <label>Address</label>
             <div className="input-wrapper">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './BillingPage.css';
+import logger from '../utils/logger';
 
 const BillingPage = () => {
   const navigate = useNavigate();
@@ -59,17 +60,7 @@ const BillingPage = () => {
 
   // Generate invoice
   const generateInvoice = () => {
-    const invoice = {
-      no: invoiceNo,
-      date: new Date().toISOString().split('T')[0],
-      customer,
-      items: cart,
-      subtotal,
-      gst: gstAmount,
-      total: grandTotal,
-      payment: paymentMethod
-    };
-    console.log('Invoice:', invoice); // Replace with PDF/print
+    logger.info('Invoice generated');
     alert(`✅ Invoice ${invoiceNo} generated!\nTotal: ₹${grandTotal.toLocaleString()}\nDownload/print ready`);
     
     // Reset for next customer

@@ -1,0 +1,5 @@
+Product,SKU,Qty,Min Stock,Price,Category
+Rice,RICE-001,20,5,250,Groceries
+Wheat,WHEAT-002,35,10,180,Groceries
+Soap,SOAP-003,50,15,80,Personal Care
+Broken,INVALID-004,-5,0,0,Test
