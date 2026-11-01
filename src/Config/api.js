@@ -7,6 +7,7 @@ export const API_ENDPOINTS = {
   users: `${API_BASE_URL}/api/users`,
   userById: (id) => `${API_BASE_URL}/api/users/${id}`,
   userStatusById: (id) => `${API_BASE_URL}/api/users/${id}/status`,
+  userResendPasswordById: (id) => `${API_BASE_URL}/api/users/${id}/resend-password`,
   refresh: `${API_BASE_URL}/api/auth/refresh`,
   logout: `${API_BASE_URL}/api/auth/logout`,
   userProfile: `${API_BASE_URL}/api/users/me`,

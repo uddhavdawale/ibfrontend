@@ -1,21 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { API_ENDPOINTS, apiFetch } from '../Config/api';
+import { API_ENDPOINTS, apiFetch, getAuthContext } from '../Config/api';
 import { STORE_ROLES } from './storeRoles';
 import './StoreUsersPage.css';
+
+const PAGE_SIZE = 10;
 
 const ROLE_OPTIONS = [
   STORE_ROLES.STORE_ADMIN,
   STORE_ROLES.STORE_MANAGER,
+  STORE_ROLES.BILLING_MANAGER,
   STORE_ROLES.STORE_BILLING_VIEWER,
+  STORE_ROLES.INVENTORY_MANAGER,
   STORE_ROLES.STORE_INVENTORY_VIEWER,
+  STORE_ROLES.AUDIT_RELATED,
 ];
 
 const ROLE_LABELS = {
   [STORE_ROLES.STORE_ADMIN]: 'Store Admin',
   [STORE_ROLES.STORE_MANAGER]: 'Store Manager',
+  [STORE_ROLES.BILLING_MANAGER]: 'Billing Manager',
   [STORE_ROLES.STORE_BILLING_VIEWER]: 'Store Billing Viewer',
+  [STORE_ROLES.INVENTORY_MANAGER]: 'Inventory Manager',
   [STORE_ROLES.STORE_INVENTORY_VIEWER]: 'Store Inventory Viewer',
+  [STORE_ROLES.AUDIT_RELATED]: 'Audit Manager',
 };
 
 const toRoleLabel = (role) => ROLE_LABELS[String(role || '').trim().toLowerCase()] || String(role || 'Unknown');
@@ -44,8 +52,55 @@ const normalizeUser = (user, index) => {
     email: String(user?.email || '').trim(),
     phone: String(user?.phone || '').trim(),
     role,
+    tenantId: String(user?.tenantId ?? user?.tenant?.id ?? '').trim(),
+    shopId: String(user?.shopId ?? user?.shop?.id ?? '').trim(),
+    ownerName: String(user?.ownerName || '').trim(),
     disabled: disabledByStatus || disabledFlag,
   };
+};
+
+const toLowerText = (value) => String(value || '').trim().toLowerCase();
+
+const parseStorageJson = (key) => {
+  try {
+    return JSON.parse(window.localStorage.getItem(key) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const resolveScopeContext = () => {
+  const authContext = getAuthContext();
+  const user = parseStorageJson('user');
+  const shopProfile = parseStorageJson('shopProfile');
+
+  return {
+    tenantId: String(authContext?.tenantId ?? user?.tenantId ?? shopProfile?.tenantId ?? '').trim(),
+    shopId: String(authContext?.shopId ?? user?.shopId ?? shopProfile?.shopId ?? shopProfile?.id ?? '').trim(),
+    ownerName: toLowerText(user?.ownerName || user?.name || shopProfile?.ownerName || shopProfile?.businessName || ''),
+    currentUserId: String(authContext?.userId ?? user?.id ?? user?.userId ?? '').trim(),
+  };
+};
+
+const matchesScope = (user, scope) => {
+  const hasUserScopeFields = Boolean(user.tenantId || user.shopId || user.ownerName);
+  const hasCallerScope = Boolean(scope.tenantId || scope.shopId || scope.ownerName);
+
+  // Preserve existing behavior when the backend does not return scope metadata.
+  if (!hasUserScopeFields || !hasCallerScope) return true;
+
+  if (scope.tenantId && user.tenantId) return scope.tenantId === user.tenantId;
+  if (scope.shopId && user.shopId) return scope.shopId === user.shopId;
+  if (scope.ownerName && user.ownerName) return scope.ownerName === toLowerText(user.ownerName);
+
+  return false;
+};
+
+const userMatchesSearch = (user, query) => {
+  const normalizedQuery = toLowerText(query);
+  if (!normalizedQuery) return true;
+  const haystack = [user.name, user.username, user.email, user.phone, toRoleLabel(user.role)].map(toLowerText).join(' ');
+  return haystack.includes(normalizedQuery);
 };
 
 const parseResponsePayload = async (response) => {
@@ -68,6 +123,11 @@ const StoreUsersPage = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [editingId, setEditingId] = useState('');
+  const [resettingId, setResettingId] = useState('');
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [editForm, setEditForm] = useState({
     name: '',
     username: '',
@@ -76,12 +136,42 @@ const StoreUsersPage = () => {
     role: STORE_ROLES.STORE_MANAGER,
   });
 
+  const scopeContext = useMemo(() => resolveScopeContext(), []);
+
   const sortedUsers = useMemo(() => {
-    return [...users].sort((a, b) => {
+    return users
+      .filter((item) => matchesScope(item, scopeContext))
+      .sort((a, b) => {
       if (a.disabled !== b.disabled) return a.disabled ? 1 : -1;
       return a.username.localeCompare(b.username);
+      });
+  }, [scopeContext, users]);
+
+  const filteredUsers = useMemo(() => {
+    return sortedUsers.filter((item) => {
+      const roleMatches = roleFilter === 'all' ? true : item.role === roleFilter;
+      const statusMatches = statusFilter === 'all'
+        ? true
+        : statusFilter === 'active'
+          ? !item.disabled
+          : item.disabled;
+      return roleMatches && statusMatches && userMatchesSearch(item, search);
     });
-  }, [users]);
+  }, [roleFilter, search, sortedUsers, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const pagedUsers = useMemo(() => {
+    const startIndex = (page - 1) * PAGE_SIZE;
+    return filteredUsers.slice(startIndex, startIndex + PAGE_SIZE);
+  }, [filteredUsers, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, roleFilter, statusFilter]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const loadUsers = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -150,6 +240,21 @@ const StoreUsersPage = () => {
   };
 
   const saveEdit = async (userId) => {
+    const trimmedName = String(editForm.name || '').trim();
+    const trimmedUsername = String(editForm.username || '').trim();
+    const trimmedEmail = String(editForm.email || '').trim();
+    const trimmedPhone = String(editForm.phone || '').trim();
+
+    if (!trimmedName || !trimmedUsername) {
+      setError('Name and username are required.');
+      return;
+    }
+
+    if (trimmedUsername.length < 3) {
+      setError('Username must have at least 3 characters.');
+      return;
+    }
+
     setSavingId(String(userId));
     setError('');
     setSuccess('');
@@ -159,10 +264,10 @@ const StoreUsersPage = () => {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: String(editForm.name || '').trim(),
-          username: String(editForm.username || '').trim(),
-          email: String(editForm.email || '').trim(),
-          phone: String(editForm.phone || '').trim(),
+          name: trimmedName,
+          username: trimmedUsername,
+          email: trimmedEmail,
+          phone: trimmedPhone,
           role: String(editForm.role || STORE_ROLES.STORE_MANAGER).trim(),
         }),
       });
@@ -200,6 +305,16 @@ const StoreUsersPage = () => {
   const toggleDisabled = async (user) => {
     const userId = user.id;
     const nextDisabled = !user.disabled;
+
+    if (String(scopeContext.currentUserId) && String(userId) === String(scopeContext.currentUserId)) {
+      setError('You cannot disable your own account.');
+      return;
+    }
+
+    const confirmationText = nextDisabled
+      ? `Disable user ${user.username || user.name || userId}?`
+      : `Enable user ${user.username || user.name || userId}?`;
+    if (!window.confirm(confirmationText)) return;
 
     setSavingId(String(userId));
     setError('');
@@ -260,6 +375,12 @@ const StoreUsersPage = () => {
 
   const deleteUser = async (user) => {
     const userId = user.id;
+
+    if (String(scopeContext.currentUserId) && String(userId) === String(scopeContext.currentUserId)) {
+      setError('You cannot delete your own account.');
+      return;
+    }
+
     const confirmed = window.confirm(`Delete user ${user.username || user.name || userId}?`);
     if (!confirmed) return;
 
@@ -297,19 +418,103 @@ const StoreUsersPage = () => {
     }
   };
 
+  const resendPassword = async (user) => {
+    const userId = user.id;
+    setResettingId(String(userId));
+    setError('');
+    setSuccess('');
+
+    const tryResend = async (url) => {
+      const response = await apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          username: user.username,
+          email: user.email,
+        }),
+      });
+      const payload = await parseResponsePayload(response);
+      return { response, payload };
+    };
+
+    try {
+      let result = await tryResend(API_ENDPOINTS.userResendPasswordById(userId));
+
+      if (result.response.status === 404 || result.response.status === 405) {
+        result = await tryResend(`${API_ENDPOINTS.userById(userId)}/password/resend`);
+      }
+
+      if (result.response.status === 404 || result.response.status === 405) {
+        result = await tryResend(`${API_ENDPOINTS.userById(userId)}/resend-reset`);
+      }
+
+      if (result.response.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (result.response.status === 403) {
+        setError('You do not have permission to resend passwords.');
+        return;
+      }
+
+      if (!result.response.ok || result.payload?.success === false) {
+        throw new Error(result.payload?.message || result.payload?.error || `Unable to resend password (${result.response.status}).`);
+      }
+
+      setSuccess(`Password reset instructions sent to ${user.username || user.name}.`);
+    } catch (resetError) {
+      setError(resetError?.message || 'Unable to resend password right now.');
+    } finally {
+      setResettingId('');
+    }
+  };
+
+  const activeCount = sortedUsers.filter((item) => !item.disabled).length;
+  const disabledCount = sortedUsers.length - activeCount;
+
   return (
     <div className="store-users-page">
       <div className="store-users-card">
         <div className="store-users-head">
           <button type="button" className="back-btn" onClick={() => navigate('/dashboard')}>← Back</button>
-          <h1>Store Users</h1>
-          <p>View and manage existing store users.</p>
+          <h1>Existing Users</h1>
+          <p>Enterprise user controls for this shop only.</p>
         </div>
 
         {error && <div className="panel-alert error">{error}</div>}
         {success && <div className="panel-alert success">{success}</div>}
 
         <div className="store-users-toolbar">
+          <div className="store-users-summary" aria-label="Store users summary">
+            <span className="summary-chip">Total: {sortedUsers.length}</span>
+            <span className="summary-chip active">Active: {activeCount}</span>
+            <span className="summary-chip disabled">Disabled: {disabledCount}</span>
+          </div>
+
+          <input
+            type="search"
+            className="toolbar-input"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by name, username, email"
+            aria-label="Search existing users"
+          />
+
+          <select className="toolbar-select" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} aria-label="Filter by role">
+            <option value="all">All Roles</option>
+            {ROLE_OPTIONS.map((role) => (
+              <option key={role} value={role}>{toRoleLabel(role)}</option>
+            ))}
+          </select>
+
+          <select className="toolbar-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter by status">
+            <option value="all">All Status</option>
+            <option value="active">Active</option>
+            <option value="disabled">Disabled</option>
+          </select>
+
           <button type="button" className="secondary-btn" onClick={() => navigate('/users-roles')}>Add Users / Roles</button>
           <button type="button" className="primary-btn" onClick={() => loadUsers(true)} disabled={refreshing || loading}>
             {refreshing ? 'Refreshing...' : 'Refresh'}
@@ -318,8 +523,8 @@ const StoreUsersPage = () => {
 
         {loading ? (
           <p className="store-users-empty">Loading users...</p>
-        ) : sortedUsers.length === 0 ? (
-          <p className="store-users-empty">No users found.</p>
+        ) : filteredUsers.length === 0 ? (
+          <p className="store-users-empty">No users found for the selected filters.</p>
         ) : (
           <div className="store-users-table" role="table" aria-label="Store users">
             <div className="store-users-row header" role="row">
@@ -331,9 +536,10 @@ const StoreUsersPage = () => {
               <div role="columnheader">Actions</div>
             </div>
 
-            {sortedUsers.map((user) => {
-              const rowBusy = savingId === String(user.id) || deletingId === String(user.id);
+            {pagedUsers.map((user) => {
+              const rowBusy = savingId === String(user.id) || deletingId === String(user.id) || resettingId === String(user.id);
               const isEditing = editingId === String(user.id);
+              const isCurrentUser = String(scopeContext.currentUserId) && String(scopeContext.currentUserId) === String(user.id);
 
               return (
                 <div className="store-users-row" role="row" key={String(user.id)}>
@@ -382,17 +588,26 @@ const StoreUsersPage = () => {
                       </>
                     ) : (
                       <>
-                        <button type="button" className="tiny-btn" onClick={() => startEdit(user)} disabled={rowBusy}>Modify</button>
-                        <button type="button" className="tiny-btn" onClick={() => toggleDisabled(user)} disabled={rowBusy}>
+                        <button type="button" className="tiny-btn" onClick={() => startEdit(user)} disabled={rowBusy}>Rename / Modify</button>
+                        <button type="button" className="tiny-btn" onClick={() => resendPassword(user)} disabled={rowBusy}>Resend Password</button>
+                        <button type="button" className="tiny-btn" onClick={() => toggleDisabled(user)} disabled={rowBusy || isCurrentUser}>
                           {user.disabled ? 'Enable' : 'Disable'}
                         </button>
-                        <button type="button" className="tiny-btn danger" onClick={() => deleteUser(user)} disabled={rowBusy}>Delete</button>
+                        <button type="button" className="tiny-btn danger" onClick={() => deleteUser(user)} disabled={rowBusy || isCurrentUser}>Delete</button>
                       </>
                     )}
                   </div>
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {!loading && filteredUsers.length > 0 && (
+          <div className="users-pagination" aria-label="Users pagination">
+            <button type="button" className="tiny-btn" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1}>Previous</button>
+            <span>Page {page} of {totalPages}</span>
+            <button type="button" className="tiny-btn" onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} disabled={page >= totalPages}>Next</button>
           </div>
         )}
       </div>

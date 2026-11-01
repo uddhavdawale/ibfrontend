@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Dashboard from './Dashboard/DashboardEntry.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
@@ -48,6 +48,9 @@ const clearScopedShopProfiles = () => {
   }
 };
 
+const SESSION_VALIDATION_INTERVAL_MS = 2 * 60 * 1000;
+const SESSION_VALIDATION_MIN_GAP_MS = 30 * 1000;
+
 const AppRoutes = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -55,6 +58,8 @@ const AppRoutes = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const lastSessionValidationAtRef = useRef(0);
+  const sessionValidationInFlightRef = useRef(false);
 
   const logoutUser = useCallback(async (callBackend = true) => {
     try {
@@ -77,6 +82,28 @@ const AppRoutes = () => {
     });
     return () => setUnauthorizedHandler(null);
   }, [logoutUser, loading]);
+
+  const validateServerSession = useCallback(async (reason = 'periodic') => {
+    if (!isAuthenticated || loading) return;
+    if (sessionValidationInFlightRef.current) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+    const now = Date.now();
+    if (now - lastSessionValidationAtRef.current < SESSION_VALIDATION_MIN_GAP_MS) return;
+
+    sessionValidationInFlightRef.current = true;
+    try {
+      await getCurrentUserProfile();
+      lastSessionValidationAtRef.current = now;
+    } catch (error) {
+      // apiFetch already handles unauthorized response by clearing auth state and invoking the unauthorized handler.
+      if (reason !== 'periodic') {
+        console.warn(`Session validation failed during ${reason}:`, error);
+      }
+    } finally {
+      sessionValidationInFlightRef.current = false;
+    }
+  }, [isAuthenticated, loading]);
 
   // Do not call backend logout on beforeunload/pagehide.
   // Browser refresh also triggers these events and would invalidate refresh tokens.
@@ -113,6 +140,42 @@ const AppRoutes = () => {
       window.removeEventListener('api:toast', onApiToast);
     };
   }, [navigate]);
+
+  useEffect(() => {
+    if (!isAuthenticated || loading) return undefined;
+
+    const onFocus = () => {
+      validateServerSession('focus');
+    };
+
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        validateServerSession('visibility');
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        validateServerSession('periodic');
+      }
+    }, SESSION_VALIDATION_INTERVAL_MS);
+
+    window.addEventListener('focus', onFocus);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
+
+    // Validate immediately after auth state is restored to catch server-side revoked sessions.
+    validateServerSession('startup');
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+    };
+  }, [isAuthenticated, loading, validateServerSession]);
 
   useEffect(() => {
     let active = true;

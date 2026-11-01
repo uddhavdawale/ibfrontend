@@ -13,6 +13,11 @@ export const REQUIRED_INVENTORY_COLUMNS = [
   'Category',
 ];
 
+export const MAX_PREVIEW_ROWS = 25;
+
+export const getInventoryPreviewRows = (records = [], limit = MAX_PREVIEW_ROWS) =>
+  records.slice(0, Math.max(0, Number.isFinite(limit) ? limit : MAX_PREVIEW_ROWS));
+
 const REQUIRED_COLUMN_ALIASES = {
   item: ['Item', 'Product', 'Name'],
   hsnSac: ['HSN/SAC', 'HSN', 'HSN SAC'],

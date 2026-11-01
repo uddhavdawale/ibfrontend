@@ -7,10 +7,12 @@ const roleToLabel = (role) => {
   const normalized = normalizeStoreRole(role);
   if (normalized === 'store_admin') return 'Store Admin';
   if (normalized === 'store_manager') return 'Store Manager';
+  if (normalized === 'billing_manager') return 'Billing Manager';
+  if (normalized === 'inventory_manager') return 'Inventory Manager';
   if (normalized === 'store_billing_viewer') return 'Store Billing Viewer';
   if (normalized === 'store_inventory_viewer') return 'Store Inventory Viewer';
   if (normalized === 'system_administrator') return 'System Administrator';
-  if (normalized === 'audit_related') return 'Audit Related';
+  if (normalized === 'audit_related') return 'Audit Manager';
   return 'Store Manager';
 };
 

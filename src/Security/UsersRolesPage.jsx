@@ -8,20 +8,24 @@ const MIN_PASSWORD_LENGTH = 12;
 
 const ROLE_OPTIONS = [
   { value: STORE_ROLES.STORE_MANAGER, label: 'Store Manager' },
+  { value: STORE_ROLES.BILLING_MANAGER, label: 'Billing Manager' },
   { value: STORE_ROLES.STORE_BILLING_VIEWER, label: 'Store Billing Viewer' },
+  { value: STORE_ROLES.INVENTORY_MANAGER, label: 'Inventory Manager' },
   { value: STORE_ROLES.STORE_INVENTORY_VIEWER, label: 'Store Inventory Viewer' },
   { value: STORE_ROLES.STORE_ADMIN, label: 'Store Admin' },
   { value: STORE_ROLES.SYSTEM_ADMINISTRATOR, label: 'System Administrator' },
-  { value: STORE_ROLES.AUDIT_RELATED, label: 'Audit Related' },
+  { value: STORE_ROLES.AUDIT_RELATED, label: 'Audit Manager' },
 ];
 
 const ROLE_LABEL_MAP = Object.freeze({
   [STORE_ROLES.STORE_ADMIN]: 'Store Admin',
   [STORE_ROLES.STORE_MANAGER]: 'Store Manager',
+  [STORE_ROLES.BILLING_MANAGER]: 'Billing Manager',
   [STORE_ROLES.STORE_BILLING_VIEWER]: 'Store Billing Viewer',
+  [STORE_ROLES.INVENTORY_MANAGER]: 'Inventory Manager',
   [STORE_ROLES.STORE_INVENTORY_VIEWER]: 'Store Inventory Viewer',
   [STORE_ROLES.SYSTEM_ADMINISTRATOR]: 'System Administrator',
-  [STORE_ROLES.AUDIT_RELATED]: 'Audit Related',
+  [STORE_ROLES.AUDIT_RELATED]: 'Audit Manager',
 });
 
 const FIELD_RULES = {
@@ -37,7 +41,15 @@ const FIELD_RULES = {
     show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
     required: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
   },
+  [STORE_ROLES.BILLING_MANAGER]: {
+    show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
+    required: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
+  },
   [STORE_ROLES.STORE_INVENTORY_VIEWER]: {
+    show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'warehouseSection'],
+    required: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'warehouseSection'],
+  },
+  [STORE_ROLES.INVENTORY_MANAGER]: {
     show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'warehouseSection'],
     required: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'warehouseSection'],
   },
@@ -66,14 +78,17 @@ const ROLE_ALIASES = Object.freeze({
   store_billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,
   store_billing_viwer: STORE_ROLES.STORE_BILLING_VIEWER,
   billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,
+  billing_manager: STORE_ROLES.BILLING_MANAGER,
   store_inventory_viewer: STORE_ROLES.STORE_INVENTORY_VIEWER,
   store_inventory_viwer: STORE_ROLES.STORE_INVENTORY_VIEWER,
   inventory_viewer: STORE_ROLES.STORE_INVENTORY_VIEWER,
+  inventory_manager: STORE_ROLES.INVENTORY_MANAGER,
   system_administrator: STORE_ROLES.SYSTEM_ADMINISTRATOR,
   'system administrator': STORE_ROLES.SYSTEM_ADMINISTRATOR,
   system_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
   sys_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
   audit_related: STORE_ROLES.AUDIT_RELATED,
+  audit_manager: STORE_ROLES.AUDIT_RELATED,
   audit: STORE_ROLES.AUDIT_RELATED,
   audit_related_role: STORE_ROLES.AUDIT_RELATED,
   audit_role: STORE_ROLES.AUDIT_RELATED,

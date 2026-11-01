@@ -39,6 +39,60 @@ const BillingPage = () => {
     return getLegacyGstSlab(price);
   };
   
+  const refreshProducts = async () => {
+    try {
+      const productEndpoints = [
+        API_ENDPOINTS.billingProductsPage(0, 100),
+        API_ENDPOINTS.productsWithSize(100),
+        API_ENDPOINTS.products,
+      ];
+
+      let data = null;
+      let response = null;
+
+      for (const endpoint of productEndpoints) {
+        response = await apiFetch(endpoint);
+        if (!response.ok) continue;
+        data = await response.json();
+        break;
+      }
+
+      if (!data || !response?.ok) throw new Error(`HTTP ${response?.status || 500}`);
+
+      const productList = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+      const productsWithGst = productList.map(product => {
+        const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
+        const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice ?? 0) || 0;
+        const category = product.category || product.categoryName || product.group || 'default';
+        const categoryTax = resolveCategoryTax(category, Number(product.gst ?? product.taxRate ?? 0) || getGstSlab(sellingPrice, category));
+
+        return {
+          id: product.id ?? product.productId,
+          name: product.name || product.itemName || product.productName,
+          sku: product.sku || product.code || '',
+          category,
+          price: sellingPrice,
+          mrp: mrpValue,
+          hsn: product.hsn || product.hsnCode || '9999',
+          gst: categoryTax.total,
+          cgst: categoryTax.cgst,
+          sgst: categoryTax.sgst,
+          igst: categoryTax.igst,
+          stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
+          salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
+        };
+      });
+      setProducts(productsWithGst);
+    } catch (error) {
+      logger.error('Billing product fetch failed', error);
+      setProducts([
+        { id: 1, name: 'Shirt', hsn: '6109', price: 299, mrp: 349, gst: 5, stock: 12 },
+        { id: 2, name: 'Jeans', hsn: '6203', price: 799, mrp: 999, gst: 12, stock: 8 },
+        { id: 3, name: 'Laptop', hsn: '8471', price: 45999, mrp: 48999, gst: 18, stock: 5 }
+      ]);
+    }
+  };
+
   // Fetch products
   useEffect(() => {
     setRole(getCurrentUserRole());
@@ -53,63 +107,15 @@ const BillingPage = () => {
         if (active) setShopProfile(readStoredShopProfile());
       });
 
-    const fetchProducts = async () => {
+    const initializeBillingData = async () => {
       try {
-        const productEndpoints = [
-          API_ENDPOINTS.billingProductsPage(0, 100),
-          API_ENDPOINTS.productsWithSize(100),
-          API_ENDPOINTS.products,
-        ];
-
-        let data = null;
-        let response = null;
-
-        for (const endpoint of productEndpoints) {
-          response = await apiFetch(endpoint);
-          if (!response.ok) continue;
-          data = await response.json();
-          break;
-        }
-
-        if (!data || !response?.ok) throw new Error(`HTTP ${response?.status || 500}`);
-
-        const productList = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-        const productsWithGst = productList.map(product => {
-          const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
-          const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice ?? 0) || 0;
-          const category = product.category || product.categoryName || product.group || 'default';
-          const categoryTax = resolveCategoryTax(category, Number(product.gst ?? product.taxRate ?? 0) || getGstSlab(sellingPrice, category));
-
-          return {
-            id: product.id ?? product.productId,
-            name: product.name || product.itemName || product.productName,
-            sku: product.sku || product.code || '',
-            category,
-            price: sellingPrice,
-            mrp: mrpValue,
-            hsn: product.hsn || product.hsnCode || '9999',
-            gst: categoryTax.total,
-            cgst: categoryTax.cgst,
-            sgst: categoryTax.sgst,
-            igst: categoryTax.igst,
-            stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
-            salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
-          };
-        });
-        setProducts(productsWithGst);
-      } catch (error) {
-        logger.error('Billing product fetch failed', error);
-        // Fallback data
-        setProducts([
-          { id: 1, name: 'Shirt', hsn: '6109', price: 299, mrp: 349, gst: 5, stock: 12 },
-          { id: 2, name: 'Jeans', hsn: '6203', price: 799, mrp: 999, gst: 12, stock: 8 },
-          { id: 3, name: 'Laptop', hsn: '8471', price: 45999, mrp: 48999, gst: 18, stock: 5 }
-        ]);
+        await refreshProducts();
       } finally {
         if (active) setLoading(false);
       }
     };
-    fetchProducts();
+
+    initializeBillingData();
     return () => { active = false; };
   }, []);
   
@@ -841,6 +847,7 @@ const BillingPage = () => {
 
       openInvoiceWindow(previewInvoice);
 
+      await refreshProducts();
       setCart([]);
       setCustomer({ name: '', phone: '', email: '' });
       setInvoiceNo(generatedInvoiceNo);

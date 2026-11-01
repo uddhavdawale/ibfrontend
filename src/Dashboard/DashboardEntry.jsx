@@ -15,7 +15,19 @@ import PendingPaymentsCard from './PendingPaymentsCard';
 import LowStockCard from './LowStockCard';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { getCurrentShopProfile, readStoredShopProfile, getShopDisplayName } from '../modules/shopProfile/shopProfileService';
-import { getCurrentUserRole, normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canWriteInventory, canViewAdvancedDashboard, isStoreAdmin, canAccessAudit } from '../Security/storeRoles';
+import {
+  getCurrentUserRole,
+  normalizeStoreRole,
+  canAccessBilling,
+  canAccessInventory,
+  canAccessSellOrders,
+  canWriteInventory,
+  canViewAdvancedDashboard,
+  isStoreAdmin,
+  canAccessAudit,
+  isBillingOnlyRole,
+  isInventoryOnlyRole,
+} from '../Security/storeRoles';
 
 const defaultMetrics = {
   salesToday: 15420,
@@ -199,6 +211,8 @@ function Dashboard({ username, onLogout }) {
   const roleBadgeLabel = useMemo(() => {
     if (currentRole === 'store_admin') return 'Store Admin';
     if (currentRole === 'store_manager') return 'Store Manager';
+    if (currentRole === 'billing_manager') return 'Billing Manager';
+    if (currentRole === 'inventory_manager') return 'Inventory Manager';
     if (currentRole === 'store_billing_viewer') return 'Billing Viewer';
     if (currentRole === 'store_inventory_viewer') return 'Inventory Viewer';
     if (currentRole === 'system_administrator') return 'System Administrator';
@@ -212,6 +226,14 @@ function Dashboard({ username, onLogout }) {
   const canOpenAudit = useMemo(() => canAccessAudit(currentRole), [currentRole]);
   const canOpenAdvancedDashboard = useMemo(() => canViewAdvancedDashboard(currentRole), [currentRole]);
   const canManageUsers = useMemo(() => isStoreAdmin(currentRole), [currentRole]);
+  const hasBillingOnlyScope = useMemo(() => isBillingOnlyRole(currentRole), [currentRole]);
+  const hasInventoryOnlyScope = useMemo(() => isInventoryOnlyRole(currentRole), [currentRole]);
+  const canShowDashboardTab = !hasBillingOnlyScope && !hasInventoryOnlyScope;
+  const canShowGstTab = !hasBillingOnlyScope && !hasInventoryOnlyScope;
+  const canShowInventoryTab = canOpenInventory && !hasBillingOnlyScope;
+  const canShowBillingTab = canOpenBilling && !hasInventoryOnlyScope;
+  const canShowSellTab = canOpenSellOrders && !hasInventoryOnlyScope;
+  const canShowAuditTab = canOpenAudit && !hasBillingOnlyScope && !hasInventoryOnlyScope;
 
   // ALL YOUR EXISTING EFFECTS & FUNCTIONS (UNCHANGED - just removed duplicate useEffect)
   useEffect(() => {
@@ -224,11 +246,33 @@ function Dashboard({ username, onLogout }) {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'inventory' && !canOpenInventory) setActiveTab('dashboard');
-    if (activeTab === 'billing' && !canOpenBilling) setActiveTab('dashboard');
-    if (activeTab === 'sell' && !canOpenSellOrders) setActiveTab('dashboard');
-    if (activeTab === 'audit' && !canOpenAudit) setActiveTab('dashboard');
-  }, [activeTab, canOpenInventory, canOpenBilling, canOpenSellOrders, canOpenAudit]);
+    if (hasBillingOnlyScope && !['billing', 'sell'].includes(activeTab)) {
+      setActiveTab('billing');
+      return;
+    }
+
+    if (hasInventoryOnlyScope && activeTab !== 'inventory') {
+      setActiveTab('inventory');
+      return;
+    }
+
+    if (activeTab === 'inventory' && !canShowInventoryTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
+    if (activeTab === 'billing' && !canShowBillingTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'inventory');
+    if (activeTab === 'sell' && !canShowSellTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
+    if (activeTab === 'audit' && !canShowAuditTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
+    if (activeTab === 'GSTFilling' && !canShowGstTab) setActiveTab(canShowDashboardTab ? 'dashboard' : (hasInventoryOnlyScope ? 'inventory' : 'billing'));
+    if (activeTab === 'dashboard' && !canShowDashboardTab) setActiveTab(hasInventoryOnlyScope ? 'inventory' : 'billing');
+  }, [
+    activeTab,
+    canShowInventoryTab,
+    canShowBillingTab,
+    canShowSellTab,
+    canShowAuditTab,
+    canShowDashboardTab,
+    canShowGstTab,
+    hasBillingOnlyScope,
+    hasInventoryOnlyScope,
+  ]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -458,6 +502,9 @@ function Dashboard({ username, onLogout }) {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
+        if (!canShowDashboardTab) {
+          return null;
+        }
         return (
           <>
             {/* YOUR EXISTING DASHBOARD CONTENT - 100% PRESERVED */}
@@ -634,17 +681,20 @@ function Dashboard({ username, onLogout }) {
         );
       
       case 'GSTFilling':
+        if (!canShowGstTab) {
+          return null;
+        }
         return <GSTDashboard />; // FULL GST DASHBOARD
         
       case 'inventory':
-        return canOpenInventory ? <InventoryPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to inventory.</div></div>;
+        return canShowInventoryTab ? <InventoryPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to inventory.</div></div>;
       case 'billing':
-        return canOpenBilling ? <BillingPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to billing.</div></div>;
+        return canShowBillingTab ? <BillingPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to billing.</div></div>;
 
       case 'sell':
-        return canOpenSellOrders ? <SellPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to sell orders.</div></div>;
+        return canShowSellTab ? <SellPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to sell orders.</div></div>;
       case 'audit':
-        return canOpenAudit ? <AuditPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to audit.</div></div>;
+        return canShowAuditTab ? <AuditPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to audit.</div></div>;
 
       default:
         return null;
@@ -652,6 +702,8 @@ function Dashboard({ username, onLogout }) {
   };
 
   // YOUR EXISTING RETURN (ONLY SIDEBAR UPDATED)
+  const lowStockCount = inventoryData.filter((item) => item.qty < item.min).length;
+
   return (
     <div className={`dashboard theme-${theme}`}>
       {/* TOP BAR - UNCHANGED */}
@@ -748,35 +800,50 @@ function Dashboard({ username, onLogout }) {
         {/* SIDEBAR - FIXED GST TAB */}
         <aside className="sidebar">
           <nav className="sidebar-nav">
-            <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-              <span className="nav-icon">📊</span>
-              <span>Dashboard</span>
-            </button>
-            <button className={`nav-item ${activeTab === 'inventory' ? 'active' : ''}`} onClick={() => canOpenInventory && setActiveTab('inventory')} disabled={!canOpenInventory}>
-              <span className="nav-icon">📦</span>
-              <span>Inventory</span>
-              <span className="badge low-stock">{inventoryData.filter(i => i.qty < i.min).length}</span>
-            </button>
-            <button className={`nav-item ${activeTab === 'GSTFilling' ? 'active' : ''}`} onClick={() => setActiveTab('GSTFilling')}>
-              <span className="nav-icon">📋</span>
-              <span>GST Filing</span>
-            </button>
-            <button className={`nav-item ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => canOpenBilling && setActiveTab('billing')} disabled={!canOpenBilling}>
-              <span className="nav-icon">💰</span>
-              <span>Billing</span>
-            </button>
+            {canShowDashboardTab && (
+              <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+                <span className="nav-icon">📊</span>
+                <span>Dashboard</span>
+              </button>
+            )}
 
-            {canOpenAudit && (
+            {canShowInventoryTab && (
+              <button className={`nav-item ${activeTab === 'inventory' ? 'active' : ''}`} onClick={() => setActiveTab('inventory')}>
+                <span className="nav-icon">📦</span>
+                <span>Inventory</span>
+                <span className="badge low-stock">{lowStockCount}</span>
+              </button>
+            )}
+
+            {canShowGstTab && (
+              <button className={`nav-item ${activeTab === 'GSTFilling' ? 'active' : ''}`} onClick={() => setActiveTab('GSTFilling')}>
+                <span className="nav-icon">📋</span>
+                <span>GST Filing</span>
+              </button>
+            )}
+
+            {canShowBillingTab && (
+              <button className={`nav-item ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => setActiveTab('billing')}>
+                <span className="nav-icon">💰</span>
+                <span>Billing</span>
+              </button>
+            )}
+
+            {canShowAuditTab && (
               <button className={`nav-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => setActiveTab('audit')}>
                 <span className="nav-icon">🧾</span>
                 <span>Audit</span>
               </button>
             )}
 
-            <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => canOpenSellOrders && setActiveTab('sell')} disabled={!canOpenSellOrders}>
-              <span className="nav-icon">📋</span>
-              <span>Sell Orders</span>
-            </button>
+            {canShowSellTab && (
+              <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => setActiveTab('sell')}>
+                <span className="nav-icon">📋</span>
+                <span>Sell Orders</span>
+              </button>
+            )}
+
+            {/* Legacy UI placeholders intentionally hidden for role-based navigation */}
 
               
 
