@@ -52,7 +52,11 @@ export const readStoredShopProfile = () => {
   if (typeof window === 'undefined') return normalizeShopProfile();
 
   try {
-    const stored = window.localStorage.getItem('shopProfile');
+    const user = JSON.parse(window.localStorage.getItem('user') || '{}');
+    const scopedKey = user?.username ? `shopProfile:${String(user.username).toLowerCase()}` : null;
+    const stored = scopedKey
+      ? window.localStorage.getItem(scopedKey)
+      : window.localStorage.getItem('shopProfile');
     if (!stored) return normalizeShopProfile();
     return normalizeShopProfile(JSON.parse(stored));
   } catch {
@@ -64,6 +68,14 @@ export const saveShopProfile = (profile = {}) => {
   const normalized = normalizeShopProfile(profile);
 
   if (typeof window !== 'undefined') {
+    try {
+      const user = JSON.parse(window.localStorage.getItem('user') || '{}');
+      if (user?.username) {
+        window.localStorage.setItem(`shopProfile:${String(user.username).toLowerCase()}`, JSON.stringify(normalized));
+      }
+    } catch {
+      // Ignore parse/storage errors and keep legacy key for compatibility.
+    }
     window.localStorage.setItem('shopProfile', JSON.stringify(normalized));
   }
 

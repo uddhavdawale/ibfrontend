@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line 
@@ -10,8 +10,12 @@ import InventoryPage from '../Inventory/Inventory';
 import BillingPage from '../Billing/BillingPage';
 import { useConfig } from '../hooks/useConfig';
 import SellPage from '../sell/SellPage';
-import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
+import AuditPage from '../Audit/AuditPage';
+import PendingPaymentsCard from './PendingPaymentsCard';
+import LowStockCard from './LowStockCard';
+import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { getCurrentShopProfile, readStoredShopProfile, getShopDisplayName } from '../modules/shopProfile/shopProfileService';
+import { getCurrentUserRole, normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canWriteInventory, canViewAdvancedDashboard, isStoreAdmin, canAccessAudit } from '../Security/storeRoles';
 
 const defaultMetrics = {
   salesToday: 15420,
@@ -29,22 +33,31 @@ const defaultSalesData = [
   { month: 'Jun', sales: 2390 }
 ];
 
-const defaultTopSoldProducts = [
-  { name: 'Laptop Pro 14', sold: 86, revenue: 1840000 },
-  { name: 'Smart TV 55', sold: 72, revenue: 1460000 },
-  { name: 'Air Purifier', sold: 68, revenue: 475000 },
-  { name: 'Bluetooth Speaker', sold: 61, revenue: 315000 },
-  { name: 'Washing Machine', sold: 57, revenue: 990000 },
-  { name: 'Rice 10kg', sold: 54, revenue: 180000 },
-  { name: 'Mobile Case', sold: 49, revenue: 98000 },
-  { name: 'Office Chair', sold: 42, revenue: 210000 },
-  { name: 'Power Bank', sold: 39, revenue: 120000 },
-  { name: 'T-Shirt Combo', sold: 35, revenue: 92000 }
-];
-
 const normalizeNumber = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const unwrapResponsePayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+    return payload.data;
+  }
+
+  if (payload.result && typeof payload.result === 'object') {
+    return payload.result;
+  }
+
+  if (payload.dashboard && typeof payload.dashboard === 'object') {
+    return payload.dashboard;
+  }
+
+  if (payload.metrics && typeof payload.metrics === 'object') {
+    return payload.metrics;
+  }
+
+  return payload;
 };
 
 const normalizeSalesSeries = (payload) => {
@@ -87,7 +100,27 @@ const normalizeTopSoldProduct = (product, index) => {
     id: product.id ?? product.productId ?? product.product_id ?? index + 1,
     name: product.name ?? product.productName ?? 'Unnamed Product',
     sold,
-    revenue
+    revenue,
+    sku: product.sku ?? product.SKU ?? ''
+  };
+};
+
+const normalizeTopSoldProductFromSummary = (product, index) => {
+  const sold = normalizeNumber(
+    product.totalQty ?? product.soldQty ?? product.unitsSold ?? product.salesCount ?? product.quantity ?? 0,
+    0
+  );
+  const revenue = normalizeNumber(
+    product.totalAmount ?? product.totalRevenue ?? product.salesValue ?? product.amount ?? 0,
+    0
+  );
+
+  return {
+    id: product.productId ?? product.id ?? product.product_id ?? index + 1,
+    name: product.name ?? product.productName ?? 'Unnamed Product',
+    sold,
+    revenue,
+    sku: product.sku ?? product.SKU ?? ''
   };
 };
 
@@ -107,6 +140,7 @@ const fetchJsonWithFallback = async (urls = []) => {
 function Dashboard({ username, onLogout }) {
   // ALL YOUR EXISTING STATE (UNCHANGED)
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showManageStoreMenu, setShowManageStoreMenu] = useState(false);
   const [language, setLanguage] = useState('EN');
   const [theme, setTheme] = useState(() => localStorage.getItem('ib-theme') || 'light');
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -114,6 +148,9 @@ function Dashboard({ username, onLogout }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
+  const [securityContext, setSecurityContext] = useState({ tenantId: null, userId: null, role: null });
+  const [dashboardInfoMessage, setDashboardInfoMessage] = useState('');
+  const [sessionRole, setSessionRole] = useState(() => getCurrentUserRole());
   const { config } = useConfig();
   const navigate = useNavigate();
   const shopDisplayName = getShopDisplayName(shopProfile);
@@ -133,9 +170,7 @@ function Dashboard({ username, onLogout }) {
   // Metrics (defaults matched to the UI contract when the backend is unavailable)
   const [metrics, setMetrics] = useState(defaultMetrics);
   const [salesData, setSalesData] = useState(defaultSalesData);
-  const [topSoldProducts, setTopSoldProducts] = useState(
-    [...defaultTopSoldProducts].sort((a, b) => b.sold - a.sold).slice(0, 10)
-  );
+  const [topSoldProducts, setTopSoldProducts] = useState([]);
   const lowestStockProducts = [...inventoryData]
     .sort((a, b) => a.qty - b.qty || a.min - b.min)
     .slice(0, 10)
@@ -160,6 +195,24 @@ function Dashboard({ username, onLogout }) {
     item.category.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const currentRole = useMemo(() => normalizeStoreRole(securityContext?.role || sessionRole), [securityContext, sessionRole]);
+  const roleBadgeLabel = useMemo(() => {
+    if (currentRole === 'store_admin') return 'Store Admin';
+    if (currentRole === 'store_manager') return 'Store Manager';
+    if (currentRole === 'store_billing_viewer') return 'Billing Viewer';
+    if (currentRole === 'store_inventory_viewer') return 'Inventory Viewer';
+    if (currentRole === 'system_administrator') return 'System Administrator';
+    if (currentRole === 'audit_related') return 'Audit Related';
+    return 'Store Manager';
+  }, [currentRole]);
+  const isInventoryWritable = useMemo(() => canWriteInventory(currentRole), [currentRole]);
+  const canOpenInventory = useMemo(() => canAccessInventory(currentRole), [currentRole]);
+  const canOpenBilling = useMemo(() => canAccessBilling(currentRole), [currentRole]);
+  const canOpenSellOrders = useMemo(() => canAccessSellOrders(currentRole), [currentRole]);
+  const canOpenAudit = useMemo(() => canAccessAudit(currentRole), [currentRole]);
+  const canOpenAdvancedDashboard = useMemo(() => canViewAdvancedDashboard(currentRole), [currentRole]);
+  const canManageUsers = useMemo(() => isStoreAdmin(currentRole), [currentRole]);
+
   // ALL YOUR EXISTING EFFECTS & FUNCTIONS (UNCHANGED - just removed duplicate useEffect)
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -167,9 +220,21 @@ function Dashboard({ username, onLogout }) {
   }, [theme]);
 
   useEffect(() => {
+    setSessionRole(getCurrentUserRole());
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'inventory' && !canOpenInventory) setActiveTab('dashboard');
+    if (activeTab === 'billing' && !canOpenBilling) setActiveTab('dashboard');
+    if (activeTab === 'sell' && !canOpenSellOrders) setActiveTab('dashboard');
+    if (activeTab === 'audit' && !canOpenAudit) setActiveTab('dashboard');
+  }, [activeTab, canOpenInventory, canOpenBilling, canOpenSellOrders, canOpenAudit]);
+
+  useEffect(() => {
     const handleClickOutside = (event) => {
       if (showProfileMenu && !event.target.closest('.user-profile')) {
         setShowProfileMenu(false);
+        setShowManageStoreMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -191,28 +256,56 @@ function Dashboard({ username, onLogout }) {
       try {
         const summary = await fetchJsonWithFallback([
           API_ENDPOINTS.dashboardSummary,
-          `${API_BASE_URL}/api/dashboard`,
-          `${API_BASE_URL}/api/metrics`
+          API_ENDPOINTS.dashboardLegacy,
+          API_ENDPOINTS.metrics
         ]);
 
         if (summary && active) {
-          setMetrics({
-            salesToday: normalizeNumber(summary.salesToday ?? summary.sales ?? 0, defaultMetrics.salesToday),
-            pendingPayments: normalizeNumber(summary.pendingPayments ?? summary.pending ?? 0, defaultMetrics.pendingPayments),
-            lowStock: normalizeNumber(summary.lowStock ?? summary.lowStockCount ?? 0, defaultMetrics.lowStock),
-            ordersToday: normalizeNumber(summary.ordersToday ?? summary.orders ?? 0, defaultMetrics.ordersToday)
-          });
+          const summaryPayload = unwrapResponsePayload(summary);
+
+          const nextSecurityContext = {
+            tenantId: summaryPayload?.tenantId ?? summaryPayload?.securityContext?.tenantId ?? null,
+            userId: summaryPayload?.userId ?? summaryPayload?.securityContext?.userId ?? null,
+            role: summaryPayload?.role ?? summaryPayload?.securityContext?.role ?? null,
+          };
+
+          if (active) {
+            setSecurityContext(nextSecurityContext);
+            const role = String(nextSecurityContext.role || '').toUpperCase();
+            if (role && !canViewAdvancedDashboard(role)) {
+              setDashboardInfoMessage('Some dashboard details are restricted for your role.');
+            } else {
+              setDashboardInfoMessage('');
+            }
+          }
+
+          const normalizedSummary = {
+            salesToday: normalizeNumber(summaryPayload?.salesToday ?? summaryPayload?.sales ?? 0, defaultMetrics.salesToday),
+            pendingPayments: normalizeNumber(summaryPayload?.pendingPayments ?? summaryPayload?.pending ?? 0, defaultMetrics.pendingPayments),
+            lowStock: normalizeNumber(summaryPayload?.lowStock ?? summaryPayload?.lowStockCount ?? 0, defaultMetrics.lowStock),
+            ordersToday: normalizeNumber(summaryPayload?.ordersToday ?? summaryPayload?.orders ?? 0, defaultMetrics.ordersToday)
+          };
+          setMetrics(normalizedSummary);
+
+          const summaryTopSoldProducts = Array.isArray(summaryPayload?.topSoldProducts)
+            ? summaryPayload.topSoldProducts.map(normalizeTopSoldProductFromSummary)
+            : [];
+
+          if (summaryTopSoldProducts.length > 0) {
+            setTopSoldProducts(summaryTopSoldProducts.slice(0, 10));
+          }
         }
 
         const productsResponse = await fetchJsonWithFallback([
-          `${API_BASE_URL}/api/products?size=1000`,
+          API_ENDPOINTS.productsWithSize(100),
           API_ENDPOINTS.products,
         ]);
 
-        const productList = Array.isArray(productsResponse?.content)
-          ? productsResponse.content
-          : Array.isArray(productsResponse)
-            ? productsResponse
+        const unwrappedProducts = unwrapResponsePayload(productsResponse);
+        const productList = Array.isArray(unwrappedProducts?.content)
+          ? unwrappedProducts.content
+          : Array.isArray(unwrappedProducts)
+            ? unwrappedProducts
             : [];
 
         if (productList.length > 0 && active) {
@@ -227,6 +320,8 @@ function Dashboard({ username, onLogout }) {
 
           if (liveTopSoldProducts.length > 0) {
             setTopSoldProducts(liveTopSoldProducts);
+          } else if (topSoldProducts.length === 0) {
+            setTopSoldProducts([]);
           }
         }
 
@@ -235,7 +330,8 @@ function Dashboard({ username, onLogout }) {
         ]);
 
         if (sales && active) {
-          const normalizedSales = normalizeSalesSeries(sales);
+          const salesPayload = unwrapResponsePayload(sales);
+          const normalizedSales = normalizeSalesSeries(salesPayload);
           if (normalizedSales.length > 0) {
             setSalesData(normalizedSales);
           }
@@ -369,35 +465,26 @@ function Dashboard({ username, onLogout }) {
               <div>
                 <h1>Dashboard</h1>
                 <p>{filteredInventory.length} of {inventoryData.length} products</p>
+                {dashboardInfoMessage && <p className="error-text">{dashboardInfoMessage}</p>}
               </div>
               <div className="header-actions">
-                <button className="btn secondary" onClick={() => setShowAddModal(true)}>➕ Add Product</button>
+                {isInventoryWritable && (
+                  <button className="btn secondary" onClick={() => setShowAddModal(true)}>➕ Add Product</button>
+                )}
               </div>
             </header>
 
             <div className="stats-grid">
-              <div className="stat-card" onClick={() => alert('Sales details')}>
+              <div className="stat-card sales-card" onClick={() => alert('Sales details')}>
                 <div className="stat-info">
                   <h3>₹{metrics.salesToday.toLocaleString()}</h3>
                   <p>Sales Today</p>
                 </div>
                 <div className="stat-change positive">Live</div>
               </div>
-              <div className="stat-card">
-                <div className="stat-info">
-                  <h3>₹{metrics.pendingPayments.toLocaleString()}</h3>
-                  <p>Pending Payments</p>
-                </div>
-                <div className="stat-change negative">-₹500</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-info">
-                  <h3>{metrics.lowStock}</h3>
-                  <p>Low Stock ⚠️</p>
-                </div>
-                <div className="stat-change alert">Critical</div>
-              </div>
-              <div className="stat-card">
+              <PendingPaymentsCard defaultTotal={metrics.pendingPayments} />
+              <LowStockCard items={inventoryData} />
+              <div className="stat-card orders-card">
                 <div className="stat-info">
                   <h3>{metrics.ordersToday}</h3>
                   <p>Today's Orders</p>
@@ -433,6 +520,7 @@ function Dashboard({ username, onLogout }) {
               </div>
             </div>
 
+            {canOpenAdvancedDashboard ? (
             <div className="mini-panels-row">
               <div className="chart-card top-stock-card">
                 <div className="top-sold-header">
@@ -461,20 +549,36 @@ function Dashboard({ username, onLogout }) {
                 </div>
 
                 <div className="top-sold-list scroll-panel">
-                  {topSoldProducts.map((product, index) => (
-                    <div className="top-sold-row" key={`${product.name}-${index}`}>
-                      <div className="top-sold-rank">#{index + 1}</div>
-                      <div className="top-sold-meta">
-                        <strong>{product.name}</strong>
-                        <span>{product.sold} sold</span>
+                  {topSoldProducts.length === 0 ? (
+                    <div className="top-sold-empty">No sales data available</div>
+                  ) : (
+                    topSoldProducts.map((product, index) => (
+                      <div className="top-sold-row" key={`${product.name}-${product.sku || 'sku'}-${index}`}>
+                        <div className="top-sold-rank">#{index + 1}</div>
+                        <div className="top-sold-meta">
+                          <strong>{product.name}</strong>
+                          <span>{product.sku ? `${product.sku} • ` : ''}{product.sold} sold</span>
+                        </div>
+                        <div className="top-sold-revenue">₹{(product.revenue ?? 0).toLocaleString()}</div>
                       </div>
-                      <div className="top-sold-revenue">₹{product.revenue.toLocaleString()}</div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </div>
+            ) : (
+              <div className="chart-card top-sold-card">
+                <div className="top-sold-header">
+                  <h3>Restricted Details</h3>
+                  <span className="mini-badge warning">Role-limited</span>
+                </div>
+                <div className="top-sold-list">
+                  <div className="top-sold-empty">Detailed product lists are hidden for your role.</div>
+                </div>
+              </div>
+            )}
 
+            {canOpenAdvancedDashboard && (
             <div className="smart-insights-panel">
               <div className="smart-insight-card accent">
                 <div className="insight-label">Urgent actions</div>
@@ -502,7 +606,9 @@ function Dashboard({ username, onLogout }) {
                 <div className="insight-subtext">Push fast-moving SKUs and replenish low-stock essentials before 5 PM.</div>
               </div>
             </div>
+            )}
 
+            {canOpenAdvancedDashboard && (
             <div className="owner-insights-row">
               <div className="insight-card highlight">
                 <div className="insight-label">Fastest Moving Category</div>
@@ -522,6 +628,7 @@ function Dashboard({ username, onLogout }) {
                 <div className="insight-subtext">Reorder in next 2 days</div>
               </div>
             </div>
+            )}
 
           </>
         );
@@ -530,12 +637,14 @@ function Dashboard({ username, onLogout }) {
         return <GSTDashboard />; // FULL GST DASHBOARD
         
       case 'inventory':
-        return <InventoryPage />;
+        return canOpenInventory ? <InventoryPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to inventory.</div></div>;
       case 'billing':
-        return <BillingPage />;
+        return canOpenBilling ? <BillingPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to billing.</div></div>;
 
-      case 'sell':  // 👈 NEW CASE
-        return <SellPage />;
+      case 'sell':
+        return canOpenSellOrders ? <SellPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to sell orders.</div></div>;
+      case 'audit':
+        return canOpenAudit ? <AuditPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to audit.</div></div>;
 
       default:
         return null;
@@ -560,6 +669,7 @@ function Dashboard({ username, onLogout }) {
           />
         </div>
         <div className="top-actions">
+          <span className={`role-badge role-${currentRole}`}>{roleBadgeLabel}</span>
           <select className="language-btn" value={language} onChange={(e) => setLanguage(e.target.value)}>
             <option>EN</option>
             <option>MR</option>
@@ -578,6 +688,7 @@ function Dashboard({ username, onLogout }) {
               onClick={(e) => {
                 e.stopPropagation();
                 setShowProfileMenu(!showProfileMenu);
+                if (showProfileMenu) setShowManageStoreMenu(false);
               }}
             >
               <img 
@@ -599,6 +710,27 @@ function Dashboard({ username, onLogout }) {
                 >
                   <span>👤</span> Profile
                 </button>
+                {canManageUsers && (
+                  <>
+                    <button
+                      className="menu-item manage-store-parent"
+                      onClick={() => setShowManageStoreMenu((prev) => !prev)}
+                    >
+                      <span>🏬</span> Manage Store
+                      <span className={`submenu-arrow ${showManageStoreMenu ? 'open' : ''}`}>▾</span>
+                    </button>
+                    {showManageStoreMenu && (
+                      <div className="manage-store-submenu">
+                        <button className="menu-item submenu-item" onClick={() => { setShowManageStoreMenu(false); setShowProfileMenu(false); navigate('/users-roles'); }}>
+                          <span>🧩</span> Add Users / Roles
+                        </button>
+                        <button className="menu-item submenu-item" onClick={() => { setShowManageStoreMenu(false); setShowProfileMenu(false); navigate('/store-users'); }}>
+                          <span>👥</span> Existing Users
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
                 <button className="menu-item" onClick={() => {setShowProfileMenu(false); alert('✏️ Edit profile - Coming soon!');}}>
                   <span>✏️</span> Edit
                 </button>
@@ -620,21 +752,28 @@ function Dashboard({ username, onLogout }) {
               <span className="nav-icon">📊</span>
               <span>Dashboard</span>
             </button>
-            <button className={`nav-item ${activeTab === 'inventory' ? 'active' : ''}`} onClick={() => setActiveTab('inventory')}>
+            <button className={`nav-item ${activeTab === 'inventory' ? 'active' : ''}`} onClick={() => canOpenInventory && setActiveTab('inventory')} disabled={!canOpenInventory}>
               <span className="nav-icon">📦</span>
               <span>Inventory</span>
               <span className="badge low-stock">{inventoryData.filter(i => i.qty < i.min).length}</span>
             </button>
             <button className={`nav-item ${activeTab === 'GSTFilling' ? 'active' : ''}`} onClick={() => setActiveTab('GSTFilling')}>
-              <span className="nav-icon">📋</span> {/* CHANGED ICON */}
-              <span>GST Filing</span>  {/* FIXED LABEL */}
+              <span className="nav-icon">📋</span>
+              <span>GST Filing</span>
             </button>
-            <button className={`nav-item ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => setActiveTab('billing')}>
+            <button className={`nav-item ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => canOpenBilling && setActiveTab('billing')} disabled={!canOpenBilling}>
               <span className="nav-icon">💰</span>
               <span>Billing</span>
             </button>
 
-             <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => setActiveTab('sell')}>
+            {canOpenAudit && (
+              <button className={`nav-item ${activeTab === 'audit' ? 'active' : ''}`} onClick={() => setActiveTab('audit')}>
+                <span className="nav-icon">🧾</span>
+                <span>Audit</span>
+              </button>
+            )}
+
+            <button className={`nav-item ${activeTab === 'sell' ? 'active' : ''}`} onClick={() => canOpenSellOrders && setActiveTab('sell')} disabled={!canOpenSellOrders}>
               <span className="nav-icon">📋</span>
               <span>Sell Orders</span>
             </button>

@@ -66,6 +66,12 @@
   font-size: 0.95rem;
 }
 
+.upload-instructions .upload-hint {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
 .column-template {
   background: #eff6ff;
   border: 1px dashed #93c5fd;
@@ -146,26 +152,44 @@
 .upload-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  align-items: center;
+  gap: 0;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+  position: relative;
 }
 
 .cancel-button,
 .upload-button {
-  border: none;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
-  padding: 11px 18px;
+  padding: 11px 22px;
   font-weight: 700;
   cursor: pointer;
+  min-width: 122px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .cancel-button {
-  background: #e2e8f0;
+  background: #f8fafc;
   color: #0f172a;
+  border-right: none;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .upload-button {
   background: linear-gradient(135deg, #2563eb, #14b8a6);
   color: white;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.cancel-button:hover,
+.upload-button:hover {
+  transform: translateY(-1px);
 }
 
 .upload-button:disabled {
@@ -180,10 +204,15 @@
 
   .upload-actions {
     flex-direction: column-reverse;
+    gap: 10px;
+    border-top: 1px solid #e2e8f0;
   }
 
   .cancel-button,
   .upload-button {
     width: 100%;
+    border-radius: 10px;
+    border-left: 1px solid #cbd5e1;
+    border-right: 1px solid #cbd5e1;
   }
 }

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { APP_CONFIG } from '../Config/appConfig';
 
 const normalizeFlag = (value) => {
   if (typeof value === 'string') {
@@ -54,7 +55,7 @@ const MfaScreen = ({ user, onVerified, onCancel }) => {
         <div className="brand-row">
           <div className="logo-brand">
             <span className="logo-icon">🔐</span>
-            <span>Veyra</span>
+            <span>{APP_CONFIG.appName}</span>
           </div>
           <span className="beta-pill">Secure access</span>
         </div>
@@ -87,9 +88,7 @@ const MfaScreen = ({ user, onVerified, onCancel }) => {
             <span className="logo-text">MFA Verification</span>
           </div>
           <h1>Enter verification code</h1>
-          <p>
-            {config.email ? `A 6-digit code was sent to ${config.email}.` : 'A 6-digit verification code is required.'}
-          </p>
+          <p>Enter the 6-digit code sent to your registered contact.</p>
         </div>
 
         {error && (
@@ -129,11 +128,8 @@ const MfaScreen = ({ user, onVerified, onCancel }) => {
         </form>
 
         <div className="mfa-actions">
-          <button type="button" className="secondary-action" onClick={() => onCancel?.()}>
+          <button type="button" className="secondary-action" onClick={() => onCancel?.()} disabled={loading}>
             Cancel
-          </button>
-          <button type="button" className="link-action">
-            Resend code
           </button>
         </div>
       </div>

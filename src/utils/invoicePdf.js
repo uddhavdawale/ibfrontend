@@ -8,7 +8,8 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   const normalized = normalizeInvoiceData(invoiceData);
   const activeShopProfile = invoiceData.shopProfile || readStoredShopProfile();
   const shopDisplayName = getShopDisplayName(activeShopProfile);
-  const { rows, subtotal, gstTotal, grandTotal, totalQty, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
+  const { rows, subtotal, gstTotal, grandTotal, totalQty, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
+  const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
 
   const rupeeSymbol = 'Rs.';
   const formatCurrency = (value) => `${rupeeSymbol} ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -94,8 +95,29 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   pdf.text(`Status: ${invoiceStatus}`, customerX, 52);
   pdf.setTextColor(15, 23, 42);
 
+  const tableHead = isNonGstInvoice ? [['S.No', 'Item', 'HSN', 'Qty', 'Rate', 'Amount', 'Total']] : [['S.No', 'Item', 'HSN', 'Qty', 'Rate', 'Amount', 'GST', 'GST', 'Total']];
+  const columnStyles = isNonGstInvoice ? {
+    0: { cellWidth: 13 },
+    1: { cellWidth: 42 },
+    2: { cellWidth: 18 },
+    3: { cellWidth: 12 },
+    4: { cellWidth: 20, halign: 'right' },
+    5: { cellWidth: 23, halign: 'right' },
+    6: { cellWidth: 22, halign: 'right' },
+  } : {
+    0: { cellWidth: 13 },
+    1: { cellWidth: 42 },
+    2: { cellWidth: 18 },
+    3: { cellWidth: 12 },
+    4: { cellWidth: 20, halign: 'right' },
+    5: { cellWidth: 23, halign: 'right' },
+    6: { cellWidth: 18, halign: 'center' },
+    7: { cellWidth: 20, halign: 'right' },
+    8: { cellWidth: 22, halign: 'right' },
+  };
+
   autoTable(pdf, {
-    head: [['S.No', 'Item', 'HSN', 'Qty', 'Rate', 'Amount', 'GST', 'GST', 'Total']],
+    head: tableHead,
     body: rows,
     startY: 82,
     theme: 'grid',
@@ -118,17 +140,7 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
     alternateRowStyles: {
       fillColor: [255, 255, 255],
     },
-    columnStyles: {
-      0: { cellWidth: 13 },
-      1: { cellWidth: 42 },
-      2: { cellWidth: 18 },
-      3: { cellWidth: 12 },
-      4: { cellWidth: 20, halign: 'right' },
-      5: { cellWidth: 23, halign: 'right' },
-      6: { cellWidth: 18, halign: 'center' },
-      7: { cellWidth: 20, halign: 'right' },
-      8: { cellWidth: 22, halign: 'right' },
-    },
+    columnStyles,
     margin: { left, right: left },
   });
 
@@ -145,16 +157,64 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   pdf.text(String(totalQty), 185, summaryY + 8, { align: 'right' });
   pdf.text('Subtotal:', 18, summaryY + 16);
   pdf.text(formatCurrency(subtotal), 185, summaryY + 16, { align: 'right' });
-  pdf.text('GST Total:', 18, summaryY + 24);
-  pdf.text(formatCurrency(gstTotal), 185, summaryY + 24, { align: 'right' });
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(12);
-  pdf.text('Grand Total:', 18, summaryY + 34);
-  pdf.text(formatCurrency(grandTotal), 185, summaryY + 34, { align: 'right' });
+  if (!isNonGstInvoice) {
+    pdf.text('GST Total:', 18, summaryY + 24);
+    pdf.text(formatCurrency(gstTotal), 185, summaryY + 24, { align: 'right' });
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(12);
+    pdf.text('Grand Total:', 18, summaryY + 34);
+    pdf.text(formatCurrency(grandTotal), 185, summaryY + 34, { align: 'right' });
+  } else {
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(12);
+    pdf.text('Grand Total:', 18, summaryY + 30);
+    pdf.text(formatCurrency(grandTotal), 185, summaryY + 30, { align: 'right' });
+  }
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.2);
   pdf.text(`${addWords(grandTotal)}`, 18, summaryY + 47);
+
+  const bottomY = summaryY + 60;
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9);
+  pdf.text('Invoice Amount in Words', left, bottomY);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.5);
+  pdf.text(`${addWords(grandTotal)} only`, left, bottomY + 8);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9);
+  pdf.text('Terms and Conditions', left, bottomY + 20);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.2);
+  pdf.text('NO Guarantee', left, bottomY + 27);
+  pdf.text('NO Warranty', left, bottomY + 33);
+  pdf.text('NO Exchange', left, bottomY + 39);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(8.7);
+  pdf.text('Sub Total', 120, bottomY);
+  pdf.text('Total', 120, bottomY + 8);
+  pdf.text('Received', 120, bottomY + 16);
+  pdf.text('Balance', 120, bottomY + 24);
+  pdf.text('Payment mode', 120, bottomY + 32);
+  pdf.text('Previous Balance', 120, bottomY + 40);
+  pdf.text('Current Balance', 120, bottomY + 48);
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.7);
+  pdf.text(formatCurrency(subtotal), 185, bottomY, { align: 'right' });
+  pdf.text(formatCurrency(grandTotal), 185, bottomY + 8, { align: 'right' });
+  pdf.text(formatCurrency(receivedAmount), 185, bottomY + 16, { align: 'right' });
+  pdf.text(formatCurrency(balanceAmount), 185, bottomY + 24, { align: 'right' });
+  pdf.text(String(paymentMethod || 'Cash'), 185, bottomY + 32, { align: 'right' });
+  pdf.text(formatCurrency(previousBalance), 185, bottomY + 40, { align: 'right' });
+  pdf.text(formatCurrency(currentBalance), 185, bottomY + 48, { align: 'right' });
+
+  pdf.setFont('helvetica', 'italic');
+  pdf.setFontSize(8);
+  pdf.text(`For :${shopDisplayName}`, 118, 245);
 
   pdf.setTextColor(15, 23, 42);
 

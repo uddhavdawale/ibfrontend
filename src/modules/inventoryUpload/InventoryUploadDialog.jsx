@@ -69,8 +69,9 @@ const InventoryUploadDialog = ({ isOpen, onClose, onUploadSuccess }) => {
         </div>
 
         <div className="upload-instructions">
-          <p>Use a CSV or Excel file with the following columns:</p>
+          <p>Use a CSV or Excel file with the following columns. SKU may be omitted when HSN/SAC is provided; it will be used as the SKU:</p>
           <div className="column-template">{headerText}</div>
+          <p className="upload-hint">Aliases accepted: Product/Item, SKU/Product SKU, HSN/SAC, MRP/ Item, Qty, Min Stock, Set, Price/QTY. Category defaults to General and Set defaults to 1.</p>
         </div>
 
         <label className="file-picker">
@@ -86,11 +87,15 @@ const InventoryUploadDialog = ({ isOpen, onClose, onUploadSuccess }) => {
             <table>
               <thead>
                 <tr>
-                  <th>Product</th>
+                  <th>Item</th>
                   <th>SKU</th>
-                  <th>Qty</th>
+                  <th>HSN/SAC</th>
+                  <th>MRP/ Item</th>
+                  <th>QTY</th>
+                  <th>Set</th>
+                  <th>Price/QTY</th>
+                  <th>PO Number</th>
                   <th>Min Stock</th>
-                  <th>Price</th>
                   <th>Category</th>
                 </tr>
               </thead>
@@ -99,9 +104,13 @@ const InventoryUploadDialog = ({ isOpen, onClose, onUploadSuccess }) => {
                   <tr key={`${row.sku}-${index}`}>
                     <td>{row.product}</td>
                     <td>{row.sku}</td>
+                    <td>{row.hsnSac || row.sku}</td>
+                    <td>{row.mrp || row.price}</td>
                     <td>{row.qty}</td>
-                    <td>{row.minStock}</td>
-                    <td>{row.price}</td>
+                    <td>{row.set || 0}</td>
+                    <td>{row.pricePerQty || row.price}</td>
+                    <td>{row.poNumber || ''}</td>
+                    <td>{row.minStock || 0}</td>
                     <td>{row.category}</td>
                   </tr>
                 ))}

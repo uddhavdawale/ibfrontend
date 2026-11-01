@@ -1,21 +1,23 @@
 .login-shell {
-  --shell-bg-1: #071b2f;
-  --shell-bg-2: #0f2342;
-  --shell-bg-3: #102d4d;
-  --shell-panel: rgba(11, 24, 42, 0.15);
+  --shell-bg-1: #071a2b;
+  --shell-bg-2: #0b233a;
+  --shell-bg-3: #112b44;
+  --shell-panel: rgba(15, 23, 32, 0.18);
   --shell-text: #edf5ff;
   --shell-soft: rgba(220, 232, 245, 0.8);
-  --shell-line: rgba(255,255,255,0.12);
+  --shell-line: rgba(148, 163, 184, 0.18);
   --card-bg: rgba(245, 248, 255, 0.96);
   --card-text: #0f172a;
   --card-soft: #495a74;
-  --card-line: rgba(148, 163, 184, 0.2);
+  --card-line: rgba(148, 163, 184, 0.22);
   --input-bg: #f8fafc;
   --input-line: #d7e2f0;
   min-height: 100vh;
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
-  background: linear-gradient(135deg, var(--shell-bg-1) 0%, var(--shell-bg-2) 42%, var(--shell-bg-3) 100%);
+  background: radial-gradient(circle at top left, rgba(14,165,233,0.16), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(45,212,191,0.18), transparent 28%),
+    linear-gradient(135deg, var(--shell-bg-1) 0%, var(--shell-bg-2) 42%, var(--shell-bg-3) 100%);
   color: var(--shell-text);
   font-family: 'Segoe UI', Roboto, sans-serif;
   overflow: hidden;
@@ -85,7 +87,9 @@
   inset: 40px 60px 40px 40px;
   border: 1px solid var(--shell-line);
   border-radius: 30px;
-  background: var(--shell-panel);
+  background: rgba(255,255,255,0.02);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
 }
 
 .brand-row,
@@ -227,6 +231,11 @@
   color: var(--card-text);
 }
 
+.login-card .login-header h2,
+.login-card .login-header p {
+  color: var(--card-text);
+}
+
 .login-card::before {
   content: '';
   position: absolute;
@@ -357,6 +366,58 @@
   border-color: #2563eb;
   background: white;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+.helper-text {
+  margin-top: 2px;
+  color: var(--card-soft);
+  font-size: 0.82rem;
+}
+
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.channel-tile {
+  border: 1.5px solid var(--input-line);
+  background: var(--input-bg);
+  border-radius: 14px;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--card-text);
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.channel-tile:hover:not(:disabled) {
+  border-color: #93c5fd;
+  transform: translateY(-1px);
+}
+
+.channel-tile.active {
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, 0.06);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.channel-tile:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.channel-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.channel-value {
+  font-size: 0.83rem;
+  color: var(--card-soft);
 }
 
 .form-options {
@@ -556,20 +617,61 @@
     gap: 12px;
   }
 
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .login-theme-switcher {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
   .login-visual h1 {
     font-size: 2.2rem;
   }
 }
 
-/* Responsive */
 @media (max-width: 480px) {
-  .login-card {
-    padding: 32px 24px;
-    margin: 16px;
+  .login-shell {
+    min-height: 100vh;
   }
-  
+
+  .login-visual {
+    padding: 24px 18px 20px;
+  }
+
+  .login-card {
+    padding: 28px 18px 20px;
+    margin: 0;
+    max-width: 100%;
+  }
+
+  .login-header h1 {
+    font-size: 1.75rem;
+  }
+
   .logo-text {
     font-size: 20px;
+  }
+
+  .input-group input {
+    padding-left: 46px;
+  }
+
+  .form-options {
+    align-items: flex-start;
+    gap: 10px;
+    flex-direction: column;
+  }
+
+  .channel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .signup-btn,
+  .login-btn {
+    min-height: 48px;
   }
 }
 

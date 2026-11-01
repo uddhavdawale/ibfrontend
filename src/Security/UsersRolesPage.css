@@ -1,0 +1,153 @@
+.users-roles-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f6f9ff 0%, #edf3ff 100%);
+  padding: 24px;
+}
+
+.users-roles-card {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 14px;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.1);
+  padding: 22px;
+}
+
+.users-roles-head h1 {
+  margin: 8px 0 4px;
+  font-size: 1.7rem;
+  color: #0f172a;
+}
+
+.users-roles-head p {
+  margin: 0;
+  color: #475569;
+}
+
+.users-roles-form {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.users-roles-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.users-roles-form input,
+.users-roles-form select {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+}
+
+.field-error {
+  color: #b91c1c;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.form-alert {
+  margin-top: 12px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.form-alert.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.form-alert.success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.form-actions button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.form-actions .secondary {
+  background: #e2e8f0;
+  color: #1f2937;
+}
+
+.form-actions .primary {
+  background: #2563eb;
+  color: #fff;
+}
+
+.created-users-panel {
+  margin-top: 18px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 14px;
+}
+
+.created-users-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.created-users-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  color: #0f172a;
+}
+
+.created-users-head span {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.created-users-empty {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.created-users-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.created-users-row {
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  font-size: 0.88rem;
+  color: #1e293b;
+}
+
+@media (max-width: 680px) {
+  .users-roles-page {
+    padding: 14px;
+  }
+
+  .users-roles-card {
+    padding: 16px;
+  }
+}

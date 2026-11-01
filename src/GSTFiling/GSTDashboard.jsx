@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
+import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import './GSTDashboard.css';
 import logger from '../utils/logger';
 
@@ -12,6 +12,11 @@ const fetchJsonWithFallback = async (urls = []) => {
   for (const url of urls) {
     try {
       const response = await apiFetch(url);
+      if (response.status === 429) {
+        const rateLimitError = new Error('rate_limited');
+        rateLimitError.status = 429;
+        throw rateLimitError;
+      }
       if (!response.ok) continue;
       return await response.json();
     } catch {
@@ -43,6 +48,7 @@ const GSTDashboard = () => {
   const mockStats = { taxable: 4210000, taxPayable: 222000, pending: 2 };
 
   useEffect(() => {
+    const debounceHandle = setTimeout(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
@@ -50,14 +56,14 @@ const GSTDashboard = () => {
 
         const summaryPayload = await fetchJsonWithFallback([
           API_ENDPOINTS.gstSummary,
-          `${API_BASE_URL}/api/gst/stats`,
-          `${API_BASE_URL}/api/gst/overview`
+          API_ENDPOINTS.gstStats,
+          API_ENDPOINTS.gstOverview
         ]);
 
         const filingsPayload = await fetchJsonWithFallback([
-          `${API_ENDPOINTS.gstFilings}?period=${period}`,
-          `${API_BASE_URL}/api/gst/returns?period=${period}`,
-          `${API_BASE_URL}/api/gst/filings?period=${period}`
+          API_ENDPOINTS.gstFilingsByPeriod(period),
+          API_ENDPOINTS.gstReturnsByPeriod(period),
+          API_ENDPOINTS.gstFilingsByPeriod(period)
         ]);
 
         if (summaryPayload) {
@@ -88,7 +94,11 @@ const GSTDashboard = () => {
         }
       } catch (err) {
         logger.error('GST API request failed', err);
-        setError('Backend APIs coming soon - using demo data');
+        if (err?.status === 429 || String(err?.message || '').toLowerCase().includes('rate_limited')) {
+          setError('Too many requests. Please retry in a few seconds.');
+        } else {
+          setError('Backend APIs coming soon - using demo data');
+        }
         setStats(mockStats);
         setReturns(mockReturns);
       } finally {
@@ -97,6 +107,9 @@ const GSTDashboard = () => {
     };
 
     fetchData();
+    }, 350);
+
+    return () => clearTimeout(debounceHandle);
   }, [period]);
 
   const generateReturn = async (type) => {

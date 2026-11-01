@@ -313,6 +313,19 @@
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
 }
 
+.input-wrapper input.input-invalid,
+.input-wrapper input.input-invalid:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.12);
+}
+
+.field-error {
+  margin-top: 8px;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .select-wrapper select {
   padding-left: 16px;
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
@@ -360,6 +373,39 @@
 .signup-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.password-checklist {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--signup-line);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.06);
+  display: grid;
+  gap: 6px;
+}
+
+.password-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--signup-muted);
+}
+
+.password-rule span {
+  font-weight: 700;
+  width: 14px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.password-rule.pass {
+  color: #166534;
+}
+
+.password-rule.pending {
+  color: var(--signup-muted);
 }
 
 .auth-footer {

@@ -2,14 +2,25 @@ import React, { useEffect, useState } from 'react';
 import './Login.css';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL, setAccessToken } from '../Config/api';
+import { APP_CONFIG } from '../Config/appConfig';
 import { resolveMfaContext } from '../auth/mfa/mfaService';
 import logger from '../utils/logger';
+import { normalizeStoreRole } from '../Security/storeRoles';
 
 const themeOptions = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
   { value: 'aurora', label: 'Aurora' }
 ];
+
+const isMfaMessage = (message = '') => {
+  const normalized = String(message || '').toLowerCase();
+  if (!normalized) return false;
+
+  const mentionsMfa = /\bmfa\b|\botp\b|two[- ]factor|verification code/.test(normalized);
+  const impliesChallenge = /required|verify|verification|pending|challenge|needed/.test(normalized);
+  return mentionsMfa && impliesChallenge;
+};
 
 const readBackendConfig = async () => {
   try {
@@ -60,9 +71,9 @@ const handleSubmit = async (e) => {
       credentials: 'include',
       body: JSON.stringify({
         username: formData.username,
-        password: btoa(formData.password),
+        password: formData.password,
         email: formData.username.includes('@') ? formData.username : `${formData.username}@example.com`,
-        role: 'ADMIN'
+              role: 'store_manager'
       }),
     });
 
@@ -88,21 +99,30 @@ const handleSubmit = async (e) => {
       username,
       name: userPayload.name || username,
       email: userPayload.email || data.email || '',
-      role: userPayload.role || data.role || 'ADMIN',
+      phone: userPayload.phone || data.phone || userPayload.mobile || data.mobile || '',
+          role: normalizeStoreRole(userPayload.role || data.role),
       config: backendConfig,
       mfaRequired: mfaContext.enabled
     };
 
-    if (response.ok && data.success !== false) {
-      if (mfaContext.enabled) {
-        logger.info('Login succeeded; MFA required before final session activation');
-        setAccessToken(null);
-        localStorage.removeItem('auth_logout');
-        localStorage.setItem('username', username);
-        onLogin({ ...resolvedUser, mfaRequired: true });
-        return;
-      }
+    const message = data.message || data.error || '';
+    const mfaRequiredByMessage = isMfaMessage(message);
 
+    if (mfaContext.enabled || mfaRequiredByMessage) {
+      logger.info('Login requires MFA challenge');
+      if (accessToken) {
+        setAccessToken(accessToken);
+      }
+      if (data.refreshToken) {
+        sessionStorage.setItem('refreshToken', data.refreshToken);
+      }
+      localStorage.removeItem('auth_logout');
+      localStorage.setItem('username', username);
+      onLogin({ ...resolvedUser, mfaRequired: true });
+      return;
+    }
+
+    if (response.ok && data.success !== false) {
       if (accessToken) {
         logger.info('Login succeeded');
         setAccessToken(accessToken);
@@ -115,12 +135,12 @@ const handleSubmit = async (e) => {
       }
     }
 
-    setError(data.message || (response.status === 401
+    setError(message || (response.status === 401
       ? 'Invalid username or password.'
       : `Login failed (${response.status}). Please try again.`));
   } catch (error) {
     logger.error('Login request failed', error);
-    setError('Backend error. Check console.');
+    setError('Unable to sign in right now. Please try again.');
   } finally {
     setLoading(false);
   }
@@ -132,7 +152,7 @@ const handleSubmit = async (e) => {
         <div className="brand-row">
           <div className="logo-brand">
             <span className="logo-icon">📦</span>
-            <span>Veyra</span>
+            <span>{APP_CONFIG.appName}</span>
           </div>
           <div className="header-actions">
             <div className="login-theme-switcher" aria-label="Theme selector">
@@ -182,7 +202,7 @@ const handleSubmit = async (e) => {
         <div className="login-header">
           <div className="logo">
             <span className="logo-icon">📦</span>
-            <span className="logo-text">Veyra</span>
+            <span className="logo-text">{APP_CONFIG.appName}</span>
           </div>
           <h1>Welcome back</h1>
           <p>Sign in to your retail finance dashboard</p>
@@ -262,7 +282,7 @@ const handleSubmit = async (e) => {
         </div>
 
         <div className="signup-section">
-          <p className="signup-text">New to Veyra?</p>
+          <p className="signup-text">New to {APP_CONFIG.appName}?</p>
           <button 
             className="signup-btn"
             type="button"
@@ -273,7 +293,7 @@ const handleSubmit = async (e) => {
         </div>
 
         <div className="login-footer">
-          <p>© 2026 Veyra. All rights reserved.</p>
+          <p>© {APP_CONFIG.footerYear} {APP_CONFIG.appName}. All rights reserved.</p>
         </div>
       </div>
     </div>

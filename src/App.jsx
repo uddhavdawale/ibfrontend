@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import './App.css';
+import { APP_CONFIG } from './Config/appConfig';
 
 const themeOptions = [
   { value: 'light', label: 'Light' },
@@ -26,8 +27,8 @@ function App() {
           <div className="brand-mark">
             <span className="logo-icon">📦</span>
             <div>
-              <strong>Veyra</strong>
-              <small>CA + Retail Suite</small>
+              <strong>{APP_CONFIG.appName}</strong>
+              <small>{APP_CONFIG.appTagline}</small>
             </div>
           </div>
           <div className="nav-actions">
@@ -155,7 +156,7 @@ function App() {
       </section>
 
       <footer className="landing-footer">
-        <p>© 2026 Veyra. Designed for retailers, finance teams, and CA partners.</p>
+        <p>© {APP_CONFIG.footerYear} {APP_CONFIG.appName}. Designed for retailers, finance teams, and CA partners.</p>
       </footer>
     </div>
   );

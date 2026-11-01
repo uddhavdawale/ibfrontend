@@ -1,11 +1,11 @@
-Product,SKU,Qty,Min Stock,Price,Category
-Rice,RICE-001,20,5,250,Groceries
-Wheat,WHEAT-002,35,10,180,Groceries
-Soap,SOAP-003,50,15,80,Personal Care
-Milk,MILK-004,18,8,55,Dairy
-Tea,TEA-005,42,12,220,Beverages
-Laptop,LAPTOP-006,7,2,45000,Electronics
-Notebook,NOTEBOOK-007,120,30,35,Stationery
-Shampoo,SHAMP-008,60,20,180,Personal Care
-Salt,SALT-009,90,25,40,Groceries
-Coffee,COFFEE-010,15,5,320,Beverages
+Item,HSN/SAC,MRP/ Item,QTY,Set,Price/QTY,PO Number,Min Stock,Category
+Rice,1001,250,20,1,230,PO-2003,5,Groceries
+Wheat,1002,180,35,1,180,PO-2003,10,Groceries
+Soap,1003,80,50,1,60,PO-2003,15,Personal Care
+Milk,1004,55,18,1,45,PO-2003,8,Dairy
+Tea,1005,220,42,1,200,PO-2003,12,Beverages
+Laptop,1006,45000,7,1,44000,PO-2003,2,Electronics
+Notebook,1007,35,120,1,25,PO-2003,30,Stationery
+Shampoo,1008,180,60,1,160,PO-2003,20,Personal Care
+Salt,1009,40,90,1,25,PO-2003,25,Groceries
+Coffee,1010,320,15,1,300,PO-2003,5,Beverages

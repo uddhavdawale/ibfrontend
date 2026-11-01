@@ -1,9 +1,37 @@
 import React, { useState, useEffect } from "react";
+import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
-import { API_BASE_URL, apiFetch } from "../Config/api";
+import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
+import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
+
+const exportSellOrdersData = (orders, format = "csv") => {
+  const rows = orders.map((order) => ({
+    Invoice_No: order.invoiceNo,
+    Date: order.date,
+    Customer: order.customer?.name || "Walk-in Customer",
+    Phone: order.customer?.phone || "",
+    Email: order.customer?.email || "",
+    Payment_Method: order.paymentMethod,
+    Status: order.status,
+    Subtotal: Number(order.subtotal || 0),
+    GST: Number(order.totalGst || 0),
+    Grand_Total: Number(order.grandTotal || 0),
+    Item_Count: Array.isArray(order.items) ? order.items.length : 0,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "SellOrders");
+
+  const fileExtension = format === "excel" ? "xlsx" : "csv";
+  XLSX.writeFile(workbook, `sell-orders-export.${fileExtension}`);
+};
+
+const MAX_EXPORT_ROWS = 500;
+const EXPORT_COOLDOWN_MS = 60 * 1000;
 
 const generatePDF = async (order, shopProfile = readStoredShopProfile()) => buildInvoicePdf({ ...order, shopProfile });
 
@@ -196,6 +224,7 @@ const resolvePaymentStatus = (invoice, grandTotal) => {
     0
   );
 
+  if (["cancelled", "canceled", "void", "voided"].includes(rawPaymentStatus)) return "cancelled";
   if (["paid", "complete", "completed", "settled"].includes(rawPaymentStatus)) return "paid";
   if (paidAmount >= totalAmount) return "paid";
   return "pending";
@@ -277,11 +306,11 @@ const fetchInvoiceDetail = async (invoiceSummary) => {
   if (!invoiceId) return invoiceSummary;
 
   const candidateUrls = [
-    `${API_BASE_URL}/api/invoices/${invoiceId}`,
-    `${API_BASE_URL}/api/invoices/${invoiceId}/details`,
-    `${API_BASE_URL}/api/invoices/${invoiceId}/items`,
-    `${API_BASE_URL}/api/invoice/${invoiceId}`,
-    `${API_BASE_URL}/api/invoice-detail/${invoiceId}`
+    API_ENDPOINTS.invoiceById(invoiceId),
+    API_ENDPOINTS.invoiceDetailsById(invoiceId),
+    API_ENDPOINTS.invoiceItemsById(invoiceId),
+    API_ENDPOINTS.invoiceLegacyById(invoiceId),
+    API_ENDPOINTS.invoiceLegacyDetailById(invoiceId)
   ];
 
   for (const url of candidateUrls) {
@@ -306,10 +335,51 @@ const SellPage = () => {
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [exportFormat, setExportFormat] = useState('csv');
+  const [openActionMenuFor, setOpenActionMenuFor] = useState(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState(null);
+  const [lastExportAt, setLastExportAt] = useState(0);
+  const [role, setRole] = useState(() => getCurrentUserRole());
   const pageSize = 5;
+  const canManageSellOrders = canWriteBilling(role);
+
+  const cycleStatusFilter = () => {
+    setStatusFilter((current) => {
+      if (current === 'all') return 'paid';
+      if (current === 'paid') return 'pending';
+      if (current === 'pending') return 'cancelled';
+      if (current === 'cancelled') return 'return';
+      return 'all';
+    });
+    setCurrentPage(1);
+  };
+
+  const handleThreeDotMenuAction = (action) => {
+    setOpenActionMenuFor(null);
+
+    if (action === 'sell') {
+      setStatusFilter('all');
+      setCurrentPage(1);
+      return;
+    }
+
+    if (action === 'cancelled') {
+      setStatusFilter('cancelled');
+      setCurrentPage(1);
+      return;
+    }
+
+    if (action === 'return') {
+      setStatusFilter('return');
+      setCurrentPage(1);
+    }
+  };
 
   useEffect(() => {
+    setRole(getCurrentUserRole());
+
     let active = true;
     getCurrentShopProfile()
       .then((profile) => {
@@ -342,14 +412,35 @@ const SellPage = () => {
   useEffect(() => {
     const fetchSellOrders = async () => {
       try {
-        const response = await apiFetch(`${API_BASE_URL}/api/invoices?page=0&size=50`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+        const orderEndpoints = [
+          API_ENDPOINTS.invoicesPage(0, 200),
+          API_ENDPOINTS.nonGstInvoicesPage(0, 200)
+        ];
 
-        const data = await response.json();
-        const invoices = Array.isArray(data) ? data : data.content || data.invoices || data.data || [];
-        let normalizedOrders = invoices.map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
+        const allInvoiceResponses = await Promise.all(
+          orderEndpoints.map(async (url) => {
+            try {
+              const response = await apiFetch(url);
+              if (!response.ok) return [];
+              const data = await response.json();
+              return Array.isArray(data)
+                ? data
+                : data.content || data.invoices || data.data || [];
+            } catch {
+              return [];
+            }
+          })
+        );
+
+        const mergedInvoices = allInvoiceResponses
+          .flat()
+          .reduce((unique, invoice) => {
+            const key = invoice?.id ?? invoice?.invoiceId ?? invoice?.invoiceNo ?? invoice?.invoice_number ?? JSON.stringify(invoice);
+            if (!unique.has(key)) unique.set(key, invoice);
+            return unique;
+          }, new Map());
+
+        let normalizedOrders = Array.from(mergedInvoices.values()).map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
 
         normalizedOrders = await Promise.all(
           normalizedOrders.map(async (order) => {
@@ -384,6 +475,7 @@ const OrderDetail = ({ order }) => {
 
   return (
     <div className="order-detail">
+      {/* Keep your header exactly as‑is */}
       <div className="detail-header">
         <div className="invoice-shop-info">
           <h2>{getShopDisplayName(shopProfile)}</h2>
@@ -525,7 +617,13 @@ const OrderDetail = ({ order }) => {
   );
 };
 
-  const revenueSummary = sellOrders.reduce(
+  const filteredOrders = statusFilter === 'all'
+    ? sellOrders
+    : statusFilter === 'return'
+      ? sellOrders.filter((order) => ['paid', 'pending'].includes(String(order.status || '').toLowerCase()))
+      : sellOrders.filter((order) => order.status === statusFilter);
+
+  const revenueSummary = filteredOrders.reduce(
     (totals, order) => {
       totals.revenue += Number(order.grandTotal || 0);
       totals.paid += order.status === "paid" ? 1 : 0;
@@ -535,14 +633,117 @@ const OrderDetail = ({ order }) => {
     { revenue: 0, paid: 0, pending: 0 }
   );
 
-  const totalPages = Math.max(1, Math.ceil(sellOrders.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
 
   useEffect(() => {
     setCurrentPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
 
-  const visibleOrders = sellOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+  const visibleOrders = filteredOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+
+  const handleSellOrderExport = () => {
+    const now = Date.now();
+    if (now - lastExportAt < EXPORT_COOLDOWN_MS) {
+      const waitSeconds = Math.ceil((EXPORT_COOLDOWN_MS - (now - lastExportAt)) / 1000);
+      alert(`Please wait ${waitSeconds}s before exporting again.`);
+      return;
+    }
+
+    if (filteredOrders.length > MAX_EXPORT_ROWS) {
+      alert(`Export is limited to ${MAX_EXPORT_ROWS} rows. Please narrow your filters.`);
+      return;
+    }
+
+    exportSellOrdersData(filteredOrders, exportFormat);
+    setLastExportAt(now);
+  };
+
+  const markOrderCancelled = (orderId) => {
+    setSellOrders((orders) =>
+      orders.map((order) =>
+        String(order.id) === String(orderId)
+          ? { ...order, status: 'cancelled' }
+          : order
+      )
+    );
+
+    setActiveOrder((current) => (
+      current && String(current.id) === String(orderId)
+        ? { ...current, status: 'cancelled' }
+        : current
+    ));
+  };
+
+  const cancelOrder = async (order) => {
+    if (!canManageSellOrders) {
+      alert('Your role has read-only sell order access.');
+      return;
+    }
+
+    if (!order || !order.id) return;
+    if (String(order.status || '').toLowerCase() === 'cancelled') {
+      alert('This order is already cancelled.');
+      return;
+    }
+
+    const allowCancel = window.confirm(`Cancel order ${order.invoiceNo}?`);
+    if (!allowCancel) return;
+
+    setOpenActionMenuFor(null);
+    setCancellingOrderId(order.id);
+
+    const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
+    const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
+    const cancelPayload = {
+      status: 'cancelled',
+      paymentStatus: 'cancelled',
+      cancelled: true,
+      cancelReason: 'Cancelled from sell page',
+    };
+
+    const requests = [
+      { url: `${invoiceUrl}/cancel`, method: 'POST' },
+      { url: `${invoiceLegacyUrl}/cancel`, method: 'POST' },
+      { url: invoiceUrl, method: 'PATCH', body: cancelPayload },
+      { url: invoiceLegacyUrl, method: 'PATCH', body: cancelPayload },
+      { url: invoiceUrl, method: 'PUT', body: cancelPayload },
+      { url: invoiceLegacyUrl, method: 'PUT', body: cancelPayload },
+      { url: invoiceUrl, method: 'DELETE' },
+      { url: invoiceLegacyUrl, method: 'DELETE' },
+    ];
+
+    let cancelled = false;
+
+    try {
+      for (const request of requests) {
+        try {
+          const options = {
+            method: request.method,
+            headers: request.body ? { 'Content-Type': 'application/json' } : {},
+            ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+          };
+
+          const response = await apiFetch(request.url, options);
+          if (response.ok) {
+            cancelled = true;
+            break;
+          }
+        } catch (requestError) {
+          console.warn('Order cancellation attempt failed:', requestError);
+        }
+      }
+
+      if (cancelled) {
+        markOrderCancelled(order.id);
+        alert('Order cancelled successfully.');
+      } else {
+        alert('Unable to cancel this order from server. Please try again.');
+      }
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
 
   return (
     <div className="sell-dashboard">
@@ -550,12 +751,30 @@ const OrderDetail = ({ order }) => {
         <h1>📋 Sell Orders ({sellOrders.length})</h1>
         {error && <p className="error-text">{error}</p>}
         {loading && <p className="loading-text">🔄 Loading live sell orders...</p>}
-        <button
-          className="btn-new-order"
-          onClick={() => navigate("/billing")}
-        >
-          ➕ New Order
-        </button>
+        {!canManageSellOrders && <p className="error-text">Read-only mode: billing viewer access.</p>}
+        <div className="sell-page-actions">
+          <div className="export-controls">
+            <select
+              className="export-select"
+              value={exportFormat}
+              onChange={(event) => setExportFormat(event.target.value)}
+              aria-label="Choose sell export format"
+            >
+              <option value="csv">CSV</option>
+              <option value="excel">Excel</option>
+            </select>
+            <button className="btn-export" type="button" onClick={handleSellOrderExport}>
+              ⬇️ Export
+            </button>
+          </div>
+          <button
+            className="btn-new-order"
+            disabled={!canManageSellOrders}
+            onClick={() => navigate("/billing")}
+          >
+            ➕ New Order
+          </button>
+        </div>
       </div>
 
       <div className="sell-kpi-row">
@@ -576,13 +795,32 @@ const OrderDetail = ({ order }) => {
         </div>
       </div>
 
-      <div className="orders-list">
+      <div className="orders-list" onClick={() => setOpenActionMenuFor(null)}>
         <div className="list-header">
           <span>Recent Orders</span>
           <span>Customer</span>
           <span>Amount</span>
           <span>Date</span>
-          <span>Status</span>
+          <span className="status-header-cell">
+            <span>Status</span>
+            <button
+              type="button"
+              className={`status-filter-mini ${statusFilter}`}
+              onClick={cycleStatusFilter}
+              aria-label={`Filter status: ${statusFilter}`}
+              title={
+                statusFilter === 'all'
+                  ? 'Show all bills'
+                  : statusFilter === 'paid'
+                    ? 'Show paid bills only'
+                    : statusFilter === 'pending'
+                      ? 'Show pending bills only'
+                      : 'Show cancelled bills only'
+              }
+            >
+              {statusFilter === 'all' ? '≣' : statusFilter === 'paid' ? '✓' : statusFilter === 'pending' ? '≠' : '⨯'}
+            </button>
+          </span>
           <span>Actions</span>
         </div>
 
@@ -601,7 +839,51 @@ const OrderDetail = ({ order }) => {
                 {order.status}
               </span>
             </span>
-            <span>👁️</span>
+            <span className="order-actions" onClick={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                className="order-action-btn"
+                onClick={() => selectOrder(order)}
+                aria-label={`View ${order.invoiceNo}`}
+                title="View order"
+              >
+                👁️
+              </button>
+              <button
+                type="button"
+                className="order-action-btn order-action-menu-btn"
+                onClick={() => setOpenActionMenuFor((current) => current === order.id ? null : order.id)}
+                aria-label={`Open actions for ${order.invoiceNo}`}
+                title="More actions"
+              >
+                ⋮
+              </button>
+              {openActionMenuFor === order.id && (
+                <div className="order-action-menu" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction('sell')}
+                  >
+                    Sell Order
+                  </button>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction('cancelled')}
+                  >
+                    Cancelled Order
+                  </button>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction('return')}
+                  >
+                    Return Order
+                  </button>
+                </div>
+              )}
+            </span>
           </div>
         ))}
       </div>
