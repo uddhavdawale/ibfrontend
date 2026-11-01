@@ -65,15 +65,16 @@ const handleSubmit = async (e) => {
   setError('');
 
   try {
+    const trimmedUsername = formData.username.trim();
     const response = await fetch(`${API_BASE_URL}/api/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
-        username: formData.username,
+        username: trimmedUsername,
         password: formData.password,
-        email: formData.username.includes('@') ? formData.username : `${formData.username}@example.com`,
-              role: 'store_manager'
+        ...(trimmedUsername.includes('@') ? { email: trimmedUsername } : {}),
+        role: 'store_manager'
       }),
     });
 
@@ -87,7 +88,8 @@ const handleSubmit = async (e) => {
 
     const accessToken = data.accessToken || data.token;
     const userPayload = data.user || {};
-    const username = userPayload.username || userPayload.name || data.username || formData.username;
+    const username = userPayload.username || userPayload.userName || data.username || trimmedUsername;
+    const displayName = userPayload.name || userPayload.ownerName || userPayload.businessName || username;
     const backendConfig = {
       ...(await readBackendConfig()),
       ...(data.config || data.authConfig || data.securityConfig || {}),
@@ -97,7 +99,7 @@ const handleSubmit = async (e) => {
     const resolvedUser = {
       id: userPayload.id ?? data.id ?? null,
       username,
-      name: userPayload.name || username,
+      name: displayName,
       email: userPayload.email || data.email || '',
       phone: userPayload.phone || data.phone || userPayload.mobile || data.mobile || '',
           role: normalizeStoreRole(userPayload.role || data.role),

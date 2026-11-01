@@ -19,7 +19,7 @@ const SignupPage = () => {
   const [role, setRole] = useState('retailer');
   const [formData, setFormData] = useState({
     // Common fields
-    businessName: '', ownerName: '', email: '', phone: '', password: '',
+    businessName: '', ownerName: '', username: '', email: '', phone: '', password: '',
     confirmPassword: '', address: '', city: 'Pune', pincode: '',
     
     // Retailer fields
@@ -32,6 +32,7 @@ const SignupPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({
+    username: '',
     email: '',
     password: '',
     confirmPassword: ''
@@ -56,7 +57,11 @@ const SignupPage = () => {
 
   const mapSignupErrorToFields = (message = '') => {
     const normalized = String(message || '').toLowerCase();
-    const nextFieldErrors = { email: '', password: '', confirmPassword: '' };
+    const nextFieldErrors = { username: '', email: '', password: '', confirmPassword: '' };
+
+    if (normalized.includes('username')) {
+      nextFieldErrors.username = message || 'Username is already taken';
+    }
 
     if (normalized.includes('at least 12 characters') || normalized.includes('password')) {
       nextFieldErrors.password = message || 'Password must be at least 12 characters long';
@@ -71,9 +76,22 @@ const SignupPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const normalizedUsername = formData.username.trim();
+    if (!normalizedUsername) {
+      setFieldErrors({
+        username: 'Username is required',
+        email: '',
+        password: '',
+        confirmPassword: ''
+      });
+      setError('Username is required');
+      return;
+    }
     
     if (formData.password !== formData.confirmPassword) {
       setFieldErrors({
+        username: '',
         email: '',
         password: '',
         confirmPassword: 'Passwords do not match'
@@ -84,6 +102,7 @@ const SignupPage = () => {
     
     if (!isPasswordLengthValid) {
       setFieldErrors({
+        username: '',
         email: '',
         password: 'Password must be at least 12 characters long',
         confirmPassword: ''
@@ -93,9 +112,9 @@ const SignupPage = () => {
     }
 
     setLoading(true);
-    setFieldErrors({ email: '', password: '', confirmPassword: '' });
+    setFieldErrors({ username: '', email: '', password: '', confirmPassword: '' });
     try {
-      const signupFields = { ...formData };
+      const signupFields = { ...formData, username: normalizedUsername };
       delete signupFields.confirmPassword;
       delete signupFields.password;
       const payload = {
@@ -247,14 +266,29 @@ const SignupPage = () => {
               <label>Owner/CA Name *</label>
               <div className="input-wrapper">
                 <span className="input-icon">👤</span>
-                <input name="ownerName" placeholder="Uddhav Dawale" onChange={handleChange} required />
+                <input name="ownerName" placeholder="Uddhav Dawale" value={formData.ownerName} onChange={handleChange} required />
               </div>
+            </div>
+            <div className="input-group">
+              <label>Username *</label>
+              <div className="input-wrapper">
+                <span className="input-icon">@</span>
+                <input
+                  name="username"
+                  placeholder="choose-login-name"
+                  value={formData.username}
+                  onChange={handleChange}
+                  className={fieldErrors.username ? 'input-invalid' : ''}
+                  required
+                />
+              </div>
+              {fieldErrors.username && <div className="field-error">{fieldErrors.username}</div>}
             </div>
             <div className="input-group">
               <label>Phone *</label>
               <div className="input-wrapper">
                 <span className="input-icon">📱</span>
-                <input name="phone" type="tel" placeholder="9876543210" onChange={handleChange} required />
+                <input name="phone" type="tel" placeholder="9876543210" value={formData.phone} onChange={handleChange} required />
               </div>
             </div>
           </div>

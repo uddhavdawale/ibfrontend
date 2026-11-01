@@ -81,7 +81,7 @@ export const getAuthContext = () => {
   const user = safeParseJson(localStorage.getItem('user'), {});
   const shop = safeParseJson(localStorage.getItem('shopProfile'), {});
 
-  const username = String(user?.username || user?.name || localStorage.getItem('username') || '').trim();
+  const username = String(user?.username || user?.userName || user?.email || user?.name || localStorage.getItem('username') || '').trim();
   const role = String(user?.role || '').trim().toUpperCase();
 
   return {

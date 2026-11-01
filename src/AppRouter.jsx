@@ -152,7 +152,7 @@ const AppRoutes = () => {
         }
 
         try {
-          await refreshAccessToken(localStorage.getItem('username') || parsedUser.name || '');
+          await refreshAccessToken(localStorage.getItem('username') || parsedUser.username || parsedUser.userName || parsedUser.name || '');
         } catch (error) {
           console.warn('Session refresh failed during app startup; keeping the saved session available.', error);
           if (active) {
@@ -169,8 +169,8 @@ const AppRoutes = () => {
             ...parsedUser,
             ...profile,
             id: profile.id ?? parsedUser.id ?? null,
-            username: profile.username || profile.ownerName || profile.name || parsedUser.username || parsedUser.name || 'user',
-            name: profile.ownerName || profile.name || profile.businessName || parsedUser.name || parsedUser.username || 'User',
+            username: profile.username || profile.userName || parsedUser.username || parsedUser.userName || profile.email || parsedUser.email || 'user',
+            name: profile.ownerName || profile.name || profile.businessName || parsedUser.name || parsedUser.ownerName || 'User',
             email: profile.email || parsedUser.email || '',
             role: normalizeStoreRole(profile.role || parsedUser.role),
           };
@@ -204,8 +204,8 @@ const AppRoutes = () => {
   const loginUser = (userData) => {
     const normalizedUser = {
       ...userData,
-      username: userData?.username || userData?.name || 'user',
-      name: userData?.name || userData?.username || 'User',
+      username: userData?.username || userData?.userName || userData?.email || 'user',
+      name: userData?.name || userData?.ownerName || userData?.businessName || userData?.username || 'User',
       role: normalizeStoreRole(userData?.role),
     };
 
@@ -236,8 +236,8 @@ const AppRoutes = () => {
 
     const normalizedUser = {
       ...verifiedUser,
-      username: verifiedUser?.username || verifiedUser?.name || 'user',
-      name: verifiedUser?.name || verifiedUser?.username || 'User',
+      username: verifiedUser?.username || verifiedUser?.userName || verifiedUser?.email || 'user',
+      name: verifiedUser?.name || verifiedUser?.ownerName || verifiedUser?.businessName || verifiedUser?.username || 'User',
       role: normalizeStoreRole(verifiedUser?.role),
     };
 
