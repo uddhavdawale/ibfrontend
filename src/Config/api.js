@@ -52,6 +52,7 @@ export const API_ENDPOINTS = {
   gstFilings: `${API_BASE_URL}/api/gst/filings`,
   auditSummary: `${API_BASE_URL}/api/audit/summary`,
   auditEvents: `${API_BASE_URL}/api/audit/events`,
+  auditEventsPage: (page = 0, size = 50) => `${API_BASE_URL}/api/audit/events?page=${page}&size=${size}`,
   auditExport: `${API_BASE_URL}/api/audit/export`,
   mfaSend: `${API_BASE_URL}/api/mfa/send`,
   mfaVerify: `${API_BASE_URL}/api/mfa/verify`,

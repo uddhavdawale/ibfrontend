@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './AuditPage.css';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 
@@ -50,7 +50,7 @@ const normalizeAuditStats = (payload) => {
 const normalizeAuditActivity = (payload) => {
   const source = payload?.items || payload?.events || payload?.activity || payload?.data || [];
 
-  if (Array.isArray(source) && source.length) {
+  if (Array.isArray(source)) {
     return source.map((entry) => ({
       time: entry.event_timestamp || entry.time || entry.timestamp || '—',
       user: entry.actor_user_id || entry.actor || entry.user || 'system',
@@ -85,47 +85,104 @@ const readAuditPayload = async (endpoint) => {
 };
 
 const AuditPage = () => {
+  const ACTIVITY_PAGE_SIZE = 8;
   const [stats, setStats] = useState(fallbackAuditStats);
   const [activity, setActivity] = useState(fallbackAuditActivity);
   const [checks, setChecks] = useState(fallbackAuditChecks);
   const [loading, setLoading] = useState(true);
+  const [eventsLoading, setEventsLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalActivityPages, setTotalActivityPages] = useState(1);
+  const hasLoadedSummaryRef = useRef(false);
 
   useEffect(() => {
     let active = true;
 
+    const readSafePageNumber = (value, fallback = 0) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+      return Math.floor(parsed);
+    };
+
     const loadAuditData = async () => {
+      const isInitialLoad = !hasLoadedSummaryRef.current;
+      if (isInitialLoad) setLoading(true);
+      setEventsLoading(true);
+
       try {
-        const [summary, eventData] = await Promise.all([
-          readAuditPayload(API_ENDPOINTS.auditSummary).catch((error) => {
+        let summary = null;
+        if (isInitialLoad) {
+          summary = await readAuditPayload(API_ENDPOINTS.auditSummary).catch((error) => {
             console.warn('Audit summary load failed:', error);
             return {};
-          }),
-          readAuditPayload(API_ENDPOINTS.auditEvents).catch((error) => {
-            console.warn('Audit events load failed:', error);
-            return {};
-          }),
-        ]);
+          });
+        }
+
+        const eventPayload = await readAuditPayload(
+          API_ENDPOINTS.auditEventsPage(currentPage, ACTIVITY_PAGE_SIZE)
+        ).catch((error) => {
+          console.warn('Audit events load failed:', error);
+          return {};
+        });
 
         if (!active) return;
 
-        setStats(normalizeAuditStats(summary));
-        setActivity(normalizeAuditActivity(eventData));
-        setChecks(normalizeAuditChecks(eventData));
+        if (summary !== null) {
+          setStats(normalizeAuditStats(summary));
+          hasLoadedSummaryRef.current = true;
+        }
+
+        const normalizedActivity = normalizeAuditActivity(eventPayload);
+        const payloadPage = readSafePageNumber(
+          eventPayload?.page?.number ?? eventPayload?.page,
+          currentPage
+        );
+        const payloadTotalPages = readSafePageNumber(
+          eventPayload?.page?.totalPages ?? eventPayload?.totalPages,
+          0
+        );
+        const payloadSize = readSafePageNumber(
+          eventPayload?.page?.size ?? eventPayload?.size,
+          ACTIVITY_PAGE_SIZE
+        );
+        const payloadTotalItems = readSafePageNumber(
+          eventPayload?.page?.totalElements ?? eventPayload?.totalItems ?? eventPayload?.total,
+          0
+        );
+
+        const inferredTotalPages = payloadTotalPages > 0
+          ? payloadTotalPages
+          : (payloadTotalItems > 0 ? Math.ceil(payloadTotalItems / Math.max(payloadSize, 1)) : 1);
+
+        setActivity(normalizedActivity);
+        setChecks(normalizeAuditChecks(eventPayload));
+        setTotalActivityPages(Math.max(1, inferredTotalPages));
+
+        if (payloadPage !== currentPage) {
+          setCurrentPage(Math.max(0, Math.min(payloadPage, Math.max(1, inferredTotalPages) - 1)));
+        }
       } catch {
         if (active) {
-          setStats(fallbackAuditStats);
+          if (isInitialLoad) {
+            setStats(fallbackAuditStats);
+            hasLoadedSummaryRef.current = true;
+          }
           setActivity(fallbackAuditActivity);
           setChecks(fallbackAuditChecks);
+          setTotalActivityPages(Math.max(1, Math.ceil(fallbackAuditActivity.length / ACTIVITY_PAGE_SIZE)));
         }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setEventsLoading(false);
+          setLoading(false);
+        }
       }
     };
 
     loadAuditData();
     return () => { active = false; };
-  }, []);
+  }, [currentPage]);
 
   const exportSummary = async () => {
     setExporting(true);
@@ -163,7 +220,14 @@ const AuditPage = () => {
     window.URL.revokeObjectURL(url);
   };
 
-  const summaryLabel = useMemo(() => (loading ? 'Loading live data…' : 'Live'), [loading]);
+  const summaryLabel = useMemo(() => ((loading || eventsLoading) ? 'Loading live data...' : 'Live'), [loading, eventsLoading]);
+
+  const goToPage = (page) => {
+    const nextPage = Number(page);
+    if (!Number.isFinite(nextPage)) return;
+    if (nextPage < 0 || nextPage >= totalActivityPages) return;
+    setCurrentPage(nextPage);
+  };
 
   return (
     <div className="audit-page">
@@ -171,6 +235,7 @@ const AuditPage = () => {
         <div>
           <p className="audit-page__eyebrow">Audit & Compliance</p>
           <h1>Audit overview</h1>
+          <p className="audit-page__subtitle">Track system events, review checks, and maintain compliance visibility.</p>
         </div>
         <button type="button" className="audit-page__primary-btn" onClick={exportSummary} disabled={exporting}>
           {exporting ? 'Exporting…' : 'Export report'}
@@ -210,6 +275,24 @@ const AuditPage = () => {
                 <span className={`audit-status audit-status--${toStatusClass(entry.status)}`}>{entry.status}</span>
               </div>
             ))}
+
+            {!activity.length && (
+              <div className="audit-table__empty">No recent activity available.</div>
+            )}
+          </div>
+
+          <div className="audit-pagination">
+            <button type="button" onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 0 || eventsLoading}>
+              ← Previous
+            </button>
+            <span>Page {currentPage + 1} of {totalActivityPages}</span>
+            <button
+              type="button"
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage + 1 >= totalActivityPages || eventsLoading}
+            >
+              Next →
+            </button>
           </div>
         </section>
 
