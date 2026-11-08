@@ -819,30 +819,44 @@ const OrderDetail = ({ order }) => {
 
     const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
     const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
+    const normalizedInvoiceIdentifier = order.invoiceNo || order.id;
+    const returnByInvoiceUrl = API_ENDPOINTS.returnByInvoice(normalizedInvoiceIdentifier);
+    const returnByInvoiceFallbackUrl = API_ENDPOINTS.returnByInvoice(order.id);
+    const returnItems = (Array.isArray(order.items) ? order.items : []).map((item, index) => ({
+      productId: Number(item.productId ?? item.id ?? item.product_id ?? index + 1) || index + 1,
+      productName: String(item.productName ?? item.item ?? item.name ?? `Item ${index + 1}`).trim(),
+      quantity: Number(item.quantity ?? item.qty ?? 0) || 0,
+      unitPrice: Number(item.unitPrice ?? item.rate ?? item.price ?? 0) || 0,
+    })).filter((item) => Number(item.quantity) > 0);
+
     const returnPayload = {
-      status: 'return',
-      paymentStatus: 'return',
-      returned: true,
-      returnReason: 'Returned from sell page',
+      invoiceId: Number(order.id),
+      reason: 'Damaged item',
+      returnItems,
     };
 
     const requests = [
       {
         url: API_ENDPOINTS.returns,
         method: 'POST',
-        body: {
-          invoiceId: order.id,
-          invoiceNo: order.invoiceNo,
-          reason: 'Returned from sell page',
-          status: 'return',
-        },
+        body: returnPayload,
       },
-      { url: `${invoiceUrl}/return`, method: 'POST' },
-      { url: `${invoiceLegacyUrl}/return`, method: 'POST' },
-      { url: invoiceUrl, method: 'PATCH', body: returnPayload },
-      { url: invoiceLegacyUrl, method: 'PATCH', body: returnPayload },
-      { url: invoiceUrl, method: 'PUT', body: returnPayload },
-      { url: invoiceLegacyUrl, method: 'PUT', body: returnPayload },
+      {
+        url: returnByInvoiceUrl,
+        method: 'POST',
+        body: returnPayload,
+      },
+      {
+        url: returnByInvoiceFallbackUrl,
+        method: 'POST',
+        body: returnPayload,
+      },
+      { url: `${invoiceUrl}/return`, method: 'POST', body: returnPayload },
+      { url: `${invoiceLegacyUrl}/return`, method: 'POST', body: returnPayload },
+      { url: invoiceUrl, method: 'PATCH', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+      { url: invoiceLegacyUrl, method: 'PATCH', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+      { url: invoiceUrl, method: 'PUT', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+      { url: invoiceLegacyUrl, method: 'PUT', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
     ];
 
     try {

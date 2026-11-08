@@ -14,6 +14,8 @@ const BillingPage = () => {
   // POS State
   const [cart, setCart] = useState([]);
   const [customer, setCustomer] = useState({ name: '', phone: '', email: '' });
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [customerSelectionLocked, setCustomerSelectionLocked] = useState(false);
   const [searchProduct, setSearchProduct] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('INV-001');
   const [paymentMethod, setPaymentMethod] = useState('UPI');
@@ -136,6 +138,70 @@ const BillingPage = () => {
       const bValue = getProductPriority(b);
       return bValue - aValue || b.price - a.price || a.name.localeCompare(b.name);
     });
+
+  useEffect(() => {
+    const query = String(customer.name || '').trim();
+    if (!query) {
+      setCustomerSuggestions([]);
+      setCustomerSelectionLocked(false);
+      return;
+    }
+
+    if (customerSelectionLocked) {
+      setCustomerSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(async () => {
+      try {
+        const customerEndpoints = [
+          API_ENDPOINTS.customerProfilesSearch(query),
+          API_ENDPOINTS.customerSearch(query),
+        ];
+
+        const responses = await Promise.all(
+          customerEndpoints.map(async (endpoint) => {
+            try {
+              const response = await apiFetch(endpoint, { signal: controller.signal });
+              if (!response.ok) return [];
+              const payload = await response.json();
+              return toCustomerArray(payload);
+            } catch {
+              return [];
+            }
+          })
+        );
+
+        if (controller.signal.aborted) return;
+
+        const matches = responses.flat().reduce((acc, entry) => {
+          const matchName = String(entry?.customerName || entry?.name || entry?.customer || '').trim();
+          const matchPhone = String(entry?.phone || entry?.mobile || entry?.contactNumber || '').trim();
+          const matchEmail = String(entry?.email || '').trim();
+          if (!matchName && !matchPhone) return acc;
+          const key = `${matchName || 'Unknown'}|${matchPhone || ''}`;
+          if (acc.some((item) => item.key === key)) return acc;
+          acc.push({
+            key,
+            name: matchName || 'Unknown customer',
+            phone: matchPhone,
+            email: matchEmail,
+          });
+          return acc;
+        }, []);
+
+        setCustomerSuggestions(matches.slice(0, 6));
+      } catch {
+        setCustomerSuggestions([]);
+      }
+    }, 2000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [customer.name, customer.phone, customerSelectionLocked]);
   
   // Cart totals
   const getItemTaxSummary = (item) => buildTaxProfileForItem({ ...item, category: item.category || 'default', gst: Number(item.gst ?? 0) || 0 }, billType);
@@ -238,6 +304,13 @@ const BillingPage = () => {
       source?.pendingAmount ??
       source?.pendingBalance ??
       source?.currentBalance ??
+      source?.amountDue ??
+      source?.totalDue ??
+      source?.customerBalance ??
+      source?.customerDue ??
+      source?.balance ??
+      source?.receivable ??
+      source?.outstanding ??
       0
     );
     return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
@@ -316,6 +389,105 @@ const BillingPage = () => {
   };
 
   const generateInvoicePdf = async (invoiceData) => buildInvoicePdf({ ...invoiceData, shopProfile });
+
+  const resolveCustomerDueState = (previousBalanceValue, totalAmountValue, receivedAmountValue) => {
+    const safePreviousBalance = Number(previousBalanceValue || 0);
+    const safeTotalAmount = Number(totalAmountValue || 0);
+    const safeReceivedAmount = Number(receivedAmountValue || 0);
+    const invoiceDueAmount = Math.max(safeTotalAmount - safeReceivedAmount, 0);
+    const totalDueAmount = Math.max(safePreviousBalance + invoiceDueAmount, 0);
+    return { invoiceDueAmount, totalDueAmount };
+  };
+
+  const syncCustomerProfileDueBalance = async (balanceToStore) => {
+    const cashCustomerName = String(customer?.name || '').trim();
+    const cashCustomerPhone = normalizeDigits(customer?.phone || '');
+    const amount = Math.max(Number(balanceToStore || 0), 0);
+
+    if ((!cashCustomerPhone && !cashCustomerName) || !Number.isFinite(amount)) {
+      return;
+    }
+
+    const profileUpdatePayload = {
+      dueBalance: amount,
+      balanceDue: amount,
+      outstandingBalance: amount,
+      pendingAmount: amount,
+      pendingBalance: amount,
+      amountDue: amount,
+      totalDue: amount,
+      balance: amount,
+      receivable: amount,
+      outstanding: amount,
+    };
+
+    const candidateEndpoints = [];
+    if (cashCustomerPhone) {
+      candidateEndpoints.push(
+        API_ENDPOINTS.customerProfileByPhone(cashCustomerPhone),
+        API_ENDPOINTS.customerByPhone(cashCustomerPhone),
+      );
+    }
+    if (cashCustomerName) {
+      candidateEndpoints.push(
+        API_ENDPOINTS.customerProfilesSearch(cashCustomerName),
+        API_ENDPOINTS.customerSearch(cashCustomerName),
+      );
+    }
+
+    const uniqueEndpoints = [...new Set(candidateEndpoints.filter(Boolean))];
+
+    const tryUpdateProfile = async (url, method = 'PATCH') => {
+      try {
+        const response = await apiFetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profileUpdatePayload),
+        });
+
+        if (response.ok) return true;
+
+        if (response.status === 404) return false;
+
+        const payload = await response.clone().json().catch(() => ({}));
+        logger.warn('Customer profile due sync failed', { url, status: response.status, payload });
+        return false;
+      } catch (error) {
+        logger.warn('Customer profile due sync exception', { url, error: error.message || String(error) });
+        return false;
+      }
+    };
+
+    const seenIds = new Set();
+    for (const endpoint of uniqueEndpoints) {
+      if (seenIds.has(endpoint)) continue;
+      seenIds.add(endpoint);
+
+      try {
+        const response = await apiFetch(endpoint, { method: 'GET' });
+        if (!response.ok) continue;
+
+        const payload = await response.json().catch(() => null);
+        const profileList = Array.isArray(payload) ? payload : (payload && typeof payload === 'object' ? toCustomerArray(payload) : []);
+        const matchedProfile = profileList.find((entry) => {
+          if (!cashCustomerPhone) return true;
+          const phoneValue = normalizeDigits(String(entry?.phone || entry?.mobile || entry?.contactNumber || ''));
+          return phoneValue === cashCustomerPhone;
+        }) || profileList[0];
+
+        if (matchedProfile?.id) {
+          const profileEndpoint = API_ENDPOINTS.customerProfileById(matchedProfile.id);
+          const updated = await tryUpdateProfile(profileEndpoint, 'PUT');
+          if (updated) return;
+        }
+
+        const fallbackUpdated = await tryUpdateProfile(endpoint, 'PATCH');
+        if (fallbackUpdated) return;
+      } catch (error) {
+        logger.warn('Customer profile lookup failed during due sync', { endpoint, error: error.message || String(error) });
+      }
+    }
+  };
 
   const shareInvoiceViaWhatsApp = async (invoiceData) => {
     const pdf = await generateInvoicePdf(invoiceData);
@@ -400,8 +572,10 @@ const BillingPage = () => {
 
     const receivedAmount = Number(invoiceData.receivedAmount ?? invoiceData.paidAmount ?? invoiceData.amountPaid ?? 0);
     const previousBalance = Number(invoiceData.previousBalance ?? 0);
-    const balanceAmount = Number(invoiceData.balanceAmount ?? Math.max(Number(invoiceData.grandTotal || 0) - receivedAmount, 0));
-    const currentBalance = Number(invoiceData.currentBalance ?? previousBalance + balanceAmount);
+    const invoiceDueAmount = Math.max(Number(invoiceData.grandTotal || 0) - receivedAmount, 0);
+    const balanceAmount = Number(invoiceData.balanceAmount ?? previousBalance + invoiceDueAmount);
+    const currentBalance = Number(invoiceData.currentBalance ?? balanceAmount);
+    const dueAmount = Math.max(currentBalance, 0);
 
     previewWindow.document.write(`
       <!doctype html>
@@ -828,10 +1002,10 @@ const BillingPage = () => {
                   <div class="summary-row"><span>Sub Total</span><span>₹${(invoiceData.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row"><span>Total</span><span>₹${(invoiceData.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row"><span>Received Amount</span><span>₹${receivedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                  <div class="summary-row"><span>Balance</span><span>₹${balanceAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                  <div class="summary-row"><span>Payment mode</span><span>${invoiceData.paymentMethod || 'Cash'}</span></div>
                   <div class="summary-row"><span>Previous Balance</span><span>₹${previousBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                  <div class="summary-row total"><span>Current Balance</span><span>₹${currentBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Due Amount</span><span>₹${dueAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row total"><span>Balance</span><span>₹${currentBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Payment mode</span><span>${invoiceData.paymentMethod || 'Cash'}</span></div>
                 </div>
               </div>
 
@@ -865,8 +1039,9 @@ const BillingPage = () => {
       const paidAmount = Number(amountReceived) || 0;
       const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
       const previousBalance = await resolveCustomerPreviousBalance();
-      const balanceAmount = Math.max(grandTotal - receivedAmount, 0);
-      const currentBalance = previousBalance + balanceAmount;
+      const { totalDueAmount } = resolveCustomerDueState(previousBalance, grandTotal, receivedAmount);
+      const balanceAmount = totalDueAmount;
+      const currentBalance = totalDueAmount;
       setPaymentStatus(normalizedStatus);
 
       const payload = {
@@ -925,6 +1100,13 @@ const BillingPage = () => {
 
       const generatedInvoiceNo = result?.invoiceNo || invoiceNo;
       logger.info('Invoice generated and saved', result);
+
+      try {
+        await syncCustomerProfileDueBalance(currentBalance);
+      } catch (error) {
+        logger.warn('Customer profile sync skipped after invoice save', error);
+      }
+
       const previewInvoice = {
         invoiceNo: generatedInvoiceNo,
         customerName: customer.name || 'Walk-in Customer',
@@ -1080,7 +1262,15 @@ const BillingPage = () => {
               <>
                 <div className="payment-dialog-icon warning">⚠️</div>
                 <h3>Pending payment</h3>
-                <p>Payment has not been collected yet. Enter a partial amount, or proceed without payment.</p>
+
+                <div className="partial-payment-customer-meta">
+                  <div className="partial-payment-customer-name">
+                    Customer: <strong>{customer?.name || 'Walk-in Customer'}</strong>
+                  </div>
+                  <div className="partial-payment-due-pill">
+                    Due balance: ₹{readCustomerDueBalance(customer).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
 
                 <div className="partial-payment-field-wrap">
                   <label htmlFor="partial-payment-amount" className="partial-payment-label">Amount received</label>
@@ -1123,12 +1313,6 @@ const BillingPage = () => {
                     {showPartialInvoiceAction ? 'Create final invoice' : 'Partially paid'}
                   </button>
                 </div>
-
-                <div className="payment-dialog-actions secondary-actions">
-                  <button type="button" className="dialog-btn dialog-btn-ghost" onClick={() => handlePendingInvoiceDecision('proceed-without-payment')}>
-                    Proceed anyway
-                  </button>
-                </div>
               </>
             )}
           </div>
@@ -1140,13 +1324,45 @@ const BillingPage = () => {
         <div className="billing-left">
           <div className="customer-section">
             <h3>👤 Customer Details</h3>
-            <input 
-              placeholder="Customer Name" 
-              value={customer.name}
-              onChange={e => setCustomer({...customer, name: e.target.value})}
-              className="input-field"
-              disabled={!isBillingWritable}
-            />
+            <div className="customer-name-field-wrap">
+              <input 
+                placeholder="Customer Name" 
+                value={customer.name}
+                onChange={e => {
+                  const nextValue = e.target.value;
+                  setCustomer({ ...customer, name: nextValue });
+                  setCustomerSelectionLocked(false);
+                  if (!nextValue.trim()) {
+                    setCustomerSuggestions([]);
+                  }
+                }}
+                className="input-field"
+                disabled={!isBillingWritable}
+              />
+              {!customerSelectionLocked && customerSuggestions.length > 0 && (
+                <div className="customer-suggestions">
+                  {customerSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.key}
+                      type="button"
+                      className="customer-suggestion-item"
+                      onClick={() => {
+                        setCustomer({
+                          name: suggestion.name,
+                          phone: suggestion.phone || customer.phone,
+                          email: suggestion.email || customer.email,
+                        });
+                        setCustomerSuggestions([]);
+                        setCustomerSelectionLocked(true);
+                      }}
+                    >
+                      <span className="customer-suggestion-name">{suggestion.name}</span>
+                      {suggestion.phone && <span className="customer-suggestion-meta">{suggestion.phone}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <input 
               placeholder="📱 Phone" 
               value={customer.phone}

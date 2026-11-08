@@ -27,8 +27,9 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
   const totalQty = items.reduce((sum, item) => sum + Number(item.qty ?? 0), 0);
   const receivedAmount = Number(invoiceData.receivedAmount ?? invoiceData.paidAmount ?? invoiceData.amountPaid ?? invoiceData.amountReceived ?? 0);
   const previousBalance = Number(invoiceData.previousBalance ?? 0);
-  const balanceAmount = Number(invoiceData.balanceAmount ?? Math.max(grandTotal - receivedAmount, 0));
-  const currentBalance = Number(invoiceData.currentBalance ?? previousBalance + balanceAmount);
+  const invoiceDueAmount = Math.max(grandTotal - receivedAmount, 0);
+  const balanceAmount = Number(invoiceData.balanceAmount ?? previousBalance + invoiceDueAmount);
+  const currentBalance = Number(invoiceData.currentBalance ?? balanceAmount);
 
   const customerName = invoiceData.customer?.name ?? invoiceData.customerName ?? 'Walk-in Customer';
   const customerPhone = invoiceData.customer?.phone ?? invoiceData.customerPhone ?? '0000000000';

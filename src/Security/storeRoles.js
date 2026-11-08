@@ -7,6 +7,7 @@ export const STORE_ROLES = Object.freeze({
   INVENTORY_MANAGER: 'inventory_manager',
   SYSTEM_ADMINISTRATOR: 'system_administrator',
   AUDIT_RELATED: 'audit_related',
+  SUPPORT_AGENT: 'support_agent',
 });
 
 const ROLE_ALIASES = Object.freeze({
@@ -44,6 +45,9 @@ const ROLE_ALIASES = Object.freeze({
   audit_related_role: STORE_ROLES.AUDIT_RELATED,
   audit_role: STORE_ROLES.AUDIT_RELATED,
   audit_officer: STORE_ROLES.AUDIT_RELATED,
+
+  support_agent: STORE_ROLES.SUPPORT_AGENT,
+  support: STORE_ROLES.SUPPORT_AGENT,
 });
 
 export const normalizeStoreRole = (role) => {
@@ -102,6 +106,20 @@ export const canAccessAudit = (role) => {
   return normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
     || normalizedRole === STORE_ROLES.STORE_ADMIN
     || normalizedRole === STORE_ROLES.AUDIT_RELATED;
+};
+
+export const canAccessAdminPanel = (role) => {
+  const normalizedRole = normalizeStoreRole(role);
+  return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
+    || normalizedRole === STORE_ROLES.AUDIT_RELATED
+    || normalizedRole === STORE_ROLES.SUPPORT_AGENT;
+};
+
+export const canManageUsers = (role) => {
+  const normalizedRole = normalizeStoreRole(role);
+  return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR;
 };
 
 export const isStoreAdmin = (role) => normalizeStoreRole(role) === STORE_ROLES.STORE_ADMIN;

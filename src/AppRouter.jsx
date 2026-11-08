@@ -15,8 +15,13 @@ import StoreUsersPage from './Security/StoreUsersPage.jsx';
 import CustomerPage from './Customers/CustomerPage.jsx';
 import { resolveMfaContext } from './auth/mfa/mfaService.js';
 import AuditPage from './Audit/AuditPage.jsx';
+import AdminDashboardPage from './Admin/AdminDashboardPage.jsx';
+import AdminRetailersPage from './Admin/AdminRetailersPage.jsx';
+import AdminSignupApprovalsPage from './Admin/AdminSignupApprovalsPage.jsx';
+import AdminUsersPage from './Admin/AdminUsersPage.jsx';
+import AdminAuditLogsPage from './Admin/AdminAuditLogsPage.jsx';
 import { API_ENDPOINTS, refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile } from './Config/api.js';
-import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, isStoreAdmin, canAccessAudit } from './Security/storeRoles.js';
+import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canAccessAdminPanel, canManageUsers, canAccessAudit } from './Security/storeRoles.js';
 
 const readPendingMfaUser = () => {
   const stored = localStorage.getItem('pendingMfaUser');
@@ -334,7 +339,8 @@ const AppRoutes = () => {
   const canOpenInventory = canAccessInventory(role);
   const canOpenSellOrders = canAccessSellOrders(role);
   const canOpenAudit = canAccessAudit(role);
-  const canManageUsers = isStoreAdmin(role);
+  const canViewAdminPanel = canAccessAdminPanel(role);
+  const canManageUsersList = canManageUsers(role);
 
   return (
     <>
@@ -357,8 +363,14 @@ const AppRoutes = () => {
       <Route path="/customers" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
       <Route path="/sell" element={isAuthenticated ? (canOpenSellOrders ? <SellPage /> : <Navigate to="/access-denied" state={{ from: '/sell', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/audit" element={isAuthenticated ? (canOpenAudit ? <AuditPage /> : <Navigate to="/access-denied" state={{ from: '/audit', role }} replace />) : <Navigate to="/login" replace />} />
-      <Route path="/users-roles" element={isAuthenticated ? (canManageUsers ? <UsersRolesPage /> : <Navigate to="/access-denied" state={{ from: '/users-roles', role }} replace />) : <Navigate to="/login" replace />} />
-      <Route path="/store-users" element={isAuthenticated ? (canManageUsers ? <StoreUsersPage /> : <Navigate to="/access-denied" state={{ from: '/store-users', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin" element={isAuthenticated ? (canViewAdminPanel ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/access-denied" state={{ from: '/admin', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/dashboard" element={isAuthenticated ? (canViewAdminPanel ? <AdminDashboardPage /> : <Navigate to="/access-denied" state={{ from: '/admin/dashboard', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/retailers" element={isAuthenticated ? (canViewAdminPanel ? <AdminRetailersPage /> : <Navigate to="/access-denied" state={{ from: '/admin/retailers', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/signup-approvals" element={isAuthenticated ? (canViewAdminPanel ? <AdminSignupApprovalsPage /> : <Navigate to="/access-denied" state={{ from: '/admin/signup-approvals', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/users" element={isAuthenticated ? (canManageUsersList ? <AdminUsersPage /> : <Navigate to="/access-denied" state={{ from: '/admin/users', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/audit-logs" element={isAuthenticated ? (canViewAdminPanel ? <AdminAuditLogsPage /> : <Navigate to="/access-denied" state={{ from: '/admin/audit-logs', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/users-roles" element={isAuthenticated ? (canManageUsersList ? <UsersRolesPage /> : <Navigate to="/access-denied" state={{ from: '/users-roles', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/store-users" element={isAuthenticated ? (canManageUsersList ? <StoreUsersPage /> : <Navigate to="/access-denied" state={{ from: '/store-users', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/access-denied" element={isAuthenticated ? <AccessDenied /> : <Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>

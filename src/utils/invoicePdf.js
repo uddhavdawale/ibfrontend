@@ -189,11 +189,9 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   rightRows.push(['GRAND TOTAL', formatCurrency(grandTotal), true]);
   rightRows.push(['divider']);
   rightRows.push(['Received Amount', formatCurrency(receivedAmount)]);
-  rightRows.push(['Balance (This Invoice)', formatCurrency(balanceAmount)]);
-  rightRows.push(['Payment Mode', String(paymentMethod || 'Cash')]);
-  rightRows.push(['divider']);
   rightRows.push(['Previous Balance', formatCurrency(previousBalance)]);
-  rightRows.push(['TOTAL OUTSTANDING', formatCurrency(currentBalance), true, true]);
+  rightRows.push(['Balance', formatCurrency(currentBalance), true, true]);
+  rightRows.push(['Payment Mode', String(paymentMethod || 'Cash')]);
 
   const measureRightHeight = () => {
     let cursor = 16;

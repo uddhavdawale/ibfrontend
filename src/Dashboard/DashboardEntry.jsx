@@ -25,6 +25,7 @@ import {
   canViewAdvancedDashboard,
   isStoreAdmin,
   canAccessAudit,
+  canAccessAdminPanel,
   isBillingOnlyRole,
   isInventoryOnlyRole,
 } from '../Security/storeRoles';
@@ -292,6 +293,7 @@ function Dashboard({ username, onLogout }) {
   const canOpenSellOrders = useMemo(() => canAccessSellOrders(currentRole), [currentRole]);
   const canOpenAudit = useMemo(() => canAccessAudit(currentRole), [currentRole]);
   const canOpenAdvancedDashboard = useMemo(() => canViewAdvancedDashboard(currentRole), [currentRole]);
+  const canOpenAdminPanel = useMemo(() => canAccessAdminPanel(currentRole), [currentRole]);
   const canManageUsers = useMemo(() => isStoreAdmin(currentRole), [currentRole]);
   const hasBillingOnlyScope = useMemo(() => isBillingOnlyRole(currentRole), [currentRole]);
   const hasInventoryOnlyScope = useMemo(() => isInventoryOnlyRole(currentRole), [currentRole]);
@@ -900,6 +902,12 @@ function Dashboard({ username, onLogout }) {
                   <span className="menu-item-icon">👤</span>
                   <span className="menu-item-label">Profile</span>
                 </button>
+                {canOpenAdminPanel && (
+                  <button className="menu-item" onClick={() => { setShowProfileMenu(false); handleQuickMenuAction('/admin/dashboard'); }}>
+                    <span className="menu-item-icon">🛡️</span>
+                    <span className="menu-item-label">Admin Panel</span>
+                  </button>
+                )}
                 {canManageUsers && (
                   <>
                     <button
