@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import './Admin.css';
 
 const navItems = [
@@ -29,8 +29,21 @@ export const StatusBadge = ({ status = 'Pending' }) => {
   return <span className={`admin-status admin-status-${palette[normalized] || 'neutral'}`}>{status}</span>;
 };
 
-const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children }) => {
+const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children, isPlatformAdmin = true, onLogout }) => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const visibleNavItems = isPlatformAdmin ? navItems : [];
+
+  const handleLogout = () => {
+    if (typeof onLogout === 'function') {
+      onLogout();
+      return;
+    }
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('accessToken');
+    localStorage.removeItem('accessToken');
+    navigate('/login', { replace: true });
+  };
 
   return (
     <div className="admin-shell">
@@ -44,7 +57,7 @@ const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children })
         </div>
 
         <nav className="admin-nav">
-          {navItems.map((item) => (
+          {visibleNavItems.length > 0 ? visibleNavItems.map((item) => (
             <Link
               key={item.path}
               to={item.path}
@@ -52,7 +65,9 @@ const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children })
             >
               {item.label}
             </Link>
-          ))}
+          )) : (
+            <div className="muted-text">Platform admin access required.</div>
+          )}
         </nav>
       </aside>
 
@@ -64,6 +79,7 @@ const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children })
           </div>
           <div className="admin-topbar-actions">
             <button className="admin-primary-button">Export</button>
+            <button type="button" className="admin-secondary-button" onClick={handleLogout}>Logout</button>
           </div>
         </header>
 

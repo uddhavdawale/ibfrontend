@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import AdminLayout, { StatusBadge } from './AdminLayout';
 import { adminOverview } from './adminData';
+import { API_ENDPOINTS, apiFetch } from '../Config/api';
 
 const StatCard = ({ label, value, footnote }) => (
   <div className="admin-stat-card">
@@ -10,11 +11,58 @@ const StatCard = ({ label, value, footnote }) => (
   </div>
 );
 
-const AdminDashboardPage = () => {
-  const { totalRetailers, activeRetailers, pendingApprovals, approvalRate, averageApprovalTime, recentRequests, recentActivity, growthTrend, cityDistribution, stateDistribution, rejectionReasons } = adminOverview;
+const normalizeDashboardPayload = (payload = {}) => {
+  const source = Array.isArray(payload) ? payload[0] || {} : (payload.data && typeof payload.data === 'object' ? payload.data : payload);
+  const summary = source.summary && typeof source.summary === 'object' ? source.summary : source;
+
+  return {
+    totalRetailers: Number(summary.totalRetailers ?? summary.totalRetailerCount ?? adminOverview.totalRetailers),
+    activeRetailers: Number(summary.activeRetailers ?? summary.activeRetailerCount ?? adminOverview.activeRetailers),
+    pendingApprovals: Number(summary.pendingApprovals ?? summary.pendingApprovalCount ?? adminOverview.pendingApprovals),
+    approvalRate: Number(summary.approvalRate ?? adminOverview.approvalRate),
+    averageApprovalTime: summary.averageApprovalTime ?? adminOverview.averageApprovalTime,
+    recentRequests: Array.isArray(summary.recentRequests) ? summary.recentRequests : (Array.isArray(payload?.recentRequests) ? payload.recentRequests : adminOverview.recentRequests),
+    recentActivity: Array.isArray(summary.recentActivity) ? summary.recentActivity : (Array.isArray(payload?.recentActivity) ? payload.recentActivity : adminOverview.recentActivity),
+    growthTrend: Array.isArray(summary.growthTrend) ? summary.growthTrend : (Array.isArray(payload?.growthTrend) ? payload.growthTrend : adminOverview.growthTrend),
+    cityDistribution: Array.isArray(summary.cityDistribution) ? summary.cityDistribution : (Array.isArray(payload?.cityDistribution) ? payload.cityDistribution : adminOverview.cityDistribution),
+    stateDistribution: Array.isArray(summary.stateDistribution) ? summary.stateDistribution : (Array.isArray(payload?.stateDistribution) ? payload.stateDistribution : adminOverview.stateDistribution),
+    rejectionReasons: Array.isArray(summary.rejectionReasons) ? summary.rejectionReasons : (Array.isArray(payload?.rejectionReasons) ? payload.rejectionReasons : adminOverview.rejectionReasons),
+  };
+};
+
+const AdminDashboardPage = ({ onLogout }) => {
+  const [dashboardData, setDashboardData] = useState(adminOverview);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadDashboard = async () => {
+      try {
+        const response = await apiFetch(API_ENDPOINTS.adminDashboard);
+        if (!response.ok) throw new Error('Admin dashboard unavailable');
+        const payload = await response.json().catch(() => ({}));
+        if (active) {
+          setDashboardData({ ...adminOverview, ...normalizeDashboardPayload(payload) });
+        }
+      } catch {
+        if (active) {
+          setDashboardData(adminOverview);
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadDashboard();
+    return () => { active = false; };
+  }, []);
+
+  const { totalRetailers, activeRetailers, pendingApprovals, approvalRate, averageApprovalTime, recentRequests, recentActivity, growthTrend, cityDistribution, stateDistribution, rejectionReasons } = dashboardData;
 
   return (
-    <AdminLayout title="Admin dashboard" subtitle="Operational view of retailer onboarding, approvals, and risk signals." currentUser="Store Admin">
+    <AdminLayout title="Admin dashboard" subtitle="Operational view of retailer onboarding, approvals, and risk signals." currentUser="Store Admin" onLogout={onLogout}>
+      {loading && <p className="muted-text">Loading admin dashboard…</p>}
       <div className="admin-grid three-up">
         <StatCard label="Total retailers onboarded" value={totalRetailers} footnote="All stores tracked" />
         <StatCard label="Active retailers" value={activeRetailers} footnote="Currently active" />
@@ -29,9 +77,9 @@ const AdminDashboardPage = () => {
           </div>
           <div className="admin-chart-bars">
             {growthTrend.map((item) => (
-              <div key={item.label} className="admin-bar-wrap">
-                <div className="admin-bar" style={{ height: `${Math.max((item.value / 250) * 100, 18)}%` }} />
-                <span>{item.label}</span>
+              <div key={item.label || item.month || item.name} className="admin-bar-wrap">
+                <div className="admin-bar" style={{ height: `${Math.max((Number(item.value || item.count || 0) / 250) * 100, 18)}%` }} />
+                <span>{item.label || item.month || item.name}</span>
               </div>
             ))}
           </div>
@@ -43,9 +91,9 @@ const AdminDashboardPage = () => {
           </div>
           <ul className="admin-list">
             {rejectionReasons.map((item) => (
-              <li key={item.reason}>
-                <span>{item.reason}</span>
-                <strong>{item.count}</strong>
+              <li key={item.reason || item.label}>
+                <span>{item.reason || item.label}</span>
+                <strong>{item.count || item.value || 0}</strong>
               </li>
             ))}
           </ul>
@@ -67,9 +115,9 @@ const AdminDashboardPage = () => {
             </thead>
             <tbody>
               {recentRequests.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.businessName}</td>
-                  <td>{item.ownerName}</td>
+                <tr key={item.id || item.retailerId}>
+                  <td>{item.businessName || item.name}</td>
+                  <td>{item.ownerName || item.owner}</td>
                   <td><StatusBadge status={item.status} /></td>
                 </tr>
               ))}
@@ -83,10 +131,10 @@ const AdminDashboardPage = () => {
           </div>
           <ul className="admin-activity-list">
             {recentActivity.map((item, index) => (
-              <li key={`${item.actor}-${index}`}>
+              <li key={`${item.actor || 'actor'}-${index}`}>
                 <strong>{item.actor}</strong>
                 <span>{item.action}</span>
-                <small>{item.at}</small>
+                <small>{item.at || item.time}</small>
               </li>
             ))}
           </ul>
@@ -100,9 +148,9 @@ const AdminDashboardPage = () => {
           </div>
           <ul className="admin-list">
             {cityDistribution.map((item) => (
-              <li key={item.city}>
-                <span>{item.city}</span>
-                <strong>{item.count}</strong>
+              <li key={item.city || item.label}>
+                <span>{item.city || item.label}</span>
+                <strong>{item.count || item.value || 0}</strong>
               </li>
             ))}
           </ul>
@@ -114,9 +162,9 @@ const AdminDashboardPage = () => {
           </div>
           <ul className="admin-list">
             {stateDistribution.map((item) => (
-              <li key={item.state}>
-                <span>{item.state}</span>
-                <strong>{item.count}</strong>
+              <li key={item.state || item.label}>
+                <span>{item.state || item.label}</span>
+                <strong>{item.count || item.value || 0}</strong>
               </li>
             ))}
           </ul>

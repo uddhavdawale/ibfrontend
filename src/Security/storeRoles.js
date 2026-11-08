@@ -12,19 +12,23 @@ export const STORE_ROLES = Object.freeze({
 
 const ROLE_ALIASES = Object.freeze({
   store_admin: STORE_ROLES.STORE_ADMIN,
-  admin: STORE_ROLES.STORE_ADMIN,
   owner: STORE_ROLES.STORE_ADMIN,
   shop_owner: STORE_ROLES.STORE_ADMIN,
   'shop owner': STORE_ROLES.STORE_ADMIN,
   retailer: STORE_ROLES.STORE_ADMIN,
   retailer_owner: STORE_ROLES.STORE_ADMIN,
   retailer_shop_owner: STORE_ROLES.STORE_ADMIN,
-  super_admin: STORE_ROLES.STORE_ADMIN,
-  org_admin: STORE_ROLES.STORE_ADMIN,
+
   system_administrator: STORE_ROLES.SYSTEM_ADMINISTRATOR,
   'system administrator': STORE_ROLES.SYSTEM_ADMINISTRATOR,
   system_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
   sys_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
+  platform_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
+  platform_administrator: STORE_ROLES.SYSTEM_ADMINISTRATOR,
+  enterprise_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
+  super_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
+  admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
+  org_admin: STORE_ROLES.SYSTEM_ADMINISTRATOR,
 
   store_manager: STORE_ROLES.STORE_MANAGER,
   manager: STORE_ROLES.STORE_MANAGER,
@@ -69,6 +73,7 @@ export const getCurrentUserRole = () => {
 export const canAccessBilling = (role) => {
   const normalizedRole = normalizeStoreRole(role);
   return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
     || normalizedRole === STORE_ROLES.BILLING_MANAGER
     || normalizedRole === STORE_ROLES.STORE_BILLING_VIEWER;
 };
@@ -76,12 +81,14 @@ export const canAccessBilling = (role) => {
 export const canWriteBilling = (role) => {
   const normalizedRole = normalizeStoreRole(role);
   return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
     || normalizedRole === STORE_ROLES.BILLING_MANAGER;
 };
 
 export const canAccessInventory = (role) => {
   const normalizedRole = normalizeStoreRole(role);
   return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
     || normalizedRole === STORE_ROLES.INVENTORY_MANAGER
     || normalizedRole === STORE_ROLES.STORE_INVENTORY_VIEWER;
 };
@@ -89,6 +96,7 @@ export const canAccessInventory = (role) => {
 export const canWriteInventory = (role) => {
   const normalizedRole = normalizeStoreRole(role);
   return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
     || normalizedRole === STORE_ROLES.INVENTORY_MANAGER;
 };
 
@@ -98,7 +106,8 @@ export const canCancelSellOrders = (role) => canWriteBilling(role);
 
 export const canViewAdvancedDashboard = (role) => {
   const normalizedRole = normalizeStoreRole(role);
-  return normalizedRole === STORE_ROLES.STORE_ADMIN;
+  return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR;
 };
 
 export const canAccessAudit = (role) => {
@@ -108,13 +117,9 @@ export const canAccessAudit = (role) => {
     || normalizedRole === STORE_ROLES.AUDIT_RELATED;
 };
 
-export const canAccessAdminPanel = (role) => {
-  const normalizedRole = normalizeStoreRole(role);
-  return normalizedRole === STORE_ROLES.STORE_ADMIN
-    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
-    || normalizedRole === STORE_ROLES.AUDIT_RELATED
-    || normalizedRole === STORE_ROLES.SUPPORT_AGENT;
-};
+export const isSystemAdmin = (role) => normalizeStoreRole(role) === STORE_ROLES.SYSTEM_ADMINISTRATOR;
+
+export const canAccessAdminPanel = (role) => isSystemAdmin(role);
 
 export const canManageUsers = (role) => {
   const normalizedRole = normalizeStoreRole(role);
