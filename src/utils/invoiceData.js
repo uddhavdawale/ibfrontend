@@ -45,18 +45,8 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     const gstValue = Number(((amount * gstPercent) / 100).toFixed(2));
     const total = Number((amount + gstValue).toFixed(2));
 
-    if (isNonGstInvoice) {
-      return [
-        String(index + 1),
-        item.item || item.name || '-',
-        item.hsn || '9999',
-        String(qty),
-        `${rupee}${rate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        `${rupee}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        `${rupee}${total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      ];
-    }
-
+    // Always emit the same 9-column shape so GST and Non-GST invoices render an
+    // identical item table structure. Non-GST rows simply carry 0% / Rs.0.00 GST.
     return [
       String(index + 1),
       item.item || item.name || '-',
@@ -64,9 +54,9 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
       String(qty),
       `${rupee}${rate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       `${rupee}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `${gstPercent}%`,
-      `${rupee}${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `${rupee}${total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `${isNonGstInvoice ? 0 : gstPercent}%`,
+      `${rupee}${(isNonGstInvoice ? 0 : gstValue).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `${rupee}${(isNonGstInvoice ? amount : total).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     ];
   });
 

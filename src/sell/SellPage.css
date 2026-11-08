@@ -13,6 +13,8 @@
   --sell-warning: #f59e0b;
   --sell-danger: #ef4444;
   --sell-shadow: rgba(15, 23, 42, 0.08);
+  --sell-list-grid: 140px 190px 130px 130px 130px 130px 110px 80px;
+  --sell-list-min-width: 1140px;
   max-width: 1400px;
   margin: 0 auto;
   padding: 24px;
@@ -230,8 +232,24 @@
   border: 1px solid var(--sell-border);
   border-radius: 20px;
   box-shadow: 0 14px 30px var(--sell-shadow);
-  overflow: hidden;
+  overflow: auto;
+  max-height: 62vh;
   margin-bottom: 26px;
+}
+
+.sell-dashboard .orders-list::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.sell-dashboard .orders-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.75);
+  border-radius: 999px;
+}
+
+.sell-dashboard .orders-list::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.14);
+  border-radius: 999px;
 }
 
 .sell-dashboard .list-header,
@@ -241,10 +259,15 @@
 
 .sell-dashboard .list-header {
   display: grid;
-  grid-template-columns: 150px 200px 150px 150px 120px 80px;
+  grid-template-columns: var(--sell-list-grid);
   gap: 16px;
+  min-width: var(--sell-list-min-width);
   padding: 18px 22px;
-  background: var(--sell-panel-soft);
+  background: var(--sell-panel-strong);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  box-shadow: 0 1px 0 var(--sell-stroke);
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -301,8 +324,9 @@
 
 .sell-dashboard .order-row {
   display: grid;
-  grid-template-columns: 150px 200px 150px 150px 120px 80px;
+  grid-template-columns: var(--sell-list-grid);
   gap: 16px;
+  min-width: var(--sell-list-min-width);
   padding: 18px 22px;
   border-bottom: 1px solid var(--sell-stroke);
   cursor: pointer;
@@ -348,12 +372,17 @@
   color: var(--sell-danger);
 }
 
+.sell-dashboard .status-badge.return {
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--sell-primary);
+}
+
 .sell-dashboard .order-actions {
   position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  z-index: 2;
+  z-index: 8;
 }
 
 .sell-dashboard .order-action-btn {
@@ -374,6 +403,11 @@
   color: var(--sell-primary);
 }
 
+.sell-dashboard .order-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .sell-dashboard .order-action-menu-btn {
   font-size: 16px;
   line-height: 1;
@@ -382,15 +416,15 @@
 .sell-dashboard .order-action-menu {
   position: absolute;
   right: 0;
-  top: calc(100% + 8px);
-  transform: none;
+  top: 50%;
+  transform: translateY(-50%);
   min-width: 176px;
   background: #ffffff;
   border: 2px solid rgba(148, 163, 184, 0.9);
   border-radius: 12px;
   box-shadow: 0 18px 32px rgba(15, 23, 42, 0.18);
   padding: 8px;
-  z-index: 50;
+  z-index: 120;
 }
 
 .sell-dashboard .order-action-menu-item {
@@ -704,13 +738,13 @@
 }
 
 @media (max-width: 990px) {
-  .sell-dashboard .sell-kpi-row {
-    grid-template-columns: 1fr;
+  .sell-dashboard {
+    --sell-list-grid: 130px 170px 110px 110px 120px 120px 90px 60px;
+    --sell-list-min-width: 980px;
   }
 
-  .sell-dashboard .list-header,
-  .sell-dashboard .order-row {
-    grid-template-columns: 140px 180px 120px 120px 100px 60px;
+  .sell-dashboard .sell-kpi-row {
+    grid-template-columns: 1fr;
   }
 
   .sell-dashboard .detail-header {
@@ -739,7 +773,7 @@
 
   .sell-dashboard .list-header,
   .sell-dashboard .order-row {
-    min-width: 700px;
+    min-width: var(--sell-list-min-width);
   }
 
   .sell-dashboard .action-buttons {

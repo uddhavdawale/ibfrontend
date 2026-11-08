@@ -80,6 +80,71 @@ const normalizeSalesSeries = (payload) => {
   }));
 };
 
+const extractListPayload = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.content)) return payload.content;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.content)) return payload.data.content;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
+  return [];
+};
+
+const parseDateLikeValue = (value) => {
+  if (!value && value !== 0) return null;
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const direct = new Date(raw);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  const shortMonthMatch = raw.match(/^(\d{1,2})[-\s/]([A-Za-z]{3})[-\s/](\d{4})$/);
+  if (shortMonthMatch) {
+    const monthMap = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+    };
+    const day = Number(shortMonthMatch[1]);
+    const month = monthMap[String(shortMonthMatch[2]).toLowerCase()];
+    const year = Number(shortMonthMatch[3]);
+    if (Number.isFinite(day) && Number.isFinite(month) && Number.isFinite(year)) {
+      const parsed = new Date(year, month, day);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+  }
+
+  return null;
+};
+
+const isSameLocalDay = (a, b) => (
+  a.getFullYear() === b.getFullYear()
+  && a.getMonth() === b.getMonth()
+  && a.getDate() === b.getDate()
+);
+
+const getOrderDateValue = (order = {}) => (
+  order.createdAt
+  ?? order.invoiceDate
+  ?? order.orderDate
+  ?? order.date
+  ?? order.createdDate
+  ?? order.timestamp
+  ?? order.created_on
+  ?? null
+);
+
+const LIVE_ORDERS_SAMPLE_SIZE = 60;
+
 const normalizeInventoryItem = (product) => {
   const qty = normalizeNumber(product.quantity ?? product.stock ?? product.qty ?? product.ItemQty ?? 0, 0);
   const min = normalizeNumber(
@@ -163,6 +228,8 @@ function Dashboard({ username, onLogout }) {
   const [securityContext, setSecurityContext] = useState({ tenantId: null, userId: null, role: null });
   const [dashboardInfoMessage, setDashboardInfoMessage] = useState('');
   const [sessionRole, setSessionRole] = useState(() => getCurrentUserRole());
+  const [dashboardRefreshToken, setDashboardRefreshToken] = useState(0);
+  const [isDashboardRefreshing, setIsDashboardRefreshing] = useState(false);
   const { config } = useConfig();
   const navigate = useNavigate();
   const shopDisplayName = getShopDisplayName(shopProfile);
@@ -287,6 +354,11 @@ function Dashboard({ username, onLogout }) {
 
   useEffect(() => {
     let active = true;
+    const isManualRefresh = dashboardRefreshToken > 0;
+
+    if (isManualRefresh && active) {
+      setIsDashboardRefreshing(true);
+    }
 
     getCurrentShopProfile()
       .then((profile) => {
@@ -340,6 +412,30 @@ function Dashboard({ username, onLogout }) {
           }
         }
 
+        const [liveGstOrdersPayload, liveNonGstOrdersPayload] = await Promise.all([
+          fetchJsonWithFallback([
+            API_ENDPOINTS.invoicesPage(0, LIVE_ORDERS_SAMPLE_SIZE),
+            API_ENDPOINTS.ordersPage(0, LIVE_ORDERS_SAMPLE_SIZE),
+          ]),
+          fetchJsonWithFallback([
+            API_ENDPOINTS.nonGstInvoicesPage(0, LIVE_ORDERS_SAMPLE_SIZE),
+          ]),
+        ]);
+
+        if (active && (liveGstOrdersPayload || liveNonGstOrdersPayload)) {
+          const today = new Date();
+          const countTodayOrders = (payload) => {
+            const orders = extractListPayload(unwrapResponsePayload(payload));
+            return orders.filter((order) => {
+              const parsedDate = parseDateLikeValue(getOrderDateValue(order));
+              return parsedDate ? isSameLocalDay(parsedDate, today) : false;
+            }).length;
+          };
+
+          const todayOrdersCount = countTodayOrders(liveGstOrdersPayload) + countTodayOrders(liveNonGstOrdersPayload);
+          setMetrics((prev) => ({ ...prev, ordersToday: todayOrdersCount }));
+        }
+
         const productsResponse = await fetchJsonWithFallback([
           API_ENDPOINTS.productsWithSize(100),
           API_ENDPOINTS.products,
@@ -382,12 +478,16 @@ function Dashboard({ username, onLogout }) {
         }
       } catch {
         // Keep the safe, preconfigured mock values if the backend is unavailable.
+      } finally {
+        if (active && isManualRefresh) {
+          setIsDashboardRefreshing(false);
+        }
       }
     };
 
     loadDashboardData();
     return () => { active = false; };
-  }, []);
+  }, [dashboardRefreshToken]);
 
   // ALL YOUR EXISTING FUNCTIONS (UNCHANGED)
   const deleteItem = (id) => {
@@ -405,6 +505,11 @@ function Dashboard({ username, onLogout }) {
       prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 50 } : i)
     );
     alert(`Reordered 50 units of ${item.name}`);
+  };
+
+  const handleDashboardRefresh = () => {
+    if (isDashboardRefreshing) return;
+    setDashboardRefreshToken((prev) => prev + 1);
   };
 
   const addProduct = async (e) => {
@@ -515,6 +620,16 @@ function Dashboard({ username, onLogout }) {
                 {dashboardInfoMessage && <p className="error-text">{dashboardInfoMessage}</p>}
               </div>
               <div className="header-actions">
+                <button
+                  type="button"
+                  className={`tiny-refresh-btn ${isDashboardRefreshing ? 'is-loading' : ''}`}
+                  onClick={handleDashboardRefresh}
+                  disabled={isDashboardRefreshing}
+                  aria-label="Refresh dashboard"
+                  title="Refresh dashboard"
+                >
+                  ↻
+                </button>
                 {isInventoryWritable && (
                   <button className="btn secondary" onClick={() => setShowAddModal(true)}>➕ Add Product</button>
                 )}
@@ -704,6 +819,12 @@ function Dashboard({ username, onLogout }) {
   // YOUR EXISTING RETURN (ONLY SIDEBAR UPDATED)
   const lowStockCount = inventoryData.filter((item) => item.qty < item.min).length;
 
+  const handleQuickMenuAction = (path) => {
+    setShowProfileMenu(false);
+    setShowManageStoreMenu(false);
+    navigate(path);
+  };
+
   return (
     <div className={`dashboard theme-${theme}`}>
       {/* TOP BAR - UNCHANGED */}
@@ -722,11 +843,30 @@ function Dashboard({ username, onLogout }) {
         </div>
         <div className="top-actions">
           <span className={`role-badge role-${currentRole}`}>{roleBadgeLabel}</span>
-          <select className="language-btn" value={language} onChange={(e) => setLanguage(e.target.value)}>
-            <option>EN</option>
-            <option>MR</option>
-            <option>HI</option>
-          </select>
+          {canManageUsers && (
+            <select
+              className="language-btn"
+              value={language}
+              onChange={(e) => {
+                const selected = e.target.value;
+                if (selected === 'EN' || selected === 'MR' || selected === 'HI') {
+                  setLanguage(selected);
+                  return;
+                }
+
+                setLanguage('EN');
+                navigate(selected);
+              }}
+            >
+              <option value="EN">EN</option>
+              <option value="MR">MR</option>
+              <option value="HI">HI</option>
+              <option value="/customers">Customer List</option>
+              <option value="/inventory">Replenish Orders</option>
+              <option value="/customers">Dealers</option>
+              <option value="/store-users">Helpers</option>
+            </select>
+          )}
 
           <select className="theme-select" value={theme} onChange={(e) => setTheme(e.target.value)}>
             <option value="light">Light</option>
@@ -756,11 +896,9 @@ function Dashboard({ username, onLogout }) {
 
             {showProfileMenu && (
               <div className="profile-dropdown">
-                <button 
-                  className="menu-item"  
-                  onClick={() => { setShowProfileMenu(false); navigate('/Profile'); }}
-                >
-                  <span>👤</span> Profile
+                <button className="menu-item" onClick={() => handleQuickMenuAction('/Profile')}>
+                  <span className="menu-item-icon">👤</span>
+                  <span className="menu-item-label">Profile</span>
                 </button>
                 {canManageUsers && (
                   <>
@@ -768,27 +906,32 @@ function Dashboard({ username, onLogout }) {
                       className="menu-item manage-store-parent"
                       onClick={() => setShowManageStoreMenu((prev) => !prev)}
                     >
-                      <span>🏬</span> Manage Store
+                      <span className="menu-item-icon">🏬</span>
+                      <span className="menu-item-label">Manage Store</span>
                       <span className={`submenu-arrow ${showManageStoreMenu ? 'open' : ''}`}>▾</span>
                     </button>
                     {showManageStoreMenu && (
                       <div className="manage-store-submenu">
-                        <button className="menu-item submenu-item" onClick={() => { setShowManageStoreMenu(false); setShowProfileMenu(false); navigate('/users-roles'); }}>
-                          <span>🧩</span> Add Users / Roles
+                        <button className="menu-item submenu-item" onClick={() => { setShowManageStoreMenu(false); handleQuickMenuAction('/users-roles'); }}>
+                          <span className="menu-item-icon">🧩</span>
+                          <span className="menu-item-label">Add Users / Roles</span>
                         </button>
-                        <button className="menu-item submenu-item" onClick={() => { setShowManageStoreMenu(false); setShowProfileMenu(false); navigate('/store-users'); }}>
-                          <span>👥</span> Existing Users
+                        <button className="menu-item submenu-item" onClick={() => { setShowManageStoreMenu(false); handleQuickMenuAction('/store-users'); }}>
+                          <span className="menu-item-icon">👥</span>
+                          <span className="menu-item-label">Existing Users</span>
                         </button>
                       </div>
                     )}
                   </>
                 )}
                 <button className="menu-item" onClick={() => {setShowProfileMenu(false); alert('✏️ Edit profile - Coming soon!');}}>
-                  <span>✏️</span> Edit
+                  <span className="menu-item-icon">✏️</span>
+                  <span className="menu-item-label">Edit</span>
                 </button>
                 <div className="menu-divider"></div>
                 <button className="menu-item logout-item" onClick={() => {setShowProfileMenu(false); onLogout();}}>
-                  <span>🚪</span> Logout
+                  <span className="menu-item-icon">🚪</span>
+                  <span className="menu-item-label">Logout</span>
                 </button>
               </div>
             )}

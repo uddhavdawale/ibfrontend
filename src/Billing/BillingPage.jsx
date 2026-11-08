@@ -212,6 +212,98 @@ const BillingPage = () => {
     });
   };
 
+  const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+
+  const toCustomerArray = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== 'object') return [];
+    if (Array.isArray(payload.customers)) return payload.customers;
+    if (Array.isArray(payload.content)) return payload.content;
+    if (Array.isArray(payload.items)) return payload.items;
+    if (Array.isArray(payload.results)) return payload.results;
+    if (Array.isArray(payload.data)) return payload.data;
+    if (payload.data && typeof payload.data === 'object') {
+      if (Array.isArray(payload.data.customers)) return payload.data.customers;
+      if (Array.isArray(payload.data.content)) return payload.data.content;
+      if (Array.isArray(payload.data.items)) return payload.data.items;
+    }
+    return [payload];
+  };
+
+  const readCustomerDueBalance = (source) => {
+    const amount = Number(
+      source?.dueBalance ??
+      source?.outstandingBalance ??
+      source?.balanceDue ??
+      source?.pendingAmount ??
+      source?.pendingBalance ??
+      source?.currentBalance ??
+      0
+    );
+    return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+  };
+
+  const resolveCustomerPreviousBalance = async () => {
+    const customerPhoneRaw = String(customer.phone || '').trim();
+    const customerPhoneDigits = normalizeDigits(customer.phone);
+    const customerName = String(customer.name || '').trim().toLowerCase();
+
+    if (!customerPhoneDigits && !customerName) return 0;
+
+    const fetchDueFromEndpoint = async (endpoint) => {
+      try {
+        const response = await apiFetch(endpoint);
+        if (!response.ok) return null;
+        const data = await response.json();
+        const customers = toCustomerArray(data);
+        if (!customers.length) return 0;
+
+        const matchedByPhone = customerPhoneDigits
+          ? customers.find((entry) => normalizeDigits(entry?.phone || entry?.mobile || entry?.contactNumber) === customerPhoneDigits)
+          : null;
+
+        const matchedByName = customerName
+          ? customers.find((entry) => {
+            const entryName = String(entry?.customerName || entry?.name || entry?.customer || '').trim().toLowerCase();
+            return entryName === customerName;
+          })
+          : null;
+
+        const selected = matchedByPhone || matchedByName || customers[0];
+        return readCustomerDueBalance(selected);
+      } catch {
+        return null;
+      }
+    };
+
+    if (customerPhoneDigits) {
+      const phoneInputs = [...new Set([customerPhoneRaw, customerPhoneDigits].filter(Boolean))];
+      const phoneEndpoints = phoneInputs.flatMap((phoneValue) => ([
+        API_ENDPOINTS.customerByPhone(phoneValue),
+        API_ENDPOINTS.customerProfileByPhone(phoneValue),
+      ]));
+
+      for (const endpoint of phoneEndpoints) {
+        const amount = await fetchDueFromEndpoint(endpoint);
+        if (amount !== null) return amount;
+      }
+    }
+
+    if (customerName) {
+      const nameEndpoints = [
+        API_ENDPOINTS.customerSearch(customer.name),
+        API_ENDPOINTS.customerProfilesSearch(customer.name),
+      ];
+
+      for (const endpoint of nameEndpoints) {
+        const amount = await fetchDueFromEndpoint(endpoint);
+        if (amount !== null) return amount;
+      }
+    }
+
+    return 0;
+  };
+
   const calculateInvoiceTotals = (items) => {
     const subtotal = items.reduce((sum, item) => sum + (Number(item.price || 0) * Number(item.qty || 0)), 0);
     const gst = items.reduce((sum, item) => {
@@ -735,7 +827,7 @@ const BillingPage = () => {
                   <h4>Summary</h4>
                   <div class="summary-row"><span>Sub Total</span><span>₹${(invoiceData.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row"><span>Total</span><span>₹${(invoiceData.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                  <div class="summary-row"><span>Received</span><span>₹${receivedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Received Amount</span><span>₹${receivedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row"><span>Balance</span><span>₹${balanceAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row"><span>Payment mode</span><span>${invoiceData.paymentMethod || 'Cash'}</span></div>
                   <div class="summary-row"><span>Previous Balance</span><span>₹${previousBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
@@ -771,6 +863,10 @@ const BillingPage = () => {
     try {
       const normalizedStatus = status === 'paid' ? 'paid' : status === 'partial' ? 'partial' : 'pending';
       const paidAmount = Number(amountReceived) || 0;
+      const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
+      const previousBalance = await resolveCustomerPreviousBalance();
+      const balanceAmount = Math.max(grandTotal - receivedAmount, 0);
+      const currentBalance = previousBalance + balanceAmount;
       setPaymentStatus(normalizedStatus);
 
       const payload = {
@@ -779,8 +875,12 @@ const BillingPage = () => {
         paymentMethod,
         paymentStatus: normalizedStatus,
         status: normalizedStatus,
-        paidAmount: paidAmount,
-        amountPaid: paidAmount,
+        paidAmount: receivedAmount,
+        amountPaid: receivedAmount,
+        receivedAmount: receivedAmount,
+        previousBalance,
+        balanceAmount,
+        currentBalance,
         totalAmount: grandTotal,
         billType,
         isGstInvoice: billType === BILL_TYPES.GST,
@@ -832,6 +932,12 @@ const BillingPage = () => {
         customerEmail: customer.email || '',
         paymentMethod,
         paymentStatus: normalizedStatus,
+        paidAmount: receivedAmount,
+        amountPaid: receivedAmount,
+        receivedAmount: receivedAmount,
+        previousBalance,
+        balanceAmount,
+        currentBalance,
         billType,
         subtotal: subtotal,
         gst: gstAmount,

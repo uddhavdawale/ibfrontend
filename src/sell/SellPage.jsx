@@ -107,6 +107,8 @@ const fallbackSellOrders = [
     totalGst: 73.5,
     grandTotal: 2670.5,
     status: "paid",
+    soldBy: "Store Admin",
+    dueCollection: 0,
     items: [
       {
         sn: 1,
@@ -151,6 +153,8 @@ const fallbackSellOrders = [
     totalGst: 55.35,
     grandTotal: 1900.35,
     status: "paid",
+    soldBy: "Store Admin",
+    dueCollection: 0,
     items: [
       {
         sn: 1,
@@ -186,6 +190,8 @@ const fallbackSellOrders = [
     totalGst: 112.5,
     grandTotal: 1362.5,
     status: "pending",
+    soldBy: "Store Admin",
+    dueCollection: 1362.5,
     items: [
       {
         sn: 1,
@@ -199,6 +205,17 @@ const fallbackSellOrders = [
     ],
   },
 ];
+
+const getLoggedInSellerName = () => {
+  if (typeof window === "undefined") return "Current User";
+
+  try {
+    const user = JSON.parse(window.localStorage.getItem("user") || "{}");
+    return user.name || user.ownerName || user.username || user.userName || "Current User";
+  } catch {
+    return "Current User";
+  }
+};
 
 const resolvePaymentStatus = (invoice, grandTotal) => {
   const rawPaymentStatus = String(
@@ -230,7 +247,7 @@ const resolvePaymentStatus = (invoice, grandTotal) => {
   return "pending";
 };
 
-const normalizeInvoiceToOrder = (invoice, index = 0) => {
+const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current User") => {
   const rawItems = Array.isArray(invoice.items)
     ? invoice.items
     : Array.isArray(invoice.lineItems)
@@ -280,6 +297,14 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
   );
 
   const resolvedStatus = resolvePaymentStatus(invoice, grandTotal);
+  const paidAmount = Number(
+    invoice.paidAmount ??
+    invoice.amountPaid ??
+    invoice.totalPaid ??
+    invoice.receivedAmount ??
+    0
+  );
+  const dueCollection = Math.max(grandTotal - paidAmount, 0);
 
   return {
     id: invoice.id ?? invoice.invoiceId ?? `${invoice.invoiceNo ?? "INV"}-${index}`,
@@ -294,6 +319,14 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
     subtotal,
     totalGst,
     grandTotal,
+    soldBy: invoice.soldBy
+      ?? invoice.soldByName
+      ?? invoice.createdByName
+      ?? invoice.createdBy
+      ?? invoice.userName
+      ?? invoice.username
+      ?? fallbackSoldBy,
+    dueCollection,
     status: resolvedStatus,
     items: normalizedItems,
     notes: invoice.notes ?? "",
@@ -301,7 +334,7 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
   };
 };
 
-const fetchInvoiceDetail = async (invoiceSummary) => {
+const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User") => {
   const invoiceId = invoiceSummary?.id ?? invoiceSummary?.invoiceId;
   if (!invoiceId) return invoiceSummary;
 
@@ -319,7 +352,7 @@ const fetchInvoiceDetail = async (invoiceSummary) => {
       if (!response.ok) continue;
       const detailData = await response.json();
       if (!detailData) continue;
-      return normalizeInvoiceToOrder({ ...invoiceSummary, ...detailData }, 0);
+      return normalizeInvoiceToOrder({ ...invoiceSummary, ...detailData }, 0, fallbackSoldBy);
     } catch (error) {
       console.warn("Invoice detail lookup failed for:", url, error);
     }
@@ -342,6 +375,7 @@ const SellPage = () => {
   const [cancellingOrderId, setCancellingOrderId] = useState(null);
   const [lastExportAt, setLastExportAt] = useState(0);
   const [role, setRole] = useState(() => getCurrentUserRole());
+  const [loggedInSeller, setLoggedInSeller] = useState(() => getLoggedInSellerName());
   const pageSize = 5;
   const canManageSellOrders = canWriteBilling(role);
 
@@ -356,29 +390,33 @@ const SellPage = () => {
     setCurrentPage(1);
   };
 
-  const handleThreeDotMenuAction = (action) => {
+  const handleThreeDotMenuAction = async (order, action) => {
+    if (!order || cancellingOrderId) return;
     setOpenActionMenuFor(null);
 
     if (action === 'sell') {
-      setStatusFilter('all');
-      setCurrentPage(1);
+      setCancellingOrderId(order.id);
+      try {
+        await selectOrder(order);
+      } finally {
+        setCancellingOrderId(null);
+      }
       return;
     }
 
     if (action === 'cancelled') {
-      setStatusFilter('cancelled');
-      setCurrentPage(1);
+      await cancelOrder(order);
       return;
     }
 
     if (action === 'return') {
-      setStatusFilter('return');
-      setCurrentPage(1);
+      await returnOrder(order);
     }
   };
 
   useEffect(() => {
     setRole(getCurrentUserRole());
+    setLoggedInSeller(getLoggedInSellerName());
 
     let active = true;
     getCurrentShopProfile()
@@ -405,7 +443,7 @@ const SellPage = () => {
       return;
     }
 
-    const refreshedOrder = await fetchInvoiceDetail(order);
+    const refreshedOrder = await fetchInvoiceDetail(order, loggedInSeller);
     setActiveOrder((current) => (current && current.id === order.id ? null : refreshedOrder));
   };
 
@@ -440,12 +478,12 @@ const SellPage = () => {
             return unique;
           }, new Map());
 
-        let normalizedOrders = Array.from(mergedInvoices.values()).map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
+        let normalizedOrders = Array.from(mergedInvoices.values()).map((invoice, index) => normalizeInvoiceToOrder(invoice, index, loggedInSeller));
 
         normalizedOrders = await Promise.all(
           normalizedOrders.map(async (order) => {
             if (Array.isArray(order.items) && order.items.length > 0) return order;
-            return fetchInvoiceDetail(order);
+            return fetchInvoiceDetail(order, loggedInSeller);
           })
         );
 
@@ -466,7 +504,7 @@ const SellPage = () => {
     };
 
     fetchSellOrders();
-  }, []);
+  }, [loggedInSeller]);
 
 const OrderDetail = ({ order }) => {
   const totalQty = Array.isArray(order?.items)
@@ -620,7 +658,7 @@ const OrderDetail = ({ order }) => {
   const filteredOrders = statusFilter === 'all'
     ? sellOrders
     : statusFilter === 'return'
-      ? sellOrders.filter((order) => ['paid', 'pending'].includes(String(order.status || '').toLowerCase()))
+      ? sellOrders.filter((order) => String(order.status || '').toLowerCase() === 'return')
       : sellOrders.filter((order) => order.status === statusFilter);
 
   const revenueSummary = filteredOrders.reduce(
@@ -675,6 +713,41 @@ const OrderDetail = ({ order }) => {
     ));
   };
 
+  const markOrderReturned = (orderId) => {
+    setSellOrders((orders) =>
+      orders.map((order) =>
+        String(order.id) === String(orderId)
+          ? { ...order, status: 'return' }
+          : order
+      )
+    );
+
+    setActiveOrder((current) => (
+      current && String(current.id) === String(orderId)
+        ? { ...current, status: 'return' }
+        : current
+    ));
+  };
+
+  const executeOrderRequests = async (requests = []) => {
+    for (const request of requests) {
+      try {
+        const options = {
+          method: request.method,
+          headers: request.body ? { 'Content-Type': 'application/json' } : {},
+          ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+        };
+
+        const response = await apiFetch(request.url, options);
+        if (response.ok) return true;
+      } catch (requestError) {
+        console.warn('Order action attempt failed:', requestError);
+      }
+    }
+
+    return false;
+  };
+
   const cancelOrder = async (order) => {
     if (!canManageSellOrders) {
       alert('Your role has read-only sell order access.');
@@ -713,32 +786,73 @@ const OrderDetail = ({ order }) => {
       { url: invoiceLegacyUrl, method: 'DELETE' },
     ];
 
-    let cancelled = false;
-
     try {
-      for (const request of requests) {
-        try {
-          const options = {
-            method: request.method,
-            headers: request.body ? { 'Content-Type': 'application/json' } : {},
-            ...(request.body ? { body: JSON.stringify(request.body) } : {}),
-          };
-
-          const response = await apiFetch(request.url, options);
-          if (response.ok) {
-            cancelled = true;
-            break;
-          }
-        } catch (requestError) {
-          console.warn('Order cancellation attempt failed:', requestError);
-        }
-      }
+      const cancelled = await executeOrderRequests(requests);
 
       if (cancelled) {
         markOrderCancelled(order.id);
         alert('Order cancelled successfully.');
       } else {
         alert('Unable to cancel this order from server. Please try again.');
+      }
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
+  const returnOrder = async (order) => {
+    if (!canManageSellOrders) {
+      alert('Your role has read-only sell order access.');
+      return;
+    }
+
+    if (!order || !order.id) return;
+    if (String(order.status || '').toLowerCase() === 'return') {
+      alert('This order is already marked as return.');
+      return;
+    }
+
+    const allowReturn = window.confirm(`Mark order ${order.invoiceNo} as return?`);
+    if (!allowReturn) return;
+
+    setCancellingOrderId(order.id);
+
+    const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
+    const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
+    const returnPayload = {
+      status: 'return',
+      paymentStatus: 'return',
+      returned: true,
+      returnReason: 'Returned from sell page',
+    };
+
+    const requests = [
+      {
+        url: API_ENDPOINTS.returns,
+        method: 'POST',
+        body: {
+          invoiceId: order.id,
+          invoiceNo: order.invoiceNo,
+          reason: 'Returned from sell page',
+          status: 'return',
+        },
+      },
+      { url: `${invoiceUrl}/return`, method: 'POST' },
+      { url: `${invoiceLegacyUrl}/return`, method: 'POST' },
+      { url: invoiceUrl, method: 'PATCH', body: returnPayload },
+      { url: invoiceLegacyUrl, method: 'PATCH', body: returnPayload },
+      { url: invoiceUrl, method: 'PUT', body: returnPayload },
+      { url: invoiceLegacyUrl, method: 'PUT', body: returnPayload },
+    ];
+
+    try {
+      const markedReturned = await executeOrderRequests(requests);
+
+      if (markedReturned) {
+        markOrderReturned(order.id);
+        alert('Order marked as return successfully.');
+      } else {
+        alert('Unable to mark this order as return from server. Please try again.');
       }
     } finally {
       setCancellingOrderId(null);
@@ -801,6 +915,8 @@ const OrderDetail = ({ order }) => {
           <span>Customer</span>
           <span>Amount</span>
           <span>Date</span>
+          <span>Sold By</span>
+          <span>Due Collection</span>
           <span className="status-header-cell">
             <span>Status</span>
             <button
@@ -815,7 +931,9 @@ const OrderDetail = ({ order }) => {
                     ? 'Show paid bills only'
                     : statusFilter === 'pending'
                       ? 'Show pending bills only'
-                      : 'Show cancelled bills only'
+                      : statusFilter === 'cancelled'
+                        ? 'Show cancelled bills only'
+                        : 'Show returned bills only'
               }
             >
               {statusFilter === 'all' ? '≣' : statusFilter === 'paid' ? '✓' : statusFilter === 'pending' ? '≠' : '⨯'}
@@ -825,6 +943,9 @@ const OrderDetail = ({ order }) => {
         </div>
 
         {visibleOrders.map((order) => (
+          (() => {
+            const isRowActionBusy = String(cancellingOrderId) === String(order.id);
+            return (
           <div
             key={order.id}
             className="order-row"
@@ -834,6 +955,8 @@ const OrderDetail = ({ order }) => {
             <span>{order.customer.name}</span>
             <span>₹{order.grandTotal.toLocaleString()}</span>
             <span>{order.date}</span>
+            <span>{order.soldBy || loggedInSeller}</span>
+            <span>₹{Number(order.dueCollection || 0).toLocaleString('en-IN')}</span>
             <span>
               <span className={`status-badge ${order.status}`}>
                 {order.status}
@@ -844,6 +967,7 @@ const OrderDetail = ({ order }) => {
                 type="button"
                 className="order-action-btn"
                 onClick={() => selectOrder(order)}
+                disabled={isRowActionBusy}
                 aria-label={`View ${order.invoiceNo}`}
                 title="View order"
               >
@@ -853,6 +977,7 @@ const OrderDetail = ({ order }) => {
                 type="button"
                 className="order-action-btn order-action-menu-btn"
                 onClick={() => setOpenActionMenuFor((current) => current === order.id ? null : order.id)}
+                disabled={isRowActionBusy}
                 aria-label={`Open actions for ${order.invoiceNo}`}
                 title="More actions"
               >
@@ -863,21 +988,24 @@ const OrderDetail = ({ order }) => {
                   <button
                     type="button"
                     className="order-action-menu-item"
-                    onClick={() => handleThreeDotMenuAction('sell')}
+                    onClick={() => handleThreeDotMenuAction(order, 'sell')}
+                    disabled={isRowActionBusy}
                   >
-                    Sell Order
+                    {isRowActionBusy ? 'Processing...' : 'Sell Order'}
                   </button>
                   <button
                     type="button"
                     className="order-action-menu-item"
-                    onClick={() => handleThreeDotMenuAction('cancelled')}
+                    onClick={() => handleThreeDotMenuAction(order, 'cancelled')}
+                    disabled={isRowActionBusy}
                   >
                     Cancelled Order
                   </button>
                   <button
                     type="button"
                     className="order-action-menu-item"
-                    onClick={() => handleThreeDotMenuAction('return')}
+                    onClick={() => handleThreeDotMenuAction(order, 'return')}
+                    disabled={isRowActionBusy}
                   >
                     Return Order
                   </button>
@@ -885,6 +1013,8 @@ const OrderDetail = ({ order }) => {
               )}
             </span>
           </div>
+            );
+          })()
         ))}
       </div>
 

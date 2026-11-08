@@ -5,6 +5,7 @@ import { API_BASE_URL, setAccessToken } from '../Config/api';
 import { APP_CONFIG } from '../Config/appConfig';
 import { resolveMfaContext } from '../auth/mfa/mfaService';
 import logger from '../utils/logger';
+import { buildLoginRequest } from '../utils/cryptoUtil';
 import { normalizeStoreRole } from '../Security/storeRoles';
 
 const themeOptions = [
@@ -66,16 +67,18 @@ const handleSubmit = async (e) => {
 
   try {
     const trimmedUsername = formData.username.trim();
+    const loginRequestBody = await buildLoginRequest({
+      username: trimmedUsername,
+      password: formData.password,
+      ...(trimmedUsername.includes('@') ? { email: trimmedUsername } : {}),
+      role: 'store_manager'
+    });
+
     const response = await fetch(`${API_BASE_URL}/api/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({
-        username: trimmedUsername,
-        password: formData.password,
-        ...(trimmedUsername.includes('@') ? { email: trimmedUsername } : {}),
-        role: 'store_manager'
-      }),
+      body: JSON.stringify(loginRequestBody),
     });
 
     const responseText = await response.text();
