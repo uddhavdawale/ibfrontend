@@ -33,7 +33,10 @@ const exportSellOrdersData = (orders, format = "csv") => {
 const MAX_EXPORT_ROWS = 500;
 const EXPORT_COOLDOWN_MS = 60 * 1000;
 
-const generatePDF = async (order, shopProfile = readStoredShopProfile()) => buildInvoicePdf({ ...order, shopProfile });
+const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
+  const currentShopProfile = await getCurrentShopProfile(true);
+  return buildInvoicePdf({ ...order, shopProfile: currentShopProfile || shopProfile });
+};
 
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
   const pdf = await generatePDF(order, shopProfile);
@@ -419,7 +422,7 @@ const SellPage = () => {
     setLoggedInSeller(getLoggedInSellerName());
 
     let active = true;
-    getCurrentShopProfile()
+    getCurrentShopProfile(true)
       .then((profile) => {
         if (active) setShopProfile(profile);
       })
@@ -517,8 +520,8 @@ const OrderDetail = ({ order }) => {
       <div className="detail-header">
         <div className="invoice-shop-info">
           <h2>{getShopDisplayName(shopProfile)}</h2>
-          <p>GSTIN: {shopProfile.gstin || shopProfile.gstNumber || '27ABCDE1234F1Z5'}</p>
-          <p>{shopProfile.address || 'Aurangabad, Maharashtra 431001'}</p>
+          <p>GSTIN: {shopProfile.gstin || shopProfile.gstNumber || ''}</p>
+          <p>{shopProfile.address || ''}</p>
           <p>📞 {shopProfile.phone || shopProfile.contactNumber || '+91 98765 43210'}</p>
           <p>✉️ {shopProfile.email || shopProfile.supportEmail || 'sales@ibenterprises.com'}</p>
           <p>
@@ -1052,6 +1055,15 @@ const OrderDetail = ({ order }) => {
 
       {activeOrder && (
         <div className="detail-container">
+          <button
+            type="button"
+            className="invoice-close-button"
+            onClick={() => setActiveOrder(null)}
+            aria-label="Close invoice"
+            title="Close invoice"
+          >
+            ×
+          </button>
           <button
             className="back-to-list"
             onClick={() => setActiveOrder(null)}

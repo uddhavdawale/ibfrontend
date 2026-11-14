@@ -24,6 +24,7 @@ const extractAuditLogs = (payload) => {
 const AdminAuditLogsPage = ({ onLogout }) => {
   const [logs, setLogs] = useState(fallbackLogs);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -44,10 +45,15 @@ const AdminAuditLogsPage = ({ onLogout }) => {
 
     loadLogs();
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshKey((value) => value + 1);
+  };
 
   return (
-    <AdminLayout title="Audit log viewer" subtitle="Immutable, append-only record of sensitive admin actions and operational changes." currentUser="System Admin" onLogout={onLogout}>
+    <AdminLayout title="Audit log viewer" subtitle="Immutable, append-only record of sensitive admin actions and operational changes." currentUser="System Admin" onLogout={onLogout} onRefresh={handleRefresh}>
       {loading && <p className="muted-text">Loading audit records…</p>}
       <section className="admin-panel">
         <table className="admin-table">

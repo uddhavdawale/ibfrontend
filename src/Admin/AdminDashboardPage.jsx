@@ -33,6 +33,7 @@ const normalizeDashboardPayload = (payload = {}) => {
 const AdminDashboardPage = ({ onLogout }) => {
   const [dashboardData, setDashboardData] = useState(adminOverview);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -56,12 +57,17 @@ const AdminDashboardPage = ({ onLogout }) => {
 
     loadDashboard();
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshKey((value) => value + 1);
+  };
 
   const { totalRetailers, activeRetailers, pendingApprovals, approvalRate, averageApprovalTime, recentRequests, recentActivity, growthTrend, cityDistribution, stateDistribution, rejectionReasons } = dashboardData;
 
   return (
-    <AdminLayout title="Admin dashboard" subtitle="Operational view of retailer onboarding, approvals, and risk signals." currentUser="Store Admin" onLogout={onLogout}>
+    <AdminLayout title="Admin dashboard" subtitle="Operational view of retailer onboarding, approvals, and risk signals." currentUser="Store Admin" onLogout={onLogout} onRefresh={handleRefresh}>
       {loading && <p className="muted-text">Loading admin dashboard…</p>}
       <div className="admin-grid three-up">
         <StatCard label="Total retailers onboarded" value={totalRetailers} footnote="All stores tracked" />

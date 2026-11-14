@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Dashboard from './Dashboard/DashboardEntry.jsx';
+import LedgerReportPage from './Dashboard/LedgerReportPage.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
 import Login from './Login/Login.jsx';
 import App from './App.jsx';
@@ -17,23 +18,12 @@ import { resolveMfaContext } from './auth/mfa/mfaService.js';
 import AuditPage from './Audit/AuditPage.jsx';
 import AdminDashboardPage from './Admin/AdminDashboardPage.jsx';
 import AdminRetailersPage from './Admin/AdminRetailersPage.jsx';
+import AdminReportsPage from './Admin/AdminReportsPage.jsx';
 import AdminSignupApprovalsPage from './Admin/AdminSignupApprovalsPage.jsx';
 import AdminUsersPage from './Admin/AdminUsersPage.jsx';
 import AdminAuditLogsPage from './Admin/AdminAuditLogsPage.jsx';
-import { API_ENDPOINTS, refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile } from './Config/api.js';
+import { API_ENDPOINTS, refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile, advanceAuthSessionRevision } from './Config/api.js';
 import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canAccessAdminPanel, canManageUsers, canAccessAudit } from './Security/storeRoles.js';
-
-const readPendingMfaUser = () => {
-  const stored = localStorage.getItem('pendingMfaUser');
-  if (!stored) return null;
-
-  try {
-    return JSON.parse(stored);
-  } catch {
-    localStorage.removeItem('pendingMfaUser');
-    return null;
-  }
-};
 
 const clearAuthStorage = () => {
   clearAuthState();
@@ -65,8 +55,11 @@ const AppRoutes = () => {
   const [toast, setToast] = useState(null);
   const lastSessionValidationAtRef = useRef(0);
   const sessionValidationInFlightRef = useRef(false);
+  const authTransitionVersionRef = useRef(0);
 
   const logoutUser = useCallback(async (callBackend = true) => {
+    authTransitionVersionRef.current += 1;
+    advanceAuthSessionRevision();
     try {
       if (callBackend) await logoutRequest().catch(() => {});
     } finally {
@@ -116,6 +109,7 @@ const AppRoutes = () => {
   useEffect(() => {
     const onStorage = (event) => {
       if (event.key === 'auth_logout') {
+        authTransitionVersionRef.current += 1;
         clearAuthStorage();
         emitAuthToast('Your session expired. Please log in again.');
         setIsAuthenticated(false);
@@ -185,11 +179,13 @@ const AppRoutes = () => {
   useEffect(() => {
     let active = true;
     const restoreSession = async () => {
+      const transitionVersion = authTransitionVersionRef.current;
+      const isCurrentTransition = () => active && transitionVersion === authTransitionVersionRef.current;
       try {
         const storedUser = localStorage.getItem('user');
         const parsedUser = storedUser ? JSON.parse(storedUser) : null;
         if (!parsedUser) {
-          if (active) setLoading(false);
+          if (isCurrentTransition()) setLoading(false);
           return;
         }
 
@@ -200,20 +196,20 @@ const AppRoutes = () => {
           setAccessToken(storedAccessToken);
         }
 
-        if (active) {
+        if (isCurrentTransition()) {
           setUser(parsedUser);
           setIsAuthenticated(true);
         }
 
         if (!storedRefreshToken && storedAccessToken) {
-          if (active) {
+          if (isCurrentTransition()) {
             localStorage.setItem('user', JSON.stringify(parsedUser));
           }
           return;
         }
 
         if (!storedRefreshToken) {
-          if (active) {
+          if (isCurrentTransition()) {
             localStorage.setItem('user', JSON.stringify(parsedUser));
           }
           return;
@@ -223,7 +219,7 @@ const AppRoutes = () => {
           await refreshAccessToken(localStorage.getItem('username') || parsedUser.username || parsedUser.userName || parsedUser.name || '');
         } catch (error) {
           console.warn('Session refresh failed during app startup; keeping the saved session available.', error);
-          if (active) {
+          if (isCurrentTransition()) {
             setUser(parsedUser);
             setIsAuthenticated(true);
           }
@@ -250,14 +246,14 @@ const AppRoutes = () => {
           };
         }
 
-        if (active) {
+        if (isCurrentTransition()) {
           setUser(nextUser);
           setIsAuthenticated(true);
           localStorage.setItem('user', JSON.stringify(nextUser));
         }
-      } catch {
-        // Keep the existing app state if the saved session is malformed or temporarily unavailable.
-        if (active) {
+      } catch (error) {
+        console.warn('Session restoration failed:', error);
+        if (isCurrentTransition()) {
           setUser(null);
           setIsAuthenticated(false);
         }
@@ -270,6 +266,8 @@ const AppRoutes = () => {
   }, []);
 
   const loginUser = (userData) => {
+    authTransitionVersionRef.current += 1;
+    advanceAuthSessionRevision();
     const normalizedUser = {
       ...userData,
       username: userData?.username || userData?.userName || userData?.email || 'user',
@@ -285,9 +283,13 @@ const AppRoutes = () => {
 
     if (mfaEnabled) {
       const pendingUser = { ...normalizedUser, mfaRequired: true, config: backendConfig };
+      setAccessToken(null);
+      sessionStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      localStorage.removeItem('username');
       setIsAuthenticated(false);
       setUser(pendingUser);
-      localStorage.setItem('pendingMfaUser', JSON.stringify(pendingUser));
+      localStorage.removeItem('pendingMfaUser');
       navigate('/mfa', { replace: true });
       return;
     }
@@ -300,21 +302,41 @@ const AppRoutes = () => {
     navigate(isPlatformAdmin ? '/admin/dashboard' : '/dashboard', { replace: true });
   };
 
-  const handleMfaVerified = (verifiedUser) => {
-    const nextAccessToken = verifiedUser?.accessToken || verifiedUser?.token || verifiedUser?.firebaseIdToken || null;
+  const handleMfaVerified = async (verifiedUser) => {
+    authTransitionVersionRef.current += 1;
+    advanceAuthSessionRevision();
+    const verifiedProfile = { ...(verifiedUser || {}) };
+    let nextAccessToken = verifiedProfile.accessToken || verifiedProfile.token || verifiedProfile.firebaseIdToken || null;
+    const refreshToken = verifiedProfile.refreshToken;
+    delete verifiedProfile.accessToken;
+    delete verifiedProfile.token;
+    delete verifiedProfile.firebaseIdToken;
+    delete verifiedProfile.refreshToken;
+    delete verifiedProfile.mfaChallenge;
 
     const normalizedUser = {
-      ...verifiedUser,
-      username: verifiedUser?.username || verifiedUser?.userName || verifiedUser?.email || 'user',
-      name: verifiedUser?.name || verifiedUser?.ownerName || verifiedUser?.businessName || verifiedUser?.username || 'User',
-      role: normalizeStoreRole(verifiedUser?.role),
+      ...verifiedProfile,
+      username: verifiedProfile?.username || verifiedProfile?.userName || verifiedProfile?.email || 'user',
+      name: verifiedProfile?.name || verifiedProfile?.ownerName || verifiedProfile?.businessName || verifiedProfile?.username || 'User',
+      role: normalizeStoreRole(verifiedProfile?.role),
+      mfaRequired: false,
     };
-    const isPlatformAdmin = canAccessAdminPanel(normalizedUser.role);
 
-    if (nextAccessToken) {
-      setAccessToken(nextAccessToken);
+    if (refreshToken) {
+      sessionStorage.setItem('refreshToken', refreshToken);
     }
 
+    localStorage.setItem('username', normalizedUser.username);
+    if (!nextAccessToken) {
+      try {
+        nextAccessToken = await refreshAccessToken(normalizedUser.username);
+      } catch (error) {
+        sessionStorage.removeItem('refreshToken');
+        throw new Error('Your code was accepted, but the app could not establish a session. Please sign in again or contact support.');
+      }
+    }
+
+    setAccessToken(nextAccessToken);
     clearScopedShopProfiles();
 
     setIsAuthenticated(true);
@@ -322,7 +344,8 @@ const AppRoutes = () => {
     localStorage.setItem('user', JSON.stringify(normalizedUser));
     localStorage.removeItem('pendingMfaUser');
     sessionStorage.setItem('mfaVerified', 'true');
-    navigate(isPlatformAdmin ? '/admin/dashboard' : '/dashboard', { replace: true });
+    lastSessionValidationAtRef.current = Date.now();
+    sessionValidationInFlightRef.current = false;
   };
 
   useEffect(() => {
@@ -335,7 +358,6 @@ const AppRoutes = () => {
     return <div className="loading-screen">Loading...</div>;
   }
 
-  const pendingMfaUser = readPendingMfaUser();
   const role = normalizeStoreRole(user?.role);
   const canOpenBilling = canAccessBilling(role);
   const canOpenInventory = canAccessInventory(role);
@@ -354,11 +376,22 @@ const AppRoutes = () => {
 
       <Routes>
       <Route path="/login" element={<Login onLogin={loginUser} />} />
-      <Route path="/mfa" element={user?.mfaRequired || pendingMfaUser ? <MfaScreen user={user || pendingMfaUser} onVerified={handleMfaVerified} onCancel={logoutUser} /> : <Navigate to="/login" replace />} />
+      <Route path="/forgot-password" element={<Login onLogin={loginUser} />} />
+      <Route
+        path="/mfa"
+        element={user?.mfaRequired
+          ? <MfaScreen user={user} onVerified={handleMfaVerified} onCancel={logoutUser} />
+          : user?.mfaVerified && !isAuthenticated
+            ? <div className="loading-screen" role="status">Completing sign-in...</div>
+            : isAuthenticated
+              ? <Navigate to={canAccessAdminPanel(role) ? '/admin/dashboard' : '/dashboard'} replace />
+              : <Navigate to="/login" replace />}
+      />
       <Route path="/" element={!isAuthenticated ? <App /> : (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />)} />
       <Route path="/dashboard" element={isAuthenticated ? (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : <Dashboard username={user?.name || ''} onLogout={logoutUser} />) : <Navigate to="/login" replace />} />
       <Route path="/profile" element={isAuthenticated ? <ProfilePage username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
       <Route path="/billing" element={isAuthenticated ? (canOpenBilling ? <BillingPage /> : <Navigate to="/access-denied" state={{ from: '/billing', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/ledger" element={isAuthenticated ? (canOpenBilling ? <LedgerReportPage /> : <Navigate to="/access-denied" state={{ from: '/ledger', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/inventory" element={isAuthenticated ? (canOpenInventory ? <InventoryPage /> : <Navigate to="/access-denied" state={{ from: '/inventory', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/customer" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
@@ -368,6 +401,7 @@ const AppRoutes = () => {
       <Route path="/admin" element={isAuthenticated ? (canViewAdminPanel ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/access-denied" state={{ from: '/admin', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/dashboard" element={isAuthenticated ? (canViewAdminPanel ? <AdminDashboardPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/dashboard', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/retailers" element={isAuthenticated ? (canViewAdminPanel ? <AdminRetailersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/retailers', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/reports" element={isAuthenticated ? (canViewAdminPanel ? <AdminReportsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/reports', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/signup-approvals" element={isAuthenticated ? (canViewAdminPanel ? <AdminSignupApprovalsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/signup-approvals', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/users" element={isAuthenticated ? (canManageUsersList ? <AdminUsersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/users', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/audit-logs" element={isAuthenticated ? (canViewAdminPanel ? <AdminAuditLogsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/audit-logs', role }} replace />) : <Navigate to="/login" replace />} />

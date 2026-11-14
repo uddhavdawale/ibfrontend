@@ -20,7 +20,7 @@
     linear-gradient(135deg, var(--shell-bg-1) 0%, var(--shell-bg-2) 42%, var(--shell-bg-3) 100%);
   color: var(--shell-text);
   font-family: 'Segoe UI', Roboto, sans-serif;
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 .login-shell.theme-light {
@@ -170,6 +170,10 @@
   line-height: 1.7;
   color: var(--shell-soft);
   font-size: 1.06rem;
+}
+
+.login-visual .feature-list {
+  margin-top: 22px;
 }
 
 .visual-stats {
@@ -428,6 +432,7 @@
 }
 
 .checkbox-container {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -437,7 +442,17 @@
 }
 
 .checkbox-container input {
-  display: none;
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.checkbox-container input:focus-visible + .checkmark {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .checkmark {
@@ -466,10 +481,32 @@
 }
 
 .forgot-password {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: #2563eb;
   text-decoration: none;
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+.password-recovery-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -14px;
+  margin-bottom: -10px;
+}
+
+.forgot-password:hover,
+.link-action:hover {
+  text-decoration: underline;
+}
+
+.forgot-password:focus-visible,
+.link-action:focus-visible,
+.secondary-action:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .login-btn {
@@ -586,6 +623,11 @@
 
 .link-action {
   color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: 44px;
+  text-decoration: none;
 }
 
 @media (max-width: 980px) {
@@ -674,4 +716,3 @@
     min-height: 48px;
   }
 }
-

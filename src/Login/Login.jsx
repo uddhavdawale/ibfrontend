@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import './Login.css';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE_URL, setAccessToken } from '../Config/api';
 import { APP_CONFIG } from '../Config/appConfig';
 import { resolveMfaContext } from '../auth/mfa/mfaService';
 import logger from '../utils/logger';
 import { buildLoginRequest } from '../utils/cryptoUtil';
 import { normalizeStoreRole } from '../Security/storeRoles';
+import ProductTour from '../modules/marketing/ProductTour';
+import { requestPasswordReset, resetPassword } from '../auth/passwordRecoveryService';
 
 const themeOptions = [
   { value: 'light', label: 'Light' },
@@ -21,6 +23,74 @@ const isMfaMessage = (message = '') => {
   const mentionsMfa = /\bmfa\b|\botp\b|two[- ]factor|verification code/.test(normalized);
   const impliesChallenge = /required|verify|verification|pending|challenge|needed/.test(normalized);
   return mentionsMfa && impliesChallenge;
+};
+
+const isPendingApprovalResponse = (data = {}) => {
+  const statusFields = ['approvalStatus', 'accountStatus', 'retailerStatus', 'userStatus', 'status'];
+  const payloads = [data, data.user].filter(Boolean);
+  const pendingStatuses = new Set([
+    'pending',
+    'pending approval',
+    'pending_approval',
+    'awaiting approval',
+    'awaiting_approval',
+    'under review',
+    'under_review'
+  ]);
+  const statusMatch = payloads.some((payload) =>
+    statusFields.some((field) =>
+      pendingStatuses.has(String(payload[field] || '').trim().toLowerCase())
+    )
+  );
+  const message = [data.message, data.error, data.details]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return statusMatch || /pending (?:admin(?:istrator)? )?approval|awaiting (?:admin(?:istrator)? )?approval|under review|not yet approved/.test(message);
+};
+
+const resolveMfaChallenge = (data = {}, user = {}) => {
+  const challenge = data.mfaChallenge ||
+    data.mfa_challenge ||
+    data.challenge ||
+    data.mfa ||
+    data.data?.mfaChallenge ||
+    data.data?.mfa_challenge ||
+    data.data?.challenge ||
+    data.data?.mfa ||
+    user.mfaChallenge ||
+    {};
+  const challengeId = challenge.challengeId ||
+    challenge.challenge_id ||
+    challenge.id ||
+    data.mfaChallengeId ||
+    data.mfa_challenge_id ||
+    data.challengeId ||
+    data.challenge_id ||
+    data.mfa?.challengeId ||
+    data.mfa?.challenge_id ||
+    data.mfa?.id ||
+    data.data?.mfaChallengeId ||
+    data.data?.mfa_challenge_id ||
+    data.data?.challengeId ||
+    data.data?.challenge_id ||
+    data.data?.mfa?.challengeId ||
+    data.data?.mfa?.challenge_id ||
+    data.data?.mfa?.id ||
+    user.mfaChallengeId ||
+    '';
+
+  return {
+    challengeId: String(challengeId).trim(),
+    maskedDestination: challenge.maskedDestination ||
+      challenge.maskedEmail ||
+      data.maskedDestination ||
+      data.data?.maskedDestination ||
+      data.mfa?.maskedDestination ||
+      data.data?.mfa?.maskedDestination ||
+      '',
+  };
 };
 
 const readBackendConfig = async () => {
@@ -41,8 +111,17 @@ const Login = ({ onLogin }) => {
     password: '',
     rememberMe: false
   });
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [recoveryMode, setRecoveryMode] = useState(
+    location.pathname === '/forgot-password' ? 'forgot' : 'login'
+  );
+  const [recoveryEmail, setRecoveryEmail] = useState(location.state?.email || '');
+  const [recoveryToken, setRecoveryToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoveryMessage, setRecoveryMessage] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('ib-theme') || 'light');
 
   const navigate = useNavigate();
@@ -51,6 +130,27 @@ const Login = ({ onLogin }) => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('ib-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (location.pathname === '/forgot-password') {
+      setRecoveryMode('forgot');
+      setRecoveryEmail(location.state?.email || '');
+    } else if (location.pathname === '/login' && !window.location.hash) {
+      setRecoveryMode('login');
+      setRecoveryToken('');
+    }
+    setError('');
+    setRecoveryMessage('');
+  }, [location.pathname, location.state]);
+
+  useEffect(() => {
+    const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('resetToken');
+    if (resetToken) {
+      setRecoveryToken(resetToken);
+      setRecoveryMode('reset');
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    }
+  }, []);
   
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -64,6 +164,7 @@ const handleSubmit = async (e) => {
   e.preventDefault();
   setLoading(true);
   setError('');
+  setRecoveryMessage('');
 
   try {
     const trimmedUsername = formData.username.trim();
@@ -89,7 +190,7 @@ const handleSubmit = async (e) => {
       data = { message: responseText };
     }
 
-    const accessToken = data.accessToken || data.token;
+    const accessToken = data.accessToken || data.token || data.user?.accessToken || data.user?.token;
     const userPayload = data.user || {};
     const username = userPayload.username || userPayload.userName || data.username || trimmedUsername;
     const displayName = userPayload.name || userPayload.ownerName || userPayload.businessName || username;
@@ -113,17 +214,32 @@ const handleSubmit = async (e) => {
     const message = data.message || data.error || '';
     const mfaRequiredByMessage = isMfaMessage(message);
 
-    if (mfaContext.enabled || mfaRequiredByMessage) {
+    if ((!response.ok || data.success === false) && isPendingApprovalResponse(data)) {
+      setError('Your account is pending admin approval. You can sign in once an administrator approves it.');
+      return;
+    }
+
+    const successfulLogin = response.ok && data.success !== false;
+    const mfaChallenge = resolveMfaChallenge(data, userPayload);
+    const challengeReturned = Boolean(mfaChallenge.challengeId);
+    const requiresMfa = mfaContext.enabled || mfaRequiredByMessage || challengeReturned;
+
+    if (requiresMfa && (successfulLogin || challengeReturned || mfaRequiredByMessage)) {
+      if (!challengeReturned) {
+        setError('Your account requires email verification, but the sign-in challenge was not returned. Please try again or contact support.');
+        return;
+      }
+
       logger.info('Login requires MFA challenge');
-      if (accessToken) {
-        setAccessToken(accessToken);
-      }
-      if (data.refreshToken) {
-        sessionStorage.setItem('refreshToken', data.refreshToken);
-      }
       localStorage.removeItem('auth_logout');
-      localStorage.setItem('username', username);
-      onLogin({ ...resolvedUser, mfaRequired: true });
+      onLogin({
+        ...resolvedUser,
+        mfaRequired: true,
+        mfaChallenge: {
+          challengeId: mfaChallenge.challengeId,
+          maskedDestination: mfaChallenge.maskedDestination,
+        },
+      });
       return;
     }
 
@@ -151,6 +267,45 @@ const handleSubmit = async (e) => {
   }
 };
 
+  const handleRecoverySubmit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    setRecoveryMessage('');
+
+    try {
+      if (recoveryMode === 'forgot') {
+        await requestPasswordReset(recoveryEmail);
+        setRecoveryMessage('If an account matches that email, password reset instructions will arrive shortly.');
+        return;
+      }
+
+      if (!recoveryToken) {
+        setError('This password reset link is invalid or expired. Request a new one.');
+        return;
+      }
+      if (newPassword.length < 12 || newPassword.length > 128) {
+        setError('Choose a password between 12 and 128 characters.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setError('The passwords do not match.');
+        return;
+      }
+
+      await resetPassword(recoveryToken, newPassword);
+      setRecoveryMode('login');
+      setRecoveryToken('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setRecoveryMessage('Your password has been reset. Sign in with your new password.');
+    } catch (recoveryError) {
+      setError(recoveryError?.message || 'Unable to complete the request. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className={`login-shell theme-${theme}`}>
       <div className="login-visual">
@@ -176,31 +331,17 @@ const handleSubmit = async (e) => {
           </div>
         </div>
 
-        <h1>Finance operations that feel premium, secure, and fast.</h1>
+        <h1>Run your shop from one connected workspace.</h1>
         <p>
-          Built for retailers, finance teams, and CA partners to manage inventory, invoicing, GST compliance, and collections from one modern workspace.
+          Keep stock, sales, customer balances, and business reports together with {APP_CONFIG.appName}.
         </p>
 
-        <div className="visual-stats">
-          <div className="mini-stat">
-            <strong>₹18.4L</strong>
-            <span>Monthly sales</span>
-          </div>
-          <div className="mini-stat">
-            <strong>2.6L</strong>
-            <span>Receivables</span>
-          </div>
-          <div className="mini-stat">
-            <strong>98.6%</strong>
-            <span>Accuracy</span>
-          </div>
-        </div>
-
         <div className="feature-list">
-          <div>📦 Stock monitoring</div>
-          <div>💰 Billing control</div>
-          <div>📋 GST readiness</div>
+          <div>Product & stock management</div>
+          <div>GST and non-GST billing</div>
+          <div>Customer dues and reports</div>
         </div>
+        <ProductTour compact />
       </div>
 
       <div className="login-card">
@@ -209,61 +350,88 @@ const handleSubmit = async (e) => {
             <span className="logo-icon">📦</span>
             <span className="logo-text">{APP_CONFIG.appName}</span>
           </div>
-          <h1>Welcome back</h1>
-          <p>Sign in to your retail finance dashboard</p>
+          <h1>{recoveryMode === 'login' ? 'Welcome back' : recoveryMode === 'forgot' ? 'Forgot password?' : 'Reset your password'}</h1>
+          <p>
+            {recoveryMode === 'login'
+              ? "Sign in to manage your shop's stock, sales, and customers."
+              : recoveryMode === 'forgot'
+                ? 'Enter your account email and we will send reset instructions if it matches an account.'
+                : 'Choose a new password to secure your account.'}
+          </p>
         </div>
 
         {error && (
-          <div className="error-message">
+          <div className="error-message" role="alert">
             <span>⚠️</span> {error}
           </div>
         )}
 
+        {recoveryMessage && (
+          <div className="success-message" role="status" aria-live="polite">
+            {recoveryMessage}
+          </div>
+        )}
+
+        {recoveryMode === 'login' ? (
         <form onSubmit={handleSubmit} className="login-form">
           <div className="input-group">
-            <label>Username</label>
+            <label htmlFor="login-username">Username or email</label>
             <div className="input-wrapper">
               <span className="input-icon">👤</span>
               <input
                 type="text"
+                id="login-username"
                 name="username"
                 value={formData.username}
                 onChange={handleChange}
-                placeholder="Enter username"
+                placeholder="Enter username or email"
                 disabled={loading}
+                autoComplete="username"
                 required
               />
             </div>
           </div>
 
           <div className="input-group">
-            <label>Password</label>
+            <label htmlFor="login-password">Password</label>
             <div className="input-wrapper">
               <span className="input-icon">🔒</span>
               <input
                 type="password"
+                id="login-password"
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
                 placeholder="Enter password"
                 disabled={loading}
+                autoComplete="current-password"
                 required
               />
             </div>
           </div>
 
+          <div className="password-recovery-row">
+            <Link
+              className="forgot-password"
+              to="/forgot-password"
+              state={{ email: formData.username.includes('@') ? formData.username.trim() : '' }}
+            >
+              Forgot your password?
+            </Link>
+          </div>
+
           <div className="form-options">
-            <label className="checkbox-container">
+            <label className="checkbox-container" htmlFor="remember-me">
               <input
                 type="checkbox"
+                id="remember-me"
                 name="rememberMe"
                 checked={formData.rememberMe}
                 onChange={handleChange}
               />
-              <span className="checkmark"></span>
+              <span className="checkmark" aria-hidden="true"></span>
               Remember me
             </label>
-            <a href="#" className="forgot-password">Forgot Password?</a>
           </div>
 
           <button 
@@ -281,12 +449,82 @@ const handleSubmit = async (e) => {
             )}
           </button>
         </form>
+        ) : (
+          <form onSubmit={handleRecoverySubmit} className="login-form">
+            {recoveryMode === 'forgot' ? (
+              <div className="input-group">
+                <label htmlFor="recovery-email">Account email</label>
+                <div className="input-wrapper">
+                  <span className="input-icon" aria-hidden="true">@</span>
+                  <input
+                    type="email"
+                    id="recovery-email"
+                    value={recoveryEmail}
+                    onChange={(event) => setRecoveryEmail(event.target.value)}
+                    placeholder="name@example.com"
+                    autoComplete="email"
+                    maxLength={254}
+                    disabled={loading}
+                    required
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="input-group">
+                  <label htmlFor="new-password">New password</label>
+                  <div className="input-wrapper">
+                    <span className="input-icon" aria-hidden="true">🔒</span>
+                    <input
+                      type="password"
+                      id="new-password"
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      autoComplete="new-password"
+                      minLength={12}
+                      maxLength={128}
+                      disabled={loading}
+                      required
+                    />
+                  </div>
+                  <span className="helper-text">Use 12 to 128 characters.</span>
+                </div>
+                <div className="input-group">
+                  <label htmlFor="confirm-password">Confirm new password</label>
+                  <div className="input-wrapper">
+                    <span className="input-icon" aria-hidden="true">🔒</span>
+                    <input
+                      type="password"
+                      id="confirm-password"
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      autoComplete="new-password"
+                      minLength={12}
+                      maxLength={128}
+                      disabled={loading}
+                      required
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            <button type="submit" className={`login-btn ${loading ? 'loading' : ''}`} disabled={loading}>
+              {loading ? (
+                <>
+                  <span className="spinner"></span>
+                  {recoveryMode === 'forgot' ? 'Sending...' : 'Updating password...'}
+                </>
+              ) : (
+                recoveryMode === 'forgot' ? 'Send reset instructions' : 'Update password'
+              )}
+            </button>
+            <Link className="link-action" to="/login">
+              Back to sign in
+            </Link>
+          </form>
+        )}
 
-        <div className="demo-info">
-          <p><strong>Demo access:</strong> admin / admin123</p>
-        </div>
-
-        <div className="signup-section">
+        {recoveryMode === 'login' && <div className="signup-section">
           <p className="signup-text">New to {APP_CONFIG.appName}?</p>
           <button 
             className="signup-btn"
@@ -295,7 +533,7 @@ const handleSubmit = async (e) => {
           >
             ➕ Create retailer / partner account
           </button>
-        </div>
+        </div>}
 
         <div className="login-footer">
           <p>© {APP_CONFIG.footerYear} {APP_CONFIG.appName}. All rights reserved.</p>

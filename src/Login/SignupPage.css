@@ -166,6 +166,10 @@
   font-size: 1.06rem;
 }
 
+.signup-visual .feature-list {
+  margin-top: 22px;
+}
+
 .visual-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

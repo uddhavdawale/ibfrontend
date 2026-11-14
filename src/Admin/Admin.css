@@ -92,7 +92,33 @@
 
 .admin-topbar-actions {
   display: flex;
+  align-items: center;
   gap: 12px;
+}
+
+.tiny-refresh-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  border-radius: 10px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tiny-refresh-btn:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.tiny-refresh-btn:active {
+  transform: rotate(45deg);
 }
 
 .admin-primary-button,

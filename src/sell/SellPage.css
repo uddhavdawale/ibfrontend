@@ -460,6 +460,7 @@
 }
 
 .sell-dashboard .detail-container {
+  position: relative;
   background: linear-gradient(180deg, var(--sell-panel-strong) 0%, var(--sell-panel) 100%);
   border: 1px solid var(--sell-border);
   border-radius: 22px;
@@ -467,6 +468,33 @@
   padding: 20px 22px 18px;
   max-width: 1100px;
   margin: 0 auto;
+}
+
+.sell-dashboard .invoice-close-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--sell-border);
+  border-radius: 10px;
+  background: var(--sell-panel-strong);
+  color: var(--sell-text-soft);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sell-dashboard .invoice-close-button:hover {
+  background: var(--sell-panel-soft);
+  color: var(--sell-text);
+}
+
+.sell-dashboard .invoice-close-button:focus-visible {
+  outline: 2px solid var(--sell-primary);
+  outline-offset: 2px;
 }
 
 .sell-dashboard .order-detail {

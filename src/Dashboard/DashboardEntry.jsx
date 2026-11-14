@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import GSTDashboard from '../GSTFiling/GSTDashboard';
@@ -14,7 +13,7 @@ import AuditPage from '../Audit/AuditPage';
 import PendingPaymentsCard from './PendingPaymentsCard';
 import LowStockCard from './LowStockCard';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
-import { getCurrentShopProfile, readStoredShopProfile, getShopDisplayName } from '../modules/shopProfile/shopProfileService';
+import { getCurrentShopProfile, readStoredShopProfile, getShopDisplayName, getShopLogoUrl } from '../modules/shopProfile/shopProfileService';
 import {
   getCurrentUserRole,
   normalizeStoreRole,
@@ -31,20 +30,11 @@ import {
 } from '../Security/storeRoles';
 
 const defaultMetrics = {
-  salesToday: 15420,
-  pendingPayments: 2500,
-  lowStock: 8,
-  ordersToday: 12
+  salesToday: 0,
+  pendingPayments: 0,
+  lowStock: 0,
+  ordersToday: 0
 };
-
-const defaultSalesData = [
-  { month: 'Jan', sales: 4000 },
-  { month: 'Feb', sales: 3000 },
-  { month: 'Mar', sales: 2000 },
-  { month: 'Apr', sales: 2780 },
-  { month: 'May', sales: 1890 },
-  { month: 'Jun', sales: 2390 }
-];
 
 const normalizeNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -226,8 +216,11 @@ function Dashboard({ username, onLogout }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
+  const [failedShopLogoUrl, setFailedShopLogoUrl] = useState('');
   const [securityContext, setSecurityContext] = useState({ tenantId: null, userId: null, role: null });
   const [dashboardInfoMessage, setDashboardInfoMessage] = useState('');
+  const [dashboardDataStatus, setDashboardDataStatus] = useState('loading');
+  const [dashboardLastUpdated, setDashboardLastUpdated] = useState(null);
   const [sessionRole, setSessionRole] = useState(() => getCurrentUserRole());
   const [dashboardRefreshToken, setDashboardRefreshToken] = useState(0);
   const [isDashboardRefreshing, setIsDashboardRefreshing] = useState(false);
@@ -237,19 +230,20 @@ function Dashboard({ username, onLogout }) {
   const currentShopName = shopDisplayName && shopDisplayName !== 'IB ENTERPRISES'
     ? shopDisplayName
     : (config?.shop?.name || shopDisplayName);
+  const shopLogoUrl = getShopLogoUrl(shopProfile);
+  const shopInitials = currentShopName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
 
-  // Interactive Inventory Data (UNCHANGED)
-  const [inventoryData, setInventoryData] = useState([
-    { id: 1, name: 'Shirt', qty: 12, min: 20, price: 299, category: 'Clothing' },
-    { id: 2, name: 'Jeans', qty: 8, min: 15, price: 799, category: 'Clothing' },
-    { id: 3, name: 'Laptop', qty: 5, min: 10, price: 45999, category: 'Electronics' },
-    { id: 4, name: 'Mouse', qty: 25, min: 10, price: 499, category: 'Electronics' },
-    { id: 5, name: 'Book', qty: 45, min: 50, price: 199, category: 'Stationery' },
-  ]);
+  const [inventoryData, setInventoryData] = useState([]);
 
-  // Metrics (defaults matched to the UI contract when the backend is unavailable)
+  // Keep the dashboard empty until live values are available.
   const [metrics, setMetrics] = useState(defaultMetrics);
-  const [salesData, setSalesData] = useState(defaultSalesData);
+  const [salesData, setSalesData] = useState([]);
   const [topSoldProducts, setTopSoldProducts] = useState([]);
   const lowestStockProducts = [...inventoryData]
     .sort((a, b) => a.qty - b.qty || a.min - b.min)
@@ -269,6 +263,10 @@ function Dashboard({ username, onLogout }) {
     return acc;
   }, {});
   const topCategory = Object.entries(categorySummary).sort((a, b) => b[1] - a[1])[0];
+  const healthyStockCount = inventoryData.filter((item) => item.qty > item.min).length;
+  const stockHealthPercent = inventoryData.length
+    ? Math.round((healthyStockCount / inventoryData.length) * 100)
+    : null;
 
   const filteredInventory = inventoryData.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -357,7 +355,11 @@ function Dashboard({ username, onLogout }) {
   useEffect(() => {
     let active = true;
     const isManualRefresh = dashboardRefreshToken > 0;
+    let hasDashboardData = false;
+    let dashboardLoadFailed = false;
+    let dashboardRequestFailed = false;
 
+    setDashboardDataStatus('loading');
     if (isManualRefresh && active) {
       setIsDashboardRefreshing(true);
     }
@@ -379,6 +381,7 @@ function Dashboard({ username, onLogout }) {
         ]);
 
         if (summary && active) {
+          hasDashboardData = true;
           const summaryPayload = unwrapResponsePayload(summary);
 
           const nextSecurityContext = {
@@ -398,10 +401,10 @@ function Dashboard({ username, onLogout }) {
           }
 
           const normalizedSummary = {
-            salesToday: normalizeNumber(summaryPayload?.salesToday ?? summaryPayload?.sales ?? 0, defaultMetrics.salesToday),
-            pendingPayments: normalizeNumber(summaryPayload?.pendingPayments ?? summaryPayload?.pending ?? 0, defaultMetrics.pendingPayments),
-            lowStock: normalizeNumber(summaryPayload?.lowStock ?? summaryPayload?.lowStockCount ?? 0, defaultMetrics.lowStock),
-            ordersToday: normalizeNumber(summaryPayload?.ordersToday ?? summaryPayload?.orders ?? 0, defaultMetrics.ordersToday)
+            salesToday: normalizeNumber(summaryPayload?.salesToday ?? summaryPayload?.sales ?? 0),
+            pendingPayments: normalizeNumber(summaryPayload?.pendingPayments ?? summaryPayload?.pending ?? 0),
+            lowStock: normalizeNumber(summaryPayload?.lowStock ?? summaryPayload?.lowStockCount ?? 0),
+            ordersToday: normalizeNumber(summaryPayload?.ordersToday ?? summaryPayload?.orders ?? 0)
           };
           setMetrics(normalizedSummary);
 
@@ -409,9 +412,9 @@ function Dashboard({ username, onLogout }) {
             ? summaryPayload.topSoldProducts.map(normalizeTopSoldProductFromSummary)
             : [];
 
-          if (summaryTopSoldProducts.length > 0) {
-            setTopSoldProducts(summaryTopSoldProducts.slice(0, 10));
-          }
+          setTopSoldProducts(summaryTopSoldProducts.slice(0, 10));
+        } else {
+          dashboardLoadFailed = true;
         }
 
         const [liveGstOrdersPayload, liveNonGstOrdersPayload] = await Promise.all([
@@ -425,6 +428,8 @@ function Dashboard({ username, onLogout }) {
         ]);
 
         if (active && (liveGstOrdersPayload || liveNonGstOrdersPayload)) {
+          hasDashboardData = true;
+          if (!liveGstOrdersPayload || !liveNonGstOrdersPayload) dashboardLoadFailed = true;
           const today = new Date();
           const countTodayOrders = (payload) => {
             const orders = extractListPayload(unwrapResponsePayload(payload));
@@ -436,6 +441,8 @@ function Dashboard({ username, onLogout }) {
 
           const todayOrdersCount = countTodayOrders(liveGstOrdersPayload) + countTodayOrders(liveNonGstOrdersPayload);
           setMetrics((prev) => ({ ...prev, ordersToday: todayOrdersCount }));
+        } else {
+          dashboardLoadFailed = true;
         }
 
         const productsResponse = await fetchJsonWithFallback([
@@ -444,13 +451,10 @@ function Dashboard({ username, onLogout }) {
         ]);
 
         const unwrappedProducts = unwrapResponsePayload(productsResponse);
-        const productList = Array.isArray(unwrappedProducts?.content)
-          ? unwrappedProducts.content
-          : Array.isArray(unwrappedProducts)
-            ? unwrappedProducts
-            : [];
+        const productList = extractListPayload(unwrappedProducts);
 
-        if (productList.length > 0 && active) {
+        if (productsResponse && active) {
+          hasDashboardData = true;
           const normalizedProducts = productList.map(normalizeInventoryItem);
           setInventoryData(normalizedProducts);
 
@@ -462,9 +466,11 @@ function Dashboard({ username, onLogout }) {
 
           if (liveTopSoldProducts.length > 0) {
             setTopSoldProducts(liveTopSoldProducts);
-          } else if (topSoldProducts.length === 0) {
+          } else if (!summary) {
             setTopSoldProducts([]);
           }
+        } else {
+          dashboardLoadFailed = true;
         }
 
         const sales = await fetchJsonWithFallback([
@@ -472,15 +478,26 @@ function Dashboard({ username, onLogout }) {
         ]);
 
         if (sales && active) {
+          hasDashboardData = true;
           const salesPayload = unwrapResponsePayload(sales);
           const normalizedSales = normalizeSalesSeries(salesPayload);
-          if (normalizedSales.length > 0) {
-            setSalesData(normalizedSales);
+          setSalesData(normalizedSales);
+        } else {
+          dashboardLoadFailed = true;
+        }
+      } catch (error) {
+        console.error('Dashboard data could not be loaded', error);
+        dashboardLoadFailed = true;
+        dashboardRequestFailed = true;
+      } finally {
+        if (active) {
+          if (hasDashboardData) {
+            setDashboardDataStatus(dashboardLoadFailed ? 'partial' : 'ready');
+            setDashboardLastUpdated(new Date());
+          } else {
+            setDashboardDataStatus(dashboardRequestFailed ? 'error' : 'unavailable');
           }
         }
-      } catch {
-        // Keep the safe, preconfigured mock values if the backend is unavailable.
-      } finally {
         if (active && isManualRefresh) {
           setIsDashboardRefreshing(false);
         }
@@ -618,8 +635,20 @@ function Dashboard({ username, onLogout }) {
             <header className="page-header">
               <div>
                 <h1>Dashboard</h1>
-                <p>{filteredInventory.length} of {inventoryData.length} products</p>
+                <p className="dashboard-date">
+                  {new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date())}
+                  <span className="dashboard-catalog-count">
+                    {filteredInventory.length} of {inventoryData.length} products
+                  </span>
+                </p>
                 {dashboardInfoMessage && <p className="error-text">{dashboardInfoMessage}</p>}
+                <p className={`dashboard-data-status status-${dashboardDataStatus}`} role="status" aria-live="polite">
+                  {dashboardDataStatus === 'loading' && 'Loading business data…'}
+                  {dashboardDataStatus === 'ready' && `Data updated${dashboardLastUpdated ? ` at ${dashboardLastUpdated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}`}
+                  {dashboardDataStatus === 'partial' && 'Some business data could not be loaded. Refresh to try again.'}
+                  {dashboardDataStatus === 'unavailable' && 'Business data is currently unavailable. Try refreshing.'}
+                  {dashboardDataStatus === 'error' && 'Unable to load business data. Try refreshing.'}
+                </p>
               </div>
               <div className="header-actions">
                 <button
@@ -639,47 +668,65 @@ function Dashboard({ username, onLogout }) {
             </header>
 
             <div className="stats-grid">
-              <div className="stat-card sales-card" onClick={() => alert('Sales details')}>
+              <div className="stat-card sales-card">
                 <div className="stat-info">
-                  <h3>₹{metrics.salesToday.toLocaleString()}</h3>
+                  <h3>₹{metrics.salesToday.toLocaleString('en-IN')}</h3>
                   <p>Sales Today</p>
                 </div>
-                <div className="stat-change positive">Live</div>
+                <div className="stat-change positive">Today</div>
               </div>
               <PendingPaymentsCard defaultTotal={metrics.pendingPayments} />
-              <LowStockCard items={inventoryData} />
+              <LowStockCard items={inventoryData} loading={dashboardDataStatus === 'loading'} />
               <div className="stat-card orders-card">
                 <div className="stat-info">
                   <h3>{metrics.ordersToday}</h3>
                   <p>Today's Orders</p>
                 </div>
-                <div className="stat-change positive">+2</div>
+                <div className="stat-change positive">Today</div>
               </div>
             </div>
 
             <div className="charts-row">
               <div className="chart-card">
-                <h3>Sales Overview</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={salesData}>
-                    <CartesianGrid vertical={false} />
-                    <XAxis dataKey="month" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="sales" fill="#1976d2" radius={[4,4,0,0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="chart-heading">
+                  <div>
+                    <h3>Sales overview</h3>
+                    <p>Monthly sales performance</p>
+                  </div>
+                  <span className="chart-period">Last 6 months</span>
+                </div>
+                {salesData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={salesData}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="month" />
+                      <YAxis tickFormatter={(value) => `₹${Number(value).toLocaleString('en-IN')}`} />
+                      <Tooltip formatter={(value) => [`₹${Number(value).toLocaleString('en-IN')}`, 'Sales']} />
+                      <Bar dataKey="sales" fill="#1976d2" radius={[4,4,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="dashboard-empty-state" role="status">
+                    {dashboardDataStatus === 'loading' ? 'Loading sales history…' : 'Sales history will appear when data is available.'}
+                  </div>
+                )}
               </div>
 
               <div className="side-stack">
                 <div className="chart-card stock-gauge">
                   <h3>Stock Health</h3>
-                  <div className="gauge-container">
-                    <div className="gauge-circle" style={{'--progress': '78%'}}>
-                      <span className="gauge-value">78%</span>
+                  {stockHealthPercent === null ? (
+                    <div className="dashboard-empty-state">
+                      {dashboardDataStatus === 'loading' ? 'Loading inventory…' : 'Inventory data is not available yet.'}
                     </div>
-                    <p>Healthy</p>
-                  </div>
+                  ) : (
+                    <div className="gauge-container">
+                      <div className="gauge-circle" style={{'--progress': `${stockHealthPercent}%`}}>
+                        <span className="gauge-value">{stockHealthPercent}%</span>
+                      </div>
+                      <p>{healthyStockCount} of {inventoryData.length} products above minimum stock</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -688,33 +735,43 @@ function Dashboard({ username, onLogout }) {
             <div className="mini-panels-row">
               <div className="chart-card top-stock-card">
                 <div className="top-sold-header">
-                  <h3>Top 10 Minimum Stock</h3>
-                  <span className="mini-badge warning">Alert</span>
+                  <h3>Lowest stock items</h3>
+                  <span className={`mini-badge ${urgentStockItems.length > 0 ? 'warning' : ''}`}>
+                    {inventoryData.length === 0 ? 'No data' : urgentStockItems.length > 0 ? 'Needs attention' : 'On track'}
+                  </span>
                 </div>
 
                 <div className="top-sold-list scroll-panel">
-                  {lowestStockProducts.map((product, index) => (
-                    <div className="top-stock-row" key={`${product.name}-${index}`}>
-                      <div className="top-sold-rank stock-rank">#{index + 1}</div>
-                      <div className="top-sold-meta">
-                        <strong>{product.name}</strong>
-                        <span>{product.stock} left / min {product.min}</span>
+                  {lowestStockProducts.length > 0 ? (
+                    lowestStockProducts.map((product, index) => (
+                      <div className="top-stock-row" key={`${product.name}-${index}`}>
+                        <div className="top-sold-rank stock-rank">#{index + 1}</div>
+                        <div className="top-sold-meta">
+                          <strong>{product.name}</strong>
+                          <span>{product.stock} left / min {product.min}</span>
+                        </div>
+                        <div className="top-sold-revenue stock-value">{product.stock}</div>
                       </div>
-                      <div className="top-sold-revenue stock-value">{product.stock}</div>
+                    ))
+                  ) : (
+                    <div className="top-sold-empty">
+                      {dashboardDataStatus === 'loading' ? 'Loading inventory…' : 'Inventory data is not available yet.'}
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
 
               <div className="chart-card top-sold-card">
                 <div className="top-sold-header">
                   <h3>Top 10 Sold Products</h3>
-                  <span className="mini-badge">Live</span>
+                  <span className="mini-badge">Top 10</span>
                 </div>
 
                 <div className="top-sold-list scroll-panel">
                   {topSoldProducts.length === 0 ? (
-                    <div className="top-sold-empty">No sales data available</div>
+                    <div className="top-sold-empty">
+                      {dashboardDataStatus === 'loading' ? 'Loading sales data…' : 'No sales data available.'}
+                    </div>
                   ) : (
                     topSoldProducts.map((product, index) => (
                       <div className="top-sold-row" key={`${product.name}-${product.sku || 'sku'}-${index}`}>
@@ -723,7 +780,7 @@ function Dashboard({ username, onLogout }) {
                           <strong>{product.name}</strong>
                           <span>{product.sku ? `${product.sku} • ` : ''}{product.sold} sold</span>
                         </div>
-                        <div className="top-sold-revenue">₹{(product.revenue ?? 0).toLocaleString()}</div>
+                        <div className="top-sold-revenue">₹{(product.revenue ?? 0).toLocaleString('en-IN')}</div>
                       </div>
                     ))
                   )}
@@ -746,50 +803,31 @@ function Dashboard({ username, onLogout }) {
             <div className="smart-insights-panel">
               <div className="smart-insight-card accent">
                 <div className="insight-label">Urgent actions</div>
-                <div className="insight-value small">Reorder now</div>
+                <div className="insight-value small">{urgentStockItems.length > 0 ? 'Reorder now' : 'No action needed'}</div>
                 <ul className="insight-list">
                   {urgentStockItems.length > 0 ? (
                     urgentStockItems.map(item => (
                       <li key={item.id}><span>{item.name}</span><strong>{item.qty} left</strong></li>
                     ))
                   ) : (
-                    <li><span>Everything stocked</span><strong>Safe</strong></li>
+                    <li>
+                      <span>{inventoryData.length > 0 ? 'Everything stocked' : 'Inventory data unavailable'}</span>
+                      <strong>{inventoryData.length > 0 ? 'Safe' : '—'}</strong>
+                    </li>
                   )}
                 </ul>
               </div>
 
               <div className="smart-insight-card">
-                <div className="insight-label">Top category</div>
+                <div className="insight-label">Highest stock value</div>
                 <div className="insight-value">{topCategory ? topCategory[0] : 'N/A'}</div>
                 <div className="insight-subtext">{topCategory ? `₹${(topCategory[1] / 100000).toFixed(1)}L inventory value` : 'No data yet'}</div>
               </div>
 
               <div className="smart-insight-card">
-                <div className="insight-label">Owner note</div>
-                <div className="insight-value small">Focus today</div>
-                <div className="insight-subtext">Push fast-moving SKUs and replenish low-stock essentials before 5 PM.</div>
-              </div>
-            </div>
-            )}
-
-            {canOpenAdvancedDashboard && (
-            <div className="owner-insights-row">
-              <div className="insight-card highlight">
-                <div className="insight-label">Fastest Moving Category</div>
-                <div className="insight-value">{topCategory ? topCategory[0] : 'Electronics'}</div>
-                <div className="insight-subtext">{topCategory ? `₹${(topCategory[1] / 100000).toFixed(1)}L in stock value` : '₹1.8L in sales this week'}</div>
-              </div>
-
-              <div className="insight-card">
-                <div className="insight-label">Cash Flow Health</div>
-                <div className="insight-value">₹3.4L</div>
-                <div className="insight-subtext">Collections on track</div>
-              </div>
-
-              <div className="insight-card">
-                <div className="insight-label">Best Reorder Suggestion</div>
-                <div className="insight-value">Rice / Dairy</div>
-                <div className="insight-subtext">Reorder in next 2 days</div>
+                <div className="insight-label">Catalog coverage</div>
+                <div className="insight-value small">{inventoryData.length} products</div>
+                <div className="insight-subtext">{Object.keys(categorySummary).length} categories in your inventory</div>
               </div>
             </div>
             )}
@@ -819,7 +857,7 @@ function Dashboard({ username, onLogout }) {
   };
 
   // YOUR EXISTING RETURN (ONLY SIDEBAR UPDATED)
-  const lowStockCount = inventoryData.filter((item) => item.qty < item.min).length;
+  const lowStockCount = inventoryData.filter((item) => item.qty <= item.min).length;
 
   const handleQuickMenuAction = (path) => {
     setShowProfileMenu(false);
@@ -829,16 +867,30 @@ function Dashboard({ username, onLogout }) {
 
   return (
     <div className={`dashboard theme-${theme}`}>
-      {/* TOP BAR - UNCHANGED */}
       <div className="top-bar">
         <div className="logo">
-          <span className="logo-icon">📦</span>
-          <span>{currentShopName}</span>
+          <span className="shop-brand-mark" aria-hidden="true">
+            <span className="shop-brand-fallback">{shopInitials}</span>
+            {shopLogoUrl && failedShopLogoUrl !== shopLogoUrl && (
+              <img
+                key={shopLogoUrl}
+                className="shop-brand-image"
+                src={shopLogoUrl}
+                alt=""
+                onError={() => setFailedShopLogoUrl(shopLogoUrl)}
+              />
+            )}
+          </span>
+          <span className="shop-brand-copy">
+            <span className="shop-brand-name" title={currentShopName}>{currentShopName}</span>
+            <span className="shop-brand-caption">Business workspace</span>
+          </span>
         </div>
         <div className="top-search">
           <input 
             type="text" 
-            placeholder="🔍 Search products, orders..." 
+            placeholder="Search products…"
+            aria-label="Search products"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -977,6 +1029,13 @@ function Dashboard({ username, onLogout }) {
               <button className={`nav-item ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => setActiveTab('billing')}>
                 <span className="nav-icon">💰</span>
                 <span>Billing</span>
+              </button>
+            )}
+
+            {canShowBillingTab && (
+              <button className="nav-item" onClick={() => handleQuickMenuAction('/ledger')}>
+                <span className="nav-icon">📒</span>
+                <span>Ledger Report</span>
               </button>
             )}
 

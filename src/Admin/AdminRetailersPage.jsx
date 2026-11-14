@@ -32,6 +32,7 @@ const AdminRetailersPage = ({ onLogout }) => {
   const [search, setSearch] = useState('');
   const [retailers, setRetailers] = useState(fallbackRetailers);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -52,7 +53,12 @@ const AdminRetailersPage = ({ onLogout }) => {
 
     loadRetailers();
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshKey((value) => value + 1);
+  };
 
   const handleAction = async (retailerId, action) => {
     try {
@@ -90,7 +96,7 @@ const AdminRetailersPage = ({ onLogout }) => {
   }, [search, retailers]);
 
   return (
-    <AdminLayout title="Retailer management" subtitle="Search, filter, review, and act on retailer approval status and onboarding records." currentUser="Store Admin" onLogout={onLogout}>
+    <AdminLayout title="Retailer management" subtitle="Search, filter, review, and act on retailer approval status and onboarding records." currentUser="Store Admin" onLogout={onLogout} onRefresh={handleRefresh}>
       {loading && <p className="muted-text">Loading retailer list…</p>}
       <div className="admin-toolbar">
         <input

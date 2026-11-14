@@ -114,7 +114,7 @@ const canonicalizeRow = (row = {}) => {
     minStock: Number(minStock || 0),
     price: Number(price || mrp || pricePerQty || 0),
     category: String(category || 'General').trim() || 'General',
-    set: Number(setValue || 1),
+    set: String(setValue ?? 1).trim() || '1',
     poNumber: String(poNumber || '').trim(),
     hsnSac: String(hsnSac || '').trim(),
     mrp: Number(mrp || 0),
@@ -124,8 +124,6 @@ const canonicalizeRow = (row = {}) => {
 
 const isPositiveNumber = (value) => Number.isFinite(value) && value > 0;
 const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
-const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
-
 const validateRecord = (record, rowNumber) => {
   const errors = [];
 
@@ -144,8 +142,6 @@ const validateRecord = (record, rowNumber) => {
   if (!isPositiveNumber(record.mrp)) errors.push(`Row ${rowNumber}: MRP/ Item must be a positive number`);
   if (!isPositiveNumber(record.price)) errors.push(`Row ${rowNumber}: Price must be a positive number`);
   if (!isPositiveNumber(record.pricePerQty)) errors.push(`Row ${rowNumber}: Price/QTY must be a positive number`);
-  if (!isPositiveInteger(record.set)) errors.push(`Row ${rowNumber}: Set must be a positive integer`);
-
   return errors;
 };
 

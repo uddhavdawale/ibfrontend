@@ -24,6 +24,7 @@ const extractApprovalList = (payload) => {
 const AdminSignupApprovalsPage = ({ onLogout }) => {
   const [approvals, setApprovals] = useState(fallbackApprovals);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -44,7 +45,12 @@ const AdminSignupApprovalsPage = ({ onLogout }) => {
 
     loadApprovals();
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshKey((value) => value + 1);
+  };
 
   const handleAction = async (retailerId, action) => {
     try {
@@ -64,7 +70,7 @@ const AdminSignupApprovalsPage = ({ onLogout }) => {
   const visibleApprovals = useMemo(() => approvals, [approvals]);
 
   return (
-    <AdminLayout title="Signup approvals" subtitle="Review retailer applications, verify uploaded documents, and approve or reject new retailer requests." currentUser="Store Admin" onLogout={onLogout}>
+    <AdminLayout title="Signup approvals" subtitle="Review retailer applications, verify uploaded documents, and approve or reject new retailer requests." currentUser="Store Admin" onLogout={onLogout} onRefresh={handleRefresh}>
       {loading && <p className="muted-text">Loading signup approvals…</p>}
       <div className="admin-grid two-up">
         {visibleApprovals.map((retailer) => (

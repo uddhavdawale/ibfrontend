@@ -29,7 +29,7 @@ export const StatusBadge = ({ status = 'Pending' }) => {
   return <span className={`admin-status admin-status-${palette[normalized] || 'neutral'}`}>{status}</span>;
 };
 
-const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children, isPlatformAdmin = true, onLogout }) => {
+const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children, isPlatformAdmin = true, onLogout, onRefresh }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const visibleNavItems = isPlatformAdmin ? navItems : [];
@@ -43,6 +43,12 @@ const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children, i
     sessionStorage.removeItem('accessToken');
     localStorage.removeItem('accessToken');
     navigate('/login', { replace: true });
+  };
+
+  const handleRefresh = () => {
+    if (typeof onRefresh === 'function') {
+      onRefresh();
+    }
   };
 
   return (
@@ -78,6 +84,15 @@ const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children, i
             <h1>{title}</h1>
           </div>
           <div className="admin-topbar-actions">
+            <button
+              type="button"
+              className="tiny-refresh-btn"
+              onClick={handleRefresh}
+              aria-label="Refresh page data"
+              title="Refresh page data"
+            >
+              ↻
+            </button>
             <button className="admin-primary-button">Export</button>
             <button type="button" className="admin-secondary-button" onClick={handleLogout}>Logout</button>
           </div>

@@ -7,12 +7,6 @@ const fallbackShopProfile = Object.freeze({
   tenantName: 'IB ENTERPRISES',
   name: 'IB ENTERPRISES',
   ownerName: 'IB Enterprises',
-  gstin: '27ABCDE1234F1Z5',
-  gstNumber: '27ABCDE1234F1Z5',
-  address: 'Aurangabad, Maharashtra 431001',
-  city: 'Aurangabad',
-  state: 'Maharashtra',
-  pincode: '431001',
   phone: '+91 98765 43210',
   contactNumber: '+91 98765 43210',
   email: 'sales@ibenterprises.com',
@@ -31,6 +25,23 @@ export const normalizeShopProfile = (profile = {}) => {
   ].find((value) => typeof value === 'string' && value.trim());
 
   const businessName = (rawBusinessName || fallbackShopProfile.businessName).trim();
+  const gstin = String(profile.gstin || profile.gstNumber || '').trim();
+  const resolvedGstin = gstin.toUpperCase() === '27ABCDE1234F1Z5' ? '' : gstin;
+  const profileAddress = String(profile.address || '').trim();
+  const composedAddress = [
+      profile.addressLine1,
+      profile.addressLine2,
+      profile.city,
+      profile.state,
+      profile.pincode || profile.postalCode || profile.zipCode,
+    ].filter(Boolean).join(', ');
+  const resolvedAddress = profileAddress && profileAddress.toLowerCase() !== 'aurangabad, maharashtra 431001'
+    ? profileAddress
+    : composedAddress;
+  const address = ['aurangabad, maharashtra 431001', 'aurangabad, maharashtra, 431001']
+    .includes(resolvedAddress.trim().toLowerCase())
+    ? ''
+    : resolvedAddress;
 
   return {
     ...fallbackShopProfile,
@@ -41,8 +52,9 @@ export const normalizeShopProfile = (profile = {}) => {
     tenantName: profile.tenantName || businessName,
     name: profile.name || businessName,
     ownerName: profile.ownerName || businessName,
-    gstin: profile.gstin || profile.gstNumber || fallbackShopProfile.gstin,
-    address: profile.address || `${profile.city || 'Aurangabad'}, ${profile.state || 'Maharashtra'} ${profile.pincode || '431001'}`,
+    gstin: resolvedGstin,
+    gstNumber: resolvedGstin,
+    address,
     phone: profile.phone || profile.contactNumber || fallbackShopProfile.phone,
     email: profile.email || profile.supportEmail || fallbackShopProfile.email,
   };
@@ -85,6 +97,25 @@ export const saveShopProfile = (profile = {}) => {
 export const getShopDisplayName = (profile = {}) => {
   const normalized = normalizeShopProfile(profile);
   return normalized.businessName || normalized.shopName || normalized.displayName || 'IB ENTERPRISES';
+};
+
+export const getShopLogoUrl = (profile = {}) => {
+  const documentLogo = Array.isArray(profile.documents)
+    ? profile.documents.find((document) => ['logo', 'shop_logo'].includes(
+      String(document?.type || document?.documentType || '').toLowerCase()
+    ))
+    : profile.documents?.logo || profile.documents?.logoUrl || profile.documents?.logoPath;
+  const logoUrl = [
+    profile.logo,
+    profile.shopLogo,
+    profile.logoUrl,
+    profile.logoPath,
+    documentLogo,
+  ].map((logo) => (
+    typeof logo === 'string' ? logo : logo?.url || logo?.src || logo?.path
+  )).find((url) => typeof url === 'string' && url.trim());
+
+  return typeof logoUrl === 'string' ? logoUrl.trim() : '';
 };
 
 export const getCurrentShopProfile = async (forceRefresh = false) => {

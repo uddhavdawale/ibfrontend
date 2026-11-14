@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import './SignupPage.css';
 import { API_BASE_URL } from '../Config/api';
 import { APP_CONFIG } from '../Config/appConfig';
+import ProductTour from '../modules/marketing/ProductTour';
 
 const themeOptions = [
   { value: 'light', label: 'Light' },
@@ -186,33 +187,16 @@ const SignupPage = () => {
           </div>
         </div>
 
-        <h1>Launch smarter operations from day one.</h1>
+        <h1>A better routine for your shop starts here.</h1>
         <p>
-          Build your retail or advisory practice with one dashboard for inventory, billing,
-          collections, and GST-ready reporting.
+          Bring products, invoices, customer balances, and business reports into one place with {APP_CONFIG.appName}.
         </p>
 
-        <div className="visual-stats">
-          <div className="mini-stat">
-            <strong>18k+</strong>
-            <span>Accounts onboarded</span>
-          </div>
-          <div className="mini-stat">
-            <strong>99.2%</strong>
-            <span>Data accuracy</span>
-          </div>
-          <div className="mini-stat">
-            <strong>24/7</strong>
-            <span>Monitoring</span>
-          </div>
-        </div>
-
         <div className="feature-list">
-          <div>Fast onboarding</div>
-          <div>GST ready</div>
-          <div>Inventory aware</div>
-          <div>Partner friendly</div>
+          <div>For retailers and CA partners</div>
+          <div>Stock, billing, and reports</div>
         </div>
+        <ProductTour compact />
       </div>
 
       <div className="signup-card">
@@ -222,7 +206,7 @@ const SignupPage = () => {
             <span className="logo-text">Create Account</span>
           </div>
           <h1>Join {APP_CONFIG.appName}</h1>
-          <p>Set up your retailer or CA partner profile.</p>
+          <p>Create a workspace for your retail business or CA practice.</p>
         </div>
 
         <div className="input-group">
@@ -316,7 +300,7 @@ const SignupPage = () => {
                 <label>GSTIN</label>
                 <div className="input-wrapper">
                   <span className="input-icon">🆔</span>
-                  <input name="gstin" placeholder="27ABCDE1234F1Z5" onChange={handleChange} />
+                  <input name="gstin" value={formData.gstin} onChange={handleChange} />
                 </div>
               </div>
               <div className="input-group">

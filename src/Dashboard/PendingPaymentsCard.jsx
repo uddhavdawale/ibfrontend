@@ -50,8 +50,7 @@ const fetchPendingPaymentCustomers = async () => {
       const pendingCustomers = invoiceList
         .map(normalizePendingPaymentCustomer)
         .filter(Boolean)
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 8);
+        .sort((a, b) => b.amount - a.amount);
 
       if (pendingCustomers.length > 0) return pendingCustomers;
     } catch {
@@ -88,6 +87,9 @@ const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
   }, []);
 
   const total = useMemo(() => {
+    if (Number(defaultTotal) > 0) {
+      return Number(defaultTotal);
+    }
     if (customers.length > 0) {
       return customers.reduce((sum, customer) => sum + Number(customer.amount || 0), 0);
     }
@@ -95,23 +97,15 @@ const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
   }, [customers, defaultTotal]);
 
   const uniqueCustomers = useMemo(() => {
-    const seen = new Map();
-
-    (customers || []).forEach((customer) => {
+    const duplicateCounts = new Map();
+    customers.forEach((customer) => {
       const key = String(customer?.name || '').trim().toLowerCase();
-      if (!seen.has(key)) {
-        seen.set(key, customer);
-        return;
-      }
-
-      const current = seen.get(key);
-      const count = Number(current?.duplicateCount || 0) + 1;
-      seen.set(key, { ...customer, duplicateCount: count });
+      duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);
     });
 
-    return (customers || []).map((customer) => {
+    return customers.map((customer) => {
       const key = String(customer?.name || '').trim().toLowerCase();
-      const duplicateCount = Number((customers || []).filter((item) => String(item?.name || '').trim().toLowerCase() === key).length - 1);
+      const duplicateCount = (duplicateCounts.get(key) || 1) - 1;
       return {
         ...customer,
         duplicateCount,
@@ -124,26 +118,25 @@ const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
   }, [customers]);
 
   return (
-    <div
-      className="stat-card pending-payments-card pending-card"
-      onClick={() => setShowDropdown((prev) => !prev)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          setShowDropdown((prev) => !prev);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="stat-info">
-        <h3>₹{total.toLocaleString()}</h3>
-        <p>Pending Payments</p>
-      </div>
-      <div className="stat-change negative">{loading ? 'Loading...' : '-₹500'}</div>
+    <div className="pending-payments-card pending-card">
+      <button
+        type="button"
+        className="stat-card pending-payments-trigger"
+        onClick={() => setShowDropdown((prev) => !prev)}
+        aria-expanded={showDropdown}
+        aria-controls="pending-payments-list"
+      >
+        <span className="stat-info">
+          <strong className="stat-value">₹{total.toLocaleString('en-IN')}</strong>
+          <span className="stat-label">Pending Payments</span>
+        </span>
+        <span className={`stat-change ${loading ? '' : total > 0 ? 'negative' : 'positive'}`}>
+          {loading ? 'Loading…' : total > 0 ? 'View details' : 'No outstanding'}
+        </span>
+      </button>
 
       {showDropdown && (
-        <div className="pending-payment-dropdown">
+        <div className="pending-payment-dropdown" id="pending-payments-list">
           <div className="pending-payment-header">
             <span>Retailers with dues</span>
             <button
@@ -159,12 +152,16 @@ const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
             </button>
           </div>
 
-          {uniqueCustomers.length > 0 ? (
+          {loading ? (
+            <ul>
+              <li><span>Loading pending retailers…</span><strong>—</strong></li>
+            </ul>
+          ) : uniqueCustomers.length > 0 ? (
             <ul>
               {uniqueCustomers.map((customer) => (
                 <li key={`${customer.name}-${customer.invoiceNo}`}>
                   <span>{customer.displayName || customer.name}</span>
-                  <strong>₹{Number(customer.amount || 0).toLocaleString()}</strong>
+                  <strong>₹{Number(customer.amount || 0).toLocaleString('en-IN')}</strong>
                 </li>
               ))}
             </ul>

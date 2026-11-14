@@ -26,6 +26,7 @@ const AdminUsersPage = ({ onLogout }) => {
   const [search, setSearch] = useState('');
   const [users, setUsers] = useState(fallbackUsers);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -46,7 +47,12 @@ const AdminUsersPage = ({ onLogout }) => {
 
     loadUsers();
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshKey((value) => value + 1);
+  };
 
   const filteredUsers = useMemo(() => {
     if (!search.trim()) return users;
@@ -75,7 +81,7 @@ const AdminUsersPage = ({ onLogout }) => {
   };
 
   return (
-    <AdminLayout title="User management" subtitle="Manage retailer users with role, access, and account status controls while preserving existing flows." currentUser="Store Admin" onLogout={onLogout}>
+    <AdminLayout title="User management" subtitle="Manage retailer users with role, access, and account status controls while preserving existing flows." currentUser="Store Admin" onLogout={onLogout} onRefresh={handleRefresh}>
       {loading && <p className="muted-text">Loading user list…</p>}
       <div className="admin-toolbar">
         <input

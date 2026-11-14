@@ -28,59 +28,56 @@ const normalizeLowStockItem = (item, index) => {
   };
 };
 
-const LowStockCard = ({ items = [] }) => {
+const LowStockCard = ({ items = [], loading = false }) => {
   const [showDropdown, setShowDropdown] = useState(false);
 
   const normalizedItems = useMemo(() => {
-    const uniqueMap = new Map();
     const normalized = (Array.isArray(items) ? items : [])
       .map((item, index) => normalizeLowStockItem(item, index))
       .filter((item) => Number(item.stock || 0) <= Number(item.min || 0));
+    const uniqueMap = new Map();
+
+    normalized.forEach((item) => {
+      if (!uniqueMap.has(String(item.id))) uniqueMap.set(String(item.id), item);
+    });
+    const uniqueItems = Array.from(uniqueMap.values());
 
     const nameCounts = new Map();
-    normalized.forEach((item) => {
+    uniqueItems.forEach((item) => {
       const key = item.name.toLowerCase();
       nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
     });
 
-    normalized.forEach((item) => {
-      const key = `${item.name.toLowerCase()}::${item.category.toLowerCase()}`;
-      if (!uniqueMap.has(key)) {
-        uniqueMap.set(key, {
-          ...item,
-          label: buildUniqueLabel(item.name, item.category, (nameCounts.get(item.name.toLowerCase()) || 1) - 1)
-        });
-      }
-    });
-
-    return Array.from(uniqueMap.values())
-      .sort((a, b) => a.stock - b.stock || a.min - b.min)
-      .slice(0, 8);
+    return uniqueItems.map((item) => ({
+      ...item,
+      label: buildUniqueLabel(item.name, item.category, (nameCounts.get(item.name.toLowerCase()) || 1) - 1)
+    }))
+      .sort((a, b) => a.stock - b.stock || a.min - b.min);
   }, [items]);
 
   const totalLowStockCount = normalizedItems.length;
+  const visibleItems = normalizedItems.slice(0, 8);
 
   return (
-    <div
-      className="stat-card pending-payments-card low-stock-card"
-      onClick={() => setShowDropdown((prev) => !prev)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          setShowDropdown((prev) => !prev);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="stat-info">
-        <h3>{totalLowStockCount}</h3>
-        <p>Low Stock ⚠️</p>
-      </div>
-      <div className="stat-change alert">Critical</div>
+    <div className="pending-payments-card low-stock-card">
+      <button
+        type="button"
+        className="stat-card pending-payments-trigger"
+        onClick={() => setShowDropdown((prev) => !prev)}
+        aria-expanded={showDropdown}
+        aria-controls="low-stock-list"
+      >
+        <span className="stat-info">
+          <strong className="stat-value">{totalLowStockCount}</strong>
+          <span className="stat-label">Low Stock ⚠️</span>
+        </span>
+        <span className={`stat-change ${totalLowStockCount > 0 ? 'alert' : 'positive'}`}>
+          {loading ? 'Loading…' : items.length === 0 ? 'No data' : totalLowStockCount > 0 ? 'Reorder' : 'On track'}
+        </span>
+      </button>
 
       {showDropdown && (
-        <div className="pending-payment-dropdown">
+        <div className="pending-payment-dropdown" id="low-stock-list">
           <div className="pending-payment-header">
             <span>Low stock items</span>
             <button
@@ -96,9 +93,13 @@ const LowStockCard = ({ items = [] }) => {
             </button>
           </div>
 
-          {normalizedItems.length > 0 ? (
+          {loading ? (
             <ul>
-              {normalizedItems.map((item) => (
+              <li><span>Loading inventory…</span><strong>—</strong></li>
+            </ul>
+          ) : visibleItems.length > 0 ? (
+            <ul>
+              {visibleItems.map((item) => (
                 <li key={item.id}>
                   <span>{item.label}</span>
                   <strong>{item.stock} left</strong>

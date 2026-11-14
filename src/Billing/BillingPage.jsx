@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './BillingPage.css';
 import logger from '../utils/logger';
@@ -13,6 +13,10 @@ const BillingPage = () => {
   
   // POS State
   const [cart, setCart] = useState([]);
+  const [cartNotice, setCartNotice] = useState('');
+  const [latestAddedProductId, setLatestAddedProductId] = useState(null);
+  const cartItemsRef = useRef(null);
+  const cartItemRefs = useRef(new Map());
   const [customer, setCustomer] = useState({ name: '', phone: '', email: '' });
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [customerSelectionLocked, setCustomerSelectionLocked] = useState(false);
@@ -101,7 +105,7 @@ const BillingPage = () => {
 
     let active = true;
 
-    getCurrentShopProfile()
+    getCurrentShopProfile(true)
       .then((profile) => {
         if (active) setShopProfile(profile);
       })
@@ -209,14 +213,29 @@ const BillingPage = () => {
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
   const gstAmount = cart.reduce((sum, item) => sum + getItemTaxSummary(item).taxAmount, 0);
   const grandTotal = billType === BILL_TYPES.NON_GST ? subtotal : subtotal + gstAmount;
+  const cartQuantity = cart.reduce((sum, item) => sum + item.qty, 0);
   const gstSummaryLabel = billType === BILL_TYPES.NON_GST
     ? 'GST (0%)'
     : `GST (${cart.length > 0 ? `${((gstAmount / Math.max(subtotal, 1)) * 100).toFixed(1)}%` : '0%'})`;
+
+  useEffect(() => {
+    if (!cartNotice) return undefined;
+    const timeoutId = window.setTimeout(() => setCartNotice(''), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [cartNotice]);
+
+  useEffect(() => {
+    if (latestAddedProductId === null) return;
+    if (cartItemsRef.current) {
+      cartItemRefs.current.get(latestAddedProductId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    setLatestAddedProductId(null);
+  }, [cart, latestAddedProductId]);
   
   // ✅ FIXED: Update price
   const updatePrice = (id, newPrice) => {
     if (!isBillingWritable) return;
-    setCart(cart.map(item => 
+    setCart(currentCart => currentCart.map(item =>
       item.id === id ? { ...item, price: parseFloat(newPrice) || item.price } : item
     ));
   };
@@ -234,12 +253,14 @@ const BillingPage = () => {
         alert('Stock limit reached!');
         return;
       }
-      setCart(cart.map(item => 
+      setCart(currentCart => currentCart.map(item =>
         item.id === product.id ? { ...item, qty: item.qty + 1 } : item
       ));
     } else {
-      setCart([...cart, { ...product, qty: 1 }]);
+      setCart(currentCart => [...currentCart, { ...product, qty: 1 }]);
     }
+    setCartNotice(`${product.name} added to cart`);
+    setLatestAddedProductId(product.id);
   };
   
   // Update quantity
@@ -254,14 +275,14 @@ const BillingPage = () => {
       alert('Stock exceeded!');
       return;
     }
-    setCart(cart.map(item => 
+    setCart(currentCart => currentCart.map(item =>
       item.id === id ? { ...item, qty } : item
     ));
   };
   
   const removeFromCart = (id) => {
     if (!isBillingWritable) return;
-    setCart(cart.filter(item => item.id !== id));
+    setCart(currentCart => currentCart.filter(item => item.id !== id));
   };
   
   // ✅ FIXED: Invoice number generation
@@ -388,7 +409,11 @@ const BillingPage = () => {
     return { subtotal, gst, grandTotal };
   };
 
-  const generateInvoicePdf = async (invoiceData) => buildInvoicePdf({ ...invoiceData, shopProfile });
+  const generateInvoicePdf = async (invoiceData) => {
+    const currentShopProfile = await getCurrentShopProfile(true);
+    setShopProfile(currentShopProfile);
+    return buildInvoicePdf({ ...invoiceData, shopProfile: currentShopProfile });
+  };
 
   const resolveCustomerDueState = (previousBalanceValue, totalAmountValue, receivedAmountValue) => {
     const safePreviousBalance = Number(previousBalanceValue || 0);
@@ -831,6 +856,7 @@ const BillingPage = () => {
             .whatsapp { background: linear-gradient(135deg, #22c55e, #16a34a); }
             .email { background: linear-gradient(135deg, #3b82f6, #2563eb); }
             .download { background: linear-gradient(135deg, #64748b, #475569); }
+            .close { background: linear-gradient(135deg, #ef4444, #dc2626); }
 
             @media (max-width: 700px) {
               .invoice-shell {
@@ -947,7 +973,7 @@ const BillingPage = () => {
               <div class="invoice-header-grid">
                 <div>
                   <h1>${getShopDisplayName(invoiceShopProfile)}</h1>
-                  <div class="brand-meta">GSTIN: ${invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || '27ABCDE1234F1Z5'}<br> ${invoiceShopProfile.address || 'Aurangabad, Maharashtra 431001'}<br> ${invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '+91 98765 43210'}<br> ${invoiceShopProfile.email || invoiceShopProfile.supportEmail || 'sales@ibenterprises.com'}</div>
+                  <div class="brand-meta">GSTIN: ${invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || ''}<br> ${invoiceShopProfile.address || ''}<br> ${invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '+91 98765 43210'}<br> ${invoiceShopProfile.email || invoiceShopProfile.supportEmail || 'sales@ibenterprises.com'}</div>
                 </div>
                 <div class="invoice-summary">
                   <div><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>
@@ -1021,6 +1047,7 @@ const BillingPage = () => {
               <button class="share-btn whatsapp" onclick="window.shareInvoiceViaWhatsApp();">📱 WhatsApp PDF</button>
               <button class="share-btn email" onclick="window.shareInvoiceViaEmail();">✉️ Email PDF</button>
               <button class="share-btn download" onclick="window.downloadInvoicePdf();">⬇️ Download PDF</button>
+              <button class="share-btn close" type="button" aria-label="Close invoice" onclick="window.close();">✕ Close</button>
             </div>
           </div>
         </body>
@@ -1235,7 +1262,7 @@ const BillingPage = () => {
         <div className="billing-header-copy">
           <h1>POS Billing</h1>
           <p>
-            Invoice #{invoiceNo} | Cart: {cart.reduce((sum, i) => sum + i.qty, 0)} items
+            Invoice #{invoiceNo} | Cart: {cart.length} products · {cartQuantity} units
           </p>
           {!isBillingWritable && <p className="error-text">Read-only mode: billing viewer access.</p>}
         </div>
@@ -1428,15 +1455,25 @@ const BillingPage = () => {
         {/* Right: Cart + Payment */}
         <div className="billing-right">
           <div className="cart-section">
-            <h3>🛒 Cart ({cart.reduce((sum, i) => sum + i.qty, 0)} items)</h3>
-            <div className="cart-items">
-              {cart.map(item => {
+            <h3>🛒 Cart ({cart.length} products · {cartQuantity} units)</h3>
+            <p className="cart-live-notice" aria-live="polite">{cartNotice}</p>
+            <div className="cart-items" ref={cartItemsRef} aria-label="Cart items">
+              {cart.length === 0 ? (
+                <p className="cart-empty-state">Your cart is empty. Select a product to get started.</p>
+              ) : cart.map(item => {
                 const taxSummary = getItemTaxSummary(item);
                 const itemGstAmount = billType === BILL_TYPES.NON_GST ? 0 : taxSummary.taxAmount;
                 const itemTotalWithGst = (item.price * item.qty) + itemGstAmount;
                 
                 return (
-                  <div key={item.id} className="cart-item">
+                  <div
+                    key={item.id}
+                    className="cart-item"
+                    ref={(element) => {
+                      if (element) cartItemRefs.current.set(item.id, element);
+                      else cartItemRefs.current.delete(item.id);
+                    }}
+                  >
                     <div className="cart-item-left">
                       <h4>{item.name}</h4>
                       <div className="cart-price-row">
@@ -1480,7 +1517,7 @@ const BillingPage = () => {
               })}
             </div>
 
-            <div className="totals">
+            <div className="totals" aria-live="polite" aria-atomic="true">
               <div className="total-row">
                 <span>Subtotal:</span>
                 <span>₹{subtotal.toLocaleString()}</span>
@@ -1521,7 +1558,7 @@ const BillingPage = () => {
               <div className={`payment-status-pill ${paymentStatus === 'paid' ? 'paid' : paymentStatus === 'partial' ? 'partial' : 'pending'}`}>
                 {paymentStatus === 'paid' ? 'Payment: Paid' : paymentStatus === 'partial' ? 'Payment: Partial' : 'Payment: Pending'}
               </div>
-              <button className="pay-btn primary" onClick={generateInvoice} disabled={!isBillingWritable}>
+              <button className="pay-btn primary" onClick={generateInvoice} disabled={!isBillingWritable || cart.length === 0}>
                 💳 Pay ₹{grandTotal.toLocaleString()}
               </button>
             </div>

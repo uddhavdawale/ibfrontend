@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './CustomerPage.css';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
+import { getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 
 const EMPTY_CUSTOMER = {
   id: '',
@@ -68,6 +69,13 @@ const formatDate = (value) => {
   });
 };
 
+const normalizePhoneNumber = (value) => {
+  let digits = String(value || '').replace(/\D/g, '').replace(/^00/, '');
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  return /^\d{8,15}$/.test(digits) ? digits : '';
+};
+
 const CustomerPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -76,6 +84,7 @@ const CustomerPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reminderChannel, setReminderChannel] = useState('whatsapp');
 
   const customerPhone = searchParams.get('phone') || '';
   const customerId = searchParams.get('id') || '';
@@ -197,6 +206,28 @@ const CustomerPage = () => {
     await loadCustomers(searchTerm.trim());
   };
 
+  const handleSendPaymentReminder = () => {
+    const phone = normalizePhoneNumber(selectedCustomer.phone);
+    const dueBalance = Number(selectedCustomer.dueBalance);
+    if (!phone || !Number.isFinite(dueBalance) || dueBalance <= 0) return;
+
+    const shopName = getShopDisplayName(readStoredShopProfile());
+    const customerName = String(selectedCustomer.customerName || 'there').trim();
+    const message = `Hello ${customerName}, this is a friendly reminder from ${shopName}. Our records currently show an outstanding balance of ${formatMoney(dueBalance)}. If you have already paid, please disregard this message or contact us so we can update our records. Thank you.`;
+    if (reminderChannel === 'sms') {
+      window.location.href = `sms:${phone}?body=${encodeURIComponent(message)}`;
+      return;
+    }
+
+    const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const selectedCustomerDue = Number.isFinite(selectedCustomer.dueBalance)
+    ? Math.max(selectedCustomer.dueBalance, 0)
+    : 0;
+  const reminderPhoneAvailable = Boolean(normalizePhoneNumber(selectedCustomer.phone));
+
   return (
     <div className="customer-page">
       <header className="customer-header">
@@ -261,6 +292,37 @@ const CustomerPage = () => {
                 <p>{selectedCustomer.shopName}</p>
               </div>
             </div>
+
+            <section className="customer-follow-up-card" aria-labelledby="customer-follow-up-heading">
+              <div>
+                <p className="customer-follow-up-kicker">Payment follow-up</p>
+                <h3 id="customer-follow-up-heading">Outstanding balance</h3>
+                <strong>{formatMoney(selectedCustomerDue)}</strong>
+                <p className="customer-follow-up-note">
+                  Choose a channel to open a prefilled message for you to review and send.
+                </p>
+              </div>
+              <div className="customer-follow-up-actions">
+                <label htmlFor="customer-reminder-channel">Send reminder via</label>
+                <select
+                  id="customer-reminder-channel"
+                  value={reminderChannel}
+                  onChange={(event) => setReminderChannel(event.target.value)}
+                >
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="sms">SMS</option>
+                </select>
+                <button
+                  type="button"
+                  className="primary-btn customer-reminder-btn"
+                  onClick={handleSendPaymentReminder}
+                  disabled={!reminderPhoneAvailable || selectedCustomerDue <= 0}
+                  title={!reminderPhoneAvailable ? 'Add a valid customer phone number to send a reminder.' : undefined}
+                >
+                  {reminderPhoneAvailable ? `Prepare ${reminderChannel === 'sms' ? 'SMS' : 'WhatsApp'} reminder` : 'Customer phone required'}
+                </button>
+              </div>
+            </section>
 
             <div className="summary-grid">
               {summaryCards.map((card) => (

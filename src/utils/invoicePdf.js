@@ -77,8 +77,8 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
-  pdf.text(`GSTIN: ${activeShopProfile.gstin || activeShopProfile.gstNumber || '27ABCDE1234F1Z5'}`, left, 24);
-  pdf.text(activeShopProfile.address || 'Aurangabad, Maharashtra 431001', left, 29.5);
+  pdf.text(`GSTIN: ${activeShopProfile.gstin || activeShopProfile.gstNumber || ''}`, left, 24);
+  pdf.text(activeShopProfile.address || '', left, 29.5);
   pdf.text(`${activeShopProfile.phone || activeShopProfile.contactNumber || '+91 98765 43210'}  |  ${activeShopProfile.email || activeShopProfile.supportEmail || 'sales@ibenterprises.com'}`, left, 35);
 
   pdf.setFont('helvetica', 'bold');

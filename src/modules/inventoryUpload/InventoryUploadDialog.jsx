@@ -137,7 +137,7 @@ const InventoryUploadDialog = ({ isOpen, onClose, onUploadSuccess }) => {
                       <td>{row.hsnSac || row.sku}</td>
                       <td>{row.mrp || row.price}</td>
                       <td>{row.qty}</td>
-                      <td>{row.set || 0}</td>
+                      <td>{row.set || '1'}</td>
                       <td>{row.pricePerQty || row.price}</td>
                       <td>{row.poNumber || ''}</td>
                       <td>{row.minStock || 0}</td>

@@ -17,4 +17,5 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 button { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; }
 .primary { background: #2563eb; color: white; }
 .primary:hover { background: #1d4ed8; }
+.gst-development-label { padding: 6px 12px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 0.85rem; font-weight: 600; }
 @media (max-width: 768px) { .charts-grid { grid-template-columns: 1fr; } }

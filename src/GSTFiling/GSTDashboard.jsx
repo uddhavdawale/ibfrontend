@@ -134,6 +134,7 @@ const GSTDashboard = () => {
     <div className="gst-dashboard">
       <header>
         <h1>GST Filing Dashboard</h1>
+        <span className="gst-development-label">Under Development</span>
         <select value={period} onChange={e => setPeriod(e.target.value)}>
           <option value="monthly">Monthly</option>
           <option value="quarterly">Quarterly</option>

@@ -4,6 +4,8 @@ export const API_BASE_URL =
 export const API_ENDPOINTS = {
   login: `${API_BASE_URL}/api/login`,
   signup: `${API_BASE_URL}/api/auth/signup`,
+  passwordRecovery: `${API_BASE_URL}/api/auth/password/forgot`,
+  passwordReset: `${API_BASE_URL}/api/auth/password/reset`,
   users: `${API_BASE_URL}/api/users`,
   userById: (id) => `${API_BASE_URL}/api/users/${id}`,
   userStatusById: (id) => `${API_BASE_URL}/api/users/${id}/status`,
@@ -69,6 +71,7 @@ export const API_ENDPOINTS = {
   adminAuditLogs: `${API_BASE_URL}/api/admin/audit-logs`,
   mfaSend: `${API_BASE_URL}/api/mfa/send`,
   mfaVerify: `${API_BASE_URL}/api/mfa/verify`,
+  mfaCancel: `${API_BASE_URL}/api/mfa/cancel`,
 };
 
 const safeParseJson = (value, fallback = {}) => {
@@ -111,6 +114,11 @@ export const getAuthContext = () => {
 let accessToken = null;
 let refreshPromise = null;
 let unauthorizedHandler = () => {};
+let authSessionRevision = 0;
+
+export const advanceAuthSessionRevision = () => {
+  authSessionRevision += 1;
+};
 
 const persistAccessToken = (token) => {
   if (!token) {
@@ -141,6 +149,7 @@ export const setAccessToken = (token) => {
 export const getAccessToken = () => accessToken || restoreAccessToken();
 
 export const clearAuthState = () => {
+  advanceAuthSessionRevision();
   accessToken = null;
   refreshPromise = null;
   sessionStorage.removeItem('refreshToken');
@@ -244,6 +253,7 @@ export async function refreshAccessToken(username) {
 }
 
 export async function apiFetch(input, options = {}) {
+  const requestSessionRevision = authSessionRevision;
   const request = async (token) => {
     const headers = new Headers(options.headers || {});
     const activeToken = token || getAccessToken();
@@ -314,6 +324,7 @@ export async function apiFetch(input, options = {}) {
 
   const initialBodyText = await response.clone().text().catch(() => '');
   if (!isAuthSessionError(response, initialBodyText)) return response;
+  if (requestSessionRevision !== authSessionRevision) return response;
 
   try {
     const token = await refreshAccessToken(localStorage.getItem('username') || '');
@@ -323,6 +334,8 @@ export async function apiFetch(input, options = {}) {
   } catch {
     // Handled below as an expired session, unless the user is simply refreshing without a valid refresh token.
   }
+
+  if (requestSessionRevision !== authSessionRevision) return response;
 
   const hasSavedUser = Boolean(localStorage.getItem('user'));
   const hasRefreshToken = Boolean(sessionStorage.getItem('refreshToken'));
