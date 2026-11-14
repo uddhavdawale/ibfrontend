@@ -1,67 +1,65 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { maskEmail, resolveMfaContext, sendMfaOtp, verifyMfaOtp } from './mfaService';
+import React, { useState } from 'react';
+import { APP_CONFIG } from '../../Config/appConfig';
+import { cancelMfaChallenge, sendMfaOtpWithContext, verifyMfaOtpWithContext } from './mfaService';
 
 const MfaScreen = ({ user, onVerified, onCancel }) => {
   const [otp, setOtp] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
   const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
 
-  const mfaContext = useMemo(() => resolveMfaContext(user?.config || {}, user || {}), [user]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const sendCode = async () => {
-      try {
-        setSending(true);
-        await sendMfaOtp({ username: mfaContext.username, email: mfaContext.email });
-        setInfo(`A 6-digit verification code was sent to ${maskEmail(mfaContext.email || mfaContext.username)}.`);
-      } catch (sendError) {
-        setError(sendError?.message || 'Unable to send the verification code.');
-      } finally {
-        setSending(false);
-      }
-    };
-
-    sendCode();
-  }, [user, mfaContext.email, mfaContext.username]);
+  const sendCode = async () => {
+    setSending(true);
+    setError('');
+    try {
+      await sendMfaOtpWithContext(user || {});
+      setCodeSent(true);
+    } catch (sendError) {
+      setError(sendError?.message || 'Unable to send a verification code. Please try again.');
+    } finally {
+      setSending(false);
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     const trimmedOtp = otp.trim();
-
     if (!/^\d{6}$/.test(trimmedOtp)) {
       setError('Please enter a valid 6-digit code.');
       return;
     }
 
-    setLoading(true);
+    setVerifying(true);
     setError('');
-    setInfo('');
-
     try {
-      await verifyMfaOtp({ username: mfaContext.username || user?.username || '', otp: trimmedOtp });
-      onVerified?.({ ...(user || {}), config: user?.config || {}, mfaVerified: true });
-    } catch (submitError) {
-      setError(submitError?.message || 'MFA verification failed. Please try again.');
+      const verification = await verifyMfaOtpWithContext(user || {}, trimmedOtp);
+      const { user: verifiedProfile, ...session } = verification;
+      await onVerified?.({
+        ...(user || {}),
+        ...(verifiedProfile || {}),
+        ...session,
+        mfaRequired: false,
+        mfaVerified: true,
+      });
+    } catch (verifyError) {
+      setError(verifyError?.message || 'The code is invalid or expired. Please try again.');
     } finally {
-      setLoading(false);
+      setVerifying(false);
     }
   };
 
-  const handleResend = async () => {
+  const handleCancel = async () => {
+    setCancelling(true);
     setError('');
-    setInfo('');
     try {
-      setSending(true);
-      await sendMfaOtp({ username: mfaContext.username, email: mfaContext.email });
-      setInfo('A fresh verification code has been sent.');
-    } catch (resendError) {
-      setError(resendError?.message || 'Unable to resend the code right now.');
+      await cancelMfaChallenge(user || {});
+      onCancel?.();
+    } catch (cancelError) {
+      setError(cancelError?.message || 'Unable to cancel the verification challenge. Please try again.');
     } finally {
-      setSending(false);
+      setCancelling(false);
     }
   };
 
@@ -69,34 +67,35 @@ const MfaScreen = ({ user, onVerified, onCancel }) => {
     return null;
   }
 
+  const busy = sending || verifying || cancelling;
+  const destination = user.mfaChallenge?.maskedDestination || 'your registered email address';
+
   return (
     <div className="login-shell theme-light">
       <div className="login-visual">
         <div className="brand-row">
           <div className="logo-brand">
             <span className="logo-icon">🔐</span>
-            <span>Veyra</span>
+            <span>{APP_CONFIG.appName}</span>
           </div>
           <span className="beta-pill">Secure access</span>
         </div>
 
         <h1>Verify your identity before continuing.</h1>
-        <p>
-          Your organization requires multi-factor authentication before you can access the dashboard.
-        </p>
+        <p>Your organization requires an email verification code before you can access the dashboard.</p>
 
         <div className="visual-stats">
           <div className="mini-stat">
-            <strong>2FA</strong>
-            <span>{String(mfaContext.method).toUpperCase()} verification</span>
+            <strong>Step 1</strong>
+            <span>Send a code to your email</span>
+          </div>
+          <div className="mini-stat">
+            <strong>Step 2</strong>
+            <span>Enter the one-time code</span>
           </div>
           <div className="mini-stat">
             <strong>Secure</strong>
-            <span>Session protected</span>
-          </div>
-          <div className="mini-stat">
-            <strong>1 min</strong>
-            <span>Typical completion</span>
+            <span>Protected account access</span>
           </div>
         </div>
       </div>
@@ -105,64 +104,73 @@ const MfaScreen = ({ user, onVerified, onCancel }) => {
         <div className="login-header">
           <div className="logo">
             <span className="logo-icon">🔐</span>
-            <span className="logo-text">MFA Verification</span>
+            <span className="logo-text">Email verification</span>
           </div>
-          <h1>Enter verification code</h1>
+          <h1>{codeSent ? 'Enter verification code' : 'Verify your sign-in'}</h1>
           <p>
-            {mfaContext.email || mfaContext.username
-              ? `A 6-digit code was sent to ${maskEmail(mfaContext.email || mfaContext.username)}.`
-              : 'A 6-digit verification code is required.'}
+            {codeSent
+              ? `Enter the 6-digit code sent to ${destination}.`
+              : `Send a one-time code to ${destination} to continue.`}
           </p>
         </div>
 
         {error && (
-          <div className="error-message">
+          <div className="error-message" role="alert">
             <span>⚠️</span> {error}
           </div>
         )}
 
-        {info && (
-          <div className="success-message">
-            <span>✓</span> {info}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="login-form mfa-form">
-          <div className="input-group">
-            <label>One-time code</label>
-            <div className="input-wrapper">
-              <span className="input-icon">🔢</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={otp}
-                onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="Enter 6-digit code"
-                disabled={loading || sending}
-                required
-              />
-            </div>
-          </div>
-
-          <button type="submit" className={`login-btn ${loading ? 'loading' : ''}`} disabled={loading || sending}>
-            {loading ? (
+        {!codeSent ? (
+          <button type="button" className={`login-btn ${sending ? 'loading' : ''}`} onClick={sendCode} disabled={busy}>
+            {sending ? (
               <>
                 <span className="spinner"></span>
-                Verifying...
+                Sending code...
               </>
             ) : (
-              'Verify & Continue'
+              'Send email code'
             )}
           </button>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="login-form mfa-form">
+            <div className="input-group">
+              <label htmlFor="mfa-otp">One-time code</label>
+              <div className="input-wrapper">
+                <span className="input-icon" aria-hidden="true">#</span>
+                <input
+                  type="text"
+                  id="mfa-otp"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Enter 6-digit code"
+                  disabled={busy}
+                  required
+                />
+              </div>
+            </div>
+
+            <button type="submit" className={`login-btn ${verifying ? 'loading' : ''}`} disabled={busy}>
+              {verifying ? (
+                <>
+                  <span className="spinner"></span>
+                  Verifying...
+                </>
+              ) : (
+                'Verify & continue'
+              )}
+            </button>
+            <button type="button" className="link-action" onClick={sendCode} disabled={busy}>
+              {sending ? 'Sending...' : 'Resend code'}
+            </button>
+          </form>
+        )}
 
         <div className="mfa-actions">
-          <button type="button" className="secondary-action" onClick={() => onCancel?.()} disabled={sending || loading}>
-            Cancel
-          </button>
-          <button type="button" className="link-action" onClick={handleResend} disabled={sending || loading}>
-            {sending ? 'Sending...' : 'Resend code'}
+          <button type="button" className="secondary-action" onClick={handleCancel} disabled={busy}>
+            {cancelling ? 'Canceling...' : 'Cancel sign-in'}
           </button>
         </div>
       </div>

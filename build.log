@@ -1,0 +1,13 @@
+
+> ev-loan-platform@0.0.0 build
+> vite build ; echo EXIT:9009; more build.log
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+[32m✓[39m 0 modules transformed.
+[31mx[39m Build failed in 9ms
+[31merror during build:
+[31mCould not resolve entry module ";/index.html".[31m
+    at getRollupError (file:///c:/Gurudev/Experiments/ibfrontend/node_modules/rollup/dist/es/shared/parseAst.js:406:41)
+    at error (file:///c:/Gurudev/Experiments/ibfrontend/node_modules/rollup/dist/es/shared/parseAst.js:402:42)
+    at ModuleLoader.loadEntryModule (file:///c:/Gurudev/Experiments/ibfrontend/node_modules/rollup/dist/es/shared/node-entry.js:21786:20)
+    at async Promise.all (index 0)[39m

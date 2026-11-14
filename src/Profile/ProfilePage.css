@@ -164,6 +164,166 @@
   text-align: center;
 }
 
+.shop-profile-card {
+  margin-top: 24px;
+}
+
+.shop-profile-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.shop-profile-heading h2 {
+  margin-bottom: 8px;
+}
+
+.shop-profile-heading p,
+.shop-profile-footer p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.optional-badge,
+.shop-address-field label span,
+.shop-document-field label span {
+  color: #475569;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.shop-address-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.shop-address-field label,
+.shop-document-field label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.shop-address-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 88px;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  color: #1f2937;
+  font: inherit;
+}
+
+.shop-address-field textarea:focus,
+.shop-document-field input:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.2);
+  border-color: #2563eb;
+}
+
+.shop-documents-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.shop-document-field {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.shop-document-field input {
+  width: 100%;
+  min-width: 0;
+  color: #475569;
+  font: inherit;
+}
+
+.shop-document-status {
+  overflow-wrap: anywhere;
+  color: #475569;
+  font-size: 13px;
+}
+
+.shop-document-field small {
+  color: #64748b;
+}
+
+.shop-profile-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.shop-profile-footer p {
+  max-width: 500px;
+  font-size: 13px;
+}
+
+.shop-profile-save {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  background: #1976d2;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.shop-profile-save:hover:not(:disabled) {
+  background: #1565c0;
+}
+
+.shop-profile-save:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.shop-profile-loading {
+  color: #64748b;
+}
+
+.profile-feedback {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  line-height: 1.45;
+}
+
+.profile-feedback-error {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.profile-feedback-success {
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
 .action-btn {
   padding: 14px 32px;
   border: none;
@@ -207,5 +367,14 @@
   
   .profile-field label {
     min-width: auto;
+  }
+
+  .shop-documents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shop-profile-footer {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

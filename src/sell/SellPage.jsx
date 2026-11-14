@@ -1,11 +1,42 @@
 import React, { useState, useEffect } from "react";
+import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
-import { API_BASE_URL, apiFetch } from "../Config/api";
+import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
+import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
 
-const generatePDF = async (order, shopProfile = readStoredShopProfile()) => buildInvoicePdf({ ...order, shopProfile });
+const exportSellOrdersData = (orders, format = "csv") => {
+  const rows = orders.map((order) => ({
+    Invoice_No: order.invoiceNo,
+    Date: order.date,
+    Customer: order.customer?.name || "Walk-in Customer",
+    Phone: order.customer?.phone || "",
+    Email: order.customer?.email || "",
+    Payment_Method: order.paymentMethod,
+    Status: order.status,
+    Subtotal: Number(order.subtotal || 0),
+    GST: Number(order.totalGst || 0),
+    Grand_Total: Number(order.grandTotal || 0),
+    Item_Count: Array.isArray(order.items) ? order.items.length : 0,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "SellOrders");
+
+  const fileExtension = format === "excel" ? "xlsx" : "csv";
+  XLSX.writeFile(workbook, `sell-orders-export.${fileExtension}`);
+};
+
+const MAX_EXPORT_ROWS = 500;
+const EXPORT_COOLDOWN_MS = 60 * 1000;
+
+const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
+  const currentShopProfile = await getCurrentShopProfile(true);
+  return buildInvoicePdf({ ...order, shopProfile: currentShopProfile || shopProfile });
+};
 
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
   const pdf = await generatePDF(order, shopProfile);
@@ -79,6 +110,8 @@ const fallbackSellOrders = [
     totalGst: 73.5,
     grandTotal: 2670.5,
     status: "paid",
+    soldBy: "Store Admin",
+    dueCollection: 0,
     items: [
       {
         sn: 1,
@@ -123,6 +156,8 @@ const fallbackSellOrders = [
     totalGst: 55.35,
     grandTotal: 1900.35,
     status: "paid",
+    soldBy: "Store Admin",
+    dueCollection: 0,
     items: [
       {
         sn: 1,
@@ -158,6 +193,8 @@ const fallbackSellOrders = [
     totalGst: 112.5,
     grandTotal: 1362.5,
     status: "pending",
+    soldBy: "Store Admin",
+    dueCollection: 1362.5,
     items: [
       {
         sn: 1,
@@ -171,6 +208,17 @@ const fallbackSellOrders = [
     ],
   },
 ];
+
+const getLoggedInSellerName = () => {
+  if (typeof window === "undefined") return "Current User";
+
+  try {
+    const user = JSON.parse(window.localStorage.getItem("user") || "{}");
+    return user.name || user.ownerName || user.username || user.userName || "Current User";
+  } catch {
+    return "Current User";
+  }
+};
 
 const resolvePaymentStatus = (invoice, grandTotal) => {
   const rawPaymentStatus = String(
@@ -196,12 +244,13 @@ const resolvePaymentStatus = (invoice, grandTotal) => {
     0
   );
 
+  if (["cancelled", "canceled", "void", "voided"].includes(rawPaymentStatus)) return "cancelled";
   if (["paid", "complete", "completed", "settled"].includes(rawPaymentStatus)) return "paid";
   if (paidAmount >= totalAmount) return "paid";
   return "pending";
 };
 
-const normalizeInvoiceToOrder = (invoice, index = 0) => {
+const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current User") => {
   const rawItems = Array.isArray(invoice.items)
     ? invoice.items
     : Array.isArray(invoice.lineItems)
@@ -251,6 +300,14 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
   );
 
   const resolvedStatus = resolvePaymentStatus(invoice, grandTotal);
+  const paidAmount = Number(
+    invoice.paidAmount ??
+    invoice.amountPaid ??
+    invoice.totalPaid ??
+    invoice.receivedAmount ??
+    0
+  );
+  const dueCollection = Math.max(grandTotal - paidAmount, 0);
 
   return {
     id: invoice.id ?? invoice.invoiceId ?? `${invoice.invoiceNo ?? "INV"}-${index}`,
@@ -265,6 +322,14 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
     subtotal,
     totalGst,
     grandTotal,
+    soldBy: invoice.soldBy
+      ?? invoice.soldByName
+      ?? invoice.createdByName
+      ?? invoice.createdBy
+      ?? invoice.userName
+      ?? invoice.username
+      ?? fallbackSoldBy,
+    dueCollection,
     status: resolvedStatus,
     items: normalizedItems,
     notes: invoice.notes ?? "",
@@ -272,16 +337,16 @@ const normalizeInvoiceToOrder = (invoice, index = 0) => {
   };
 };
 
-const fetchInvoiceDetail = async (invoiceSummary) => {
+const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User") => {
   const invoiceId = invoiceSummary?.id ?? invoiceSummary?.invoiceId;
   if (!invoiceId) return invoiceSummary;
 
   const candidateUrls = [
-    `${API_BASE_URL}/api/invoices/${invoiceId}`,
-    `${API_BASE_URL}/api/invoices/${invoiceId}/details`,
-    `${API_BASE_URL}/api/invoices/${invoiceId}/items`,
-    `${API_BASE_URL}/api/invoice/${invoiceId}`,
-    `${API_BASE_URL}/api/invoice-detail/${invoiceId}`
+    API_ENDPOINTS.invoiceById(invoiceId),
+    API_ENDPOINTS.invoiceDetailsById(invoiceId),
+    API_ENDPOINTS.invoiceItemsById(invoiceId),
+    API_ENDPOINTS.invoiceLegacyById(invoiceId),
+    API_ENDPOINTS.invoiceLegacyDetailById(invoiceId)
   ];
 
   for (const url of candidateUrls) {
@@ -290,7 +355,7 @@ const fetchInvoiceDetail = async (invoiceSummary) => {
       if (!response.ok) continue;
       const detailData = await response.json();
       if (!detailData) continue;
-      return normalizeInvoiceToOrder({ ...invoiceSummary, ...detailData }, 0);
+      return normalizeInvoiceToOrder({ ...invoiceSummary, ...detailData }, 0, fallbackSoldBy);
     } catch (error) {
       console.warn("Invoice detail lookup failed for:", url, error);
     }
@@ -306,12 +371,58 @@ const SellPage = () => {
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [exportFormat, setExportFormat] = useState('csv');
+  const [openActionMenuFor, setOpenActionMenuFor] = useState(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState(null);
+  const [lastExportAt, setLastExportAt] = useState(0);
+  const [role, setRole] = useState(() => getCurrentUserRole());
+  const [loggedInSeller, setLoggedInSeller] = useState(() => getLoggedInSellerName());
   const pageSize = 5;
+  const canManageSellOrders = canWriteBilling(role);
+
+  const cycleStatusFilter = () => {
+    setStatusFilter((current) => {
+      if (current === 'all') return 'paid';
+      if (current === 'paid') return 'pending';
+      if (current === 'pending') return 'cancelled';
+      if (current === 'cancelled') return 'return';
+      return 'all';
+    });
+    setCurrentPage(1);
+  };
+
+  const handleThreeDotMenuAction = async (order, action) => {
+    if (!order || cancellingOrderId) return;
+    setOpenActionMenuFor(null);
+
+    if (action === 'sell') {
+      setCancellingOrderId(order.id);
+      try {
+        await selectOrder(order);
+      } finally {
+        setCancellingOrderId(null);
+      }
+      return;
+    }
+
+    if (action === 'cancelled') {
+      await cancelOrder(order);
+      return;
+    }
+
+    if (action === 'return') {
+      await returnOrder(order);
+    }
+  };
 
   useEffect(() => {
+    setRole(getCurrentUserRole());
+    setLoggedInSeller(getLoggedInSellerName());
+
     let active = true;
-    getCurrentShopProfile()
+    getCurrentShopProfile(true)
       .then((profile) => {
         if (active) setShopProfile(profile);
       })
@@ -335,26 +446,47 @@ const SellPage = () => {
       return;
     }
 
-    const refreshedOrder = await fetchInvoiceDetail(order);
+    const refreshedOrder = await fetchInvoiceDetail(order, loggedInSeller);
     setActiveOrder((current) => (current && current.id === order.id ? null : refreshedOrder));
   };
 
   useEffect(() => {
     const fetchSellOrders = async () => {
       try {
-        const response = await apiFetch(`${API_BASE_URL}/api/invoices?page=0&size=50`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+        const orderEndpoints = [
+          API_ENDPOINTS.invoicesPage(0, 200),
+          API_ENDPOINTS.nonGstInvoicesPage(0, 200)
+        ];
 
-        const data = await response.json();
-        const invoices = Array.isArray(data) ? data : data.content || data.invoices || data.data || [];
-        let normalizedOrders = invoices.map((invoice, index) => normalizeInvoiceToOrder(invoice, index));
+        const allInvoiceResponses = await Promise.all(
+          orderEndpoints.map(async (url) => {
+            try {
+              const response = await apiFetch(url);
+              if (!response.ok) return [];
+              const data = await response.json();
+              return Array.isArray(data)
+                ? data
+                : data.content || data.invoices || data.data || [];
+            } catch {
+              return [];
+            }
+          })
+        );
+
+        const mergedInvoices = allInvoiceResponses
+          .flat()
+          .reduce((unique, invoice) => {
+            const key = invoice?.id ?? invoice?.invoiceId ?? invoice?.invoiceNo ?? invoice?.invoice_number ?? JSON.stringify(invoice);
+            if (!unique.has(key)) unique.set(key, invoice);
+            return unique;
+          }, new Map());
+
+        let normalizedOrders = Array.from(mergedInvoices.values()).map((invoice, index) => normalizeInvoiceToOrder(invoice, index, loggedInSeller));
 
         normalizedOrders = await Promise.all(
           normalizedOrders.map(async (order) => {
             if (Array.isArray(order.items) && order.items.length > 0) return order;
-            return fetchInvoiceDetail(order);
+            return fetchInvoiceDetail(order, loggedInSeller);
           })
         );
 
@@ -375,7 +507,7 @@ const SellPage = () => {
     };
 
     fetchSellOrders();
-  }, []);
+  }, [loggedInSeller]);
 
 const OrderDetail = ({ order }) => {
   const totalQty = Array.isArray(order?.items)
@@ -384,11 +516,12 @@ const OrderDetail = ({ order }) => {
 
   return (
     <div className="order-detail">
+      {/* Keep your header exactly as‑is */}
       <div className="detail-header">
         <div className="invoice-shop-info">
           <h2>{getShopDisplayName(shopProfile)}</h2>
-          <p>GSTIN: {shopProfile.gstin || shopProfile.gstNumber || '27ABCDE1234F1Z5'}</p>
-          <p>{shopProfile.address || 'Aurangabad, Maharashtra 431001'}</p>
+          <p>GSTIN: {shopProfile.gstin || shopProfile.gstNumber || ''}</p>
+          <p>{shopProfile.address || ''}</p>
           <p>📞 {shopProfile.phone || shopProfile.contactNumber || '+91 98765 43210'}</p>
           <p>✉️ {shopProfile.email || shopProfile.supportEmail || 'sales@ibenterprises.com'}</p>
           <p>
@@ -525,7 +658,13 @@ const OrderDetail = ({ order }) => {
   );
 };
 
-  const revenueSummary = sellOrders.reduce(
+  const filteredOrders = statusFilter === 'all'
+    ? sellOrders
+    : statusFilter === 'return'
+      ? sellOrders.filter((order) => String(order.status || '').toLowerCase() === 'return')
+      : sellOrders.filter((order) => order.status === statusFilter);
+
+  const revenueSummary = filteredOrders.reduce(
     (totals, order) => {
       totals.revenue += Number(order.grandTotal || 0);
       totals.paid += order.status === "paid" ? 1 : 0;
@@ -535,14 +674,207 @@ const OrderDetail = ({ order }) => {
     { revenue: 0, paid: 0, pending: 0 }
   );
 
-  const totalPages = Math.max(1, Math.ceil(sellOrders.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
 
   useEffect(() => {
     setCurrentPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
 
-  const visibleOrders = sellOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+  const visibleOrders = filteredOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+
+  const handleSellOrderExport = () => {
+    const now = Date.now();
+    if (now - lastExportAt < EXPORT_COOLDOWN_MS) {
+      const waitSeconds = Math.ceil((EXPORT_COOLDOWN_MS - (now - lastExportAt)) / 1000);
+      alert(`Please wait ${waitSeconds}s before exporting again.`);
+      return;
+    }
+
+    if (filteredOrders.length > MAX_EXPORT_ROWS) {
+      alert(`Export is limited to ${MAX_EXPORT_ROWS} rows. Please narrow your filters.`);
+      return;
+    }
+
+    exportSellOrdersData(filteredOrders, exportFormat);
+    setLastExportAt(now);
+  };
+
+  const markOrderCancelled = (orderId) => {
+    setSellOrders((orders) =>
+      orders.map((order) =>
+        String(order.id) === String(orderId)
+          ? { ...order, status: 'cancelled' }
+          : order
+      )
+    );
+
+    setActiveOrder((current) => (
+      current && String(current.id) === String(orderId)
+        ? { ...current, status: 'cancelled' }
+        : current
+    ));
+  };
+
+  const markOrderReturned = (orderId) => {
+    setSellOrders((orders) =>
+      orders.map((order) =>
+        String(order.id) === String(orderId)
+          ? { ...order, status: 'return' }
+          : order
+      )
+    );
+
+    setActiveOrder((current) => (
+      current && String(current.id) === String(orderId)
+        ? { ...current, status: 'return' }
+        : current
+    ));
+  };
+
+  const executeOrderRequests = async (requests = []) => {
+    for (const request of requests) {
+      try {
+        const options = {
+          method: request.method,
+          headers: request.body ? { 'Content-Type': 'application/json' } : {},
+          ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+        };
+
+        const response = await apiFetch(request.url, options);
+        if (response.ok) return true;
+      } catch (requestError) {
+        console.warn('Order action attempt failed:', requestError);
+      }
+    }
+
+    return false;
+  };
+
+  const cancelOrder = async (order) => {
+    if (!canManageSellOrders) {
+      alert('Your role has read-only sell order access.');
+      return;
+    }
+
+    if (!order || !order.id) return;
+    if (String(order.status || '').toLowerCase() === 'cancelled') {
+      alert('This order is already cancelled.');
+      return;
+    }
+
+    const allowCancel = window.confirm(`Cancel order ${order.invoiceNo}?`);
+    if (!allowCancel) return;
+
+    setOpenActionMenuFor(null);
+    setCancellingOrderId(order.id);
+
+    const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
+    const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
+    const cancelPayload = {
+      status: 'cancelled',
+      paymentStatus: 'cancelled',
+      cancelled: true,
+      cancelReason: 'Cancelled from sell page',
+    };
+
+    const requests = [
+      { url: `${invoiceUrl}/cancel`, method: 'POST' },
+      { url: `${invoiceLegacyUrl}/cancel`, method: 'POST' },
+      { url: invoiceUrl, method: 'PATCH', body: cancelPayload },
+      { url: invoiceLegacyUrl, method: 'PATCH', body: cancelPayload },
+      { url: invoiceUrl, method: 'PUT', body: cancelPayload },
+      { url: invoiceLegacyUrl, method: 'PUT', body: cancelPayload },
+      { url: invoiceUrl, method: 'DELETE' },
+      { url: invoiceLegacyUrl, method: 'DELETE' },
+    ];
+
+    try {
+      const cancelled = await executeOrderRequests(requests);
+
+      if (cancelled) {
+        markOrderCancelled(order.id);
+        alert('Order cancelled successfully.');
+      } else {
+        alert('Unable to cancel this order from server. Please try again.');
+      }
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
+  const returnOrder = async (order) => {
+    if (!canManageSellOrders) {
+      alert('Your role has read-only sell order access.');
+      return;
+    }
+
+    if (!order || !order.id) return;
+    if (String(order.status || '').toLowerCase() === 'return') {
+      alert('This order is already marked as return.');
+      return;
+    }
+
+    const allowReturn = window.confirm(`Mark order ${order.invoiceNo} as return?`);
+    if (!allowReturn) return;
+
+    setCancellingOrderId(order.id);
+
+    const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
+    const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
+    const normalizedInvoiceIdentifier = order.invoiceNo || order.id;
+    const returnByInvoiceUrl = API_ENDPOINTS.returnByInvoice(normalizedInvoiceIdentifier);
+    const returnByInvoiceFallbackUrl = API_ENDPOINTS.returnByInvoice(order.id);
+    const returnItems = (Array.isArray(order.items) ? order.items : []).map((item, index) => ({
+      productId: Number(item.productId ?? item.id ?? item.product_id ?? index + 1) || index + 1,
+      productName: String(item.productName ?? item.item ?? item.name ?? `Item ${index + 1}`).trim(),
+      quantity: Number(item.quantity ?? item.qty ?? 0) || 0,
+      unitPrice: Number(item.unitPrice ?? item.rate ?? item.price ?? 0) || 0,
+    })).filter((item) => Number(item.quantity) > 0);
+
+    const returnPayload = {
+      invoiceId: Number(order.id),
+      reason: 'Damaged item',
+      returnItems,
+    };
+
+    const requests = [
+      {
+        url: API_ENDPOINTS.returns,
+        method: 'POST',
+        body: returnPayload,
+      },
+      {
+        url: returnByInvoiceUrl,
+        method: 'POST',
+        body: returnPayload,
+      },
+      {
+        url: returnByInvoiceFallbackUrl,
+        method: 'POST',
+        body: returnPayload,
+      },
+      { url: `${invoiceUrl}/return`, method: 'POST', body: returnPayload },
+      { url: `${invoiceLegacyUrl}/return`, method: 'POST', body: returnPayload },
+      { url: invoiceUrl, method: 'PATCH', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+      { url: invoiceLegacyUrl, method: 'PATCH', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+      { url: invoiceUrl, method: 'PUT', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+      { url: invoiceLegacyUrl, method: 'PUT', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
+    ];
+
+    try {
+      const markedReturned = await executeOrderRequests(requests);
+
+      if (markedReturned) {
+        markOrderReturned(order.id);
+        alert('Order marked as return successfully.');
+      } else {
+        alert('Unable to mark this order as return from server. Please try again.');
+      }
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
 
   return (
     <div className="sell-dashboard">
@@ -550,12 +882,30 @@ const OrderDetail = ({ order }) => {
         <h1>📋 Sell Orders ({sellOrders.length})</h1>
         {error && <p className="error-text">{error}</p>}
         {loading && <p className="loading-text">🔄 Loading live sell orders...</p>}
-        <button
-          className="btn-new-order"
-          onClick={() => navigate("/billing")}
-        >
-          ➕ New Order
-        </button>
+        {!canManageSellOrders && <p className="error-text">Read-only mode: billing viewer access.</p>}
+        <div className="sell-page-actions">
+          <div className="export-controls">
+            <select
+              className="export-select"
+              value={exportFormat}
+              onChange={(event) => setExportFormat(event.target.value)}
+              aria-label="Choose sell export format"
+            >
+              <option value="csv">CSV</option>
+              <option value="excel">Excel</option>
+            </select>
+            <button className="btn-export" type="button" onClick={handleSellOrderExport}>
+              ⬇️ Export
+            </button>
+          </div>
+          <button
+            className="btn-new-order"
+            disabled={!canManageSellOrders}
+            onClick={() => navigate("/billing")}
+          >
+            ➕ New Order
+          </button>
+        </div>
       </div>
 
       <div className="sell-kpi-row">
@@ -576,17 +926,43 @@ const OrderDetail = ({ order }) => {
         </div>
       </div>
 
-      <div className="orders-list">
+      <div className="orders-list" onClick={() => setOpenActionMenuFor(null)}>
         <div className="list-header">
           <span>Recent Orders</span>
           <span>Customer</span>
           <span>Amount</span>
           <span>Date</span>
-          <span>Status</span>
+          <span>Sold By</span>
+          <span>Due Collection</span>
+          <span className="status-header-cell">
+            <span>Status</span>
+            <button
+              type="button"
+              className={`status-filter-mini ${statusFilter}`}
+              onClick={cycleStatusFilter}
+              aria-label={`Filter status: ${statusFilter}`}
+              title={
+                statusFilter === 'all'
+                  ? 'Show all bills'
+                  : statusFilter === 'paid'
+                    ? 'Show paid bills only'
+                    : statusFilter === 'pending'
+                      ? 'Show pending bills only'
+                      : statusFilter === 'cancelled'
+                        ? 'Show cancelled bills only'
+                        : 'Show returned bills only'
+              }
+            >
+              {statusFilter === 'all' ? '≣' : statusFilter === 'paid' ? '✓' : statusFilter === 'pending' ? '≠' : '⨯'}
+            </button>
+          </span>
           <span>Actions</span>
         </div>
 
         {visibleOrders.map((order) => (
+          (() => {
+            const isRowActionBusy = String(cancellingOrderId) === String(order.id);
+            return (
           <div
             key={order.id}
             className="order-row"
@@ -596,13 +972,66 @@ const OrderDetail = ({ order }) => {
             <span>{order.customer.name}</span>
             <span>₹{order.grandTotal.toLocaleString()}</span>
             <span>{order.date}</span>
+            <span>{order.soldBy || loggedInSeller}</span>
+            <span>₹{Number(order.dueCollection || 0).toLocaleString('en-IN')}</span>
             <span>
               <span className={`status-badge ${order.status}`}>
                 {order.status}
               </span>
             </span>
-            <span>👁️</span>
+            <span className="order-actions" onClick={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                className="order-action-btn"
+                onClick={() => selectOrder(order)}
+                disabled={isRowActionBusy}
+                aria-label={`View ${order.invoiceNo}`}
+                title="View order"
+              >
+                👁️
+              </button>
+              <button
+                type="button"
+                className="order-action-btn order-action-menu-btn"
+                onClick={() => setOpenActionMenuFor((current) => current === order.id ? null : order.id)}
+                disabled={isRowActionBusy}
+                aria-label={`Open actions for ${order.invoiceNo}`}
+                title="More actions"
+              >
+                ⋮
+              </button>
+              {openActionMenuFor === order.id && (
+                <div className="order-action-menu" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction(order, 'sell')}
+                    disabled={isRowActionBusy}
+                  >
+                    {isRowActionBusy ? 'Processing...' : 'Sell Order'}
+                  </button>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction(order, 'cancelled')}
+                    disabled={isRowActionBusy}
+                  >
+                    Cancelled Order
+                  </button>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction(order, 'return')}
+                    disabled={isRowActionBusy}
+                  >
+                    Return Order
+                  </button>
+                </div>
+              )}
+            </span>
           </div>
+            );
+          })()
         ))}
       </div>
 
@@ -626,6 +1055,15 @@ const OrderDetail = ({ order }) => {
 
       {activeOrder && (
         <div className="detail-container">
+          <button
+            type="button"
+            className="invoice-close-button"
+            onClick={() => setActiveOrder(null)}
+            aria-label="Close invoice"
+            title="Close invoice"
+          >
+            ×
+          </button>
           <button
             className="back-to-list"
             onClick={() => setActiveOrder(null)}

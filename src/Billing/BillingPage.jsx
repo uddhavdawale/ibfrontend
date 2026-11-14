@@ -1,42 +1,111 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './BillingPage.css';
 import logger from '../utils/logger';
-import { API_BASE_URL, API_ENDPOINTS, apiFetch } from '../Config/api';
+import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
+import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
+import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
 
 const BillingPage = () => {
   const navigate = useNavigate();
   
   // POS State
   const [cart, setCart] = useState([]);
+  const [cartNotice, setCartNotice] = useState('');
+  const [latestAddedProductId, setLatestAddedProductId] = useState(null);
+  const cartItemsRef = useRef(null);
+  const cartItemRefs = useRef(new Map());
   const [customer, setCustomer] = useState({ name: '', phone: '', email: '' });
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [customerSelectionLocked, setCustomerSelectionLocked] = useState(false);
   const [searchProduct, setSearchProduct] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('INV-001');
   const [paymentMethod, setPaymentMethod] = useState('UPI');
   const [paymentStatus, setPaymentStatus] = useState('pending');
+  const [billType, setBillType] = useState(BILL_TYPES.GST);
   const [editingPriceId, setEditingPriceId] = useState(null);
   const [paymentDialog, setPaymentDialog] = useState({ open: false, step: 'payment-check' });
+  const [partialPaymentAmount, setPartialPaymentAmount] = useState('');
+  const [showPartialInvoiceAction, setShowPartialInvoiceAction] = useState(false);
   
   // Dynamic Products
   const [products, setProducts] = useState([]);
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState(() => getCurrentUserRole());
   const shopDisplayName = getShopDisplayName(shopProfile);
+  const isBillingWritable = canWriteBilling(role);
   
-  // ✅ FIXED: GST SLAB FUNCTION
-  const getGstSlab = (price) => {
-    if (price < 500) return 5;
-    if (price < 1500) return 12;
-    return 18;
+  // ✅ Centralized GST logic lives in src/modules/tax/gstConfig.js
+  const getGstSlab = (price, category = '') => {
+    const configuredRate = resolveCategoryTax(category, 0).total;
+    if (configuredRate > 0) return configuredRate;
+    return getLegacyGstSlab(price);
   };
   
+  const refreshProducts = async () => {
+    try {
+      const productEndpoints = [
+        API_ENDPOINTS.billingProductsPage(0, 100),
+        API_ENDPOINTS.productsWithSize(100),
+        API_ENDPOINTS.products,
+      ];
+
+      let data = null;
+      let response = null;
+
+      for (const endpoint of productEndpoints) {
+        response = await apiFetch(endpoint);
+        if (!response.ok) continue;
+        data = await response.json();
+        break;
+      }
+
+      if (!data || !response?.ok) throw new Error(`HTTP ${response?.status || 500}`);
+
+      const productList = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+      const productsWithGst = productList.map(product => {
+        const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
+        const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice ?? 0) || 0;
+        const category = product.category || product.categoryName || product.group || 'default';
+        const categoryTax = resolveCategoryTax(category, Number(product.gst ?? product.taxRate ?? 0) || getGstSlab(sellingPrice, category));
+
+        return {
+          id: product.id ?? product.productId,
+          name: product.name || product.itemName || product.productName,
+          sku: product.sku || product.code || '',
+          category,
+          price: sellingPrice,
+          mrp: mrpValue,
+          hsn: product.hsn || product.hsnCode || '9999',
+          gst: categoryTax.total,
+          cgst: categoryTax.cgst,
+          sgst: categoryTax.sgst,
+          igst: categoryTax.igst,
+          stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
+          salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
+        };
+      });
+      setProducts(productsWithGst);
+    } catch (error) {
+      logger.error('Billing product fetch failed', error);
+      setProducts([
+        { id: 1, name: 'Shirt', hsn: '6109', price: 299, mrp: 349, gst: 5, stock: 12 },
+        { id: 2, name: 'Jeans', hsn: '6203', price: 799, mrp: 999, gst: 12, stock: 8 },
+        { id: 3, name: 'Laptop', hsn: '8471', price: 45999, mrp: 48999, gst: 18, stock: 5 }
+      ]);
+    }
+  };
+
   // Fetch products
   useEffect(() => {
+    setRole(getCurrentUserRole());
+
     let active = true;
 
-    getCurrentShopProfile()
+    getCurrentShopProfile(true)
       .then((profile) => {
         if (active) setShopProfile(profile);
       })
@@ -44,37 +113,15 @@ const BillingPage = () => {
         if (active) setShopProfile(readStoredShopProfile());
       });
 
-    const fetchProducts = async () => {
+    const initializeBillingData = async () => {
       try {
-        const response = await apiFetch(`${API_BASE_URL}/api/products?size=1000`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const data = await response.json();
-          const productList = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-        const productsWithGst = productList.map(product => ({
-          id: product.id ?? product.productId,
-          name: product.name,
-          sku: product.sku || product.code || '',
-          price: Number(product.price ?? product.unitPrice ?? 0) || 0,
-          hsn: product.hsn || '9999',
-          gst: getGstSlab(Number(product.price ?? product.unitPrice ?? 0) || 0),
-          stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
-          salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
-        }));
-        setProducts(productsWithGst);
-      } catch (error) {
-        logger.error('Billing product fetch failed', error);
-        // Fallback data
-        setProducts([
-          { id: 1, name: 'Shirt', hsn: '6109', price: 299, gst: 5, stock: 12 },
-          { id: 2, name: 'Jeans', hsn: '6203', price: 799, gst: 12, stock: 8 },
-          { id: 3, name: 'Laptop', hsn: '8471', price: 45999, gst: 18, stock: 5 }
-        ]);
+        await refreshProducts();
       } finally {
         if (active) setLoading(false);
       }
     };
-    fetchProducts();
+
+    initializeBillingData();
     return () => { active = false; };
   }, []);
   
@@ -95,21 +142,107 @@ const BillingPage = () => {
       const bValue = getProductPriority(b);
       return bValue - aValue || b.price - a.price || a.name.localeCompare(b.name);
     });
+
+  useEffect(() => {
+    const query = String(customer.name || '').trim();
+    if (!query) {
+      setCustomerSuggestions([]);
+      setCustomerSelectionLocked(false);
+      return;
+    }
+
+    if (customerSelectionLocked) {
+      setCustomerSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(async () => {
+      try {
+        const customerEndpoints = [
+          API_ENDPOINTS.customerProfilesSearch(query),
+          API_ENDPOINTS.customerSearch(query),
+        ];
+
+        const responses = await Promise.all(
+          customerEndpoints.map(async (endpoint) => {
+            try {
+              const response = await apiFetch(endpoint, { signal: controller.signal });
+              if (!response.ok) return [];
+              const payload = await response.json();
+              return toCustomerArray(payload);
+            } catch {
+              return [];
+            }
+          })
+        );
+
+        if (controller.signal.aborted) return;
+
+        const matches = responses.flat().reduce((acc, entry) => {
+          const matchName = String(entry?.customerName || entry?.name || entry?.customer || '').trim();
+          const matchPhone = String(entry?.phone || entry?.mobile || entry?.contactNumber || '').trim();
+          const matchEmail = String(entry?.email || '').trim();
+          if (!matchName && !matchPhone) return acc;
+          const key = `${matchName || 'Unknown'}|${matchPhone || ''}`;
+          if (acc.some((item) => item.key === key)) return acc;
+          acc.push({
+            key,
+            name: matchName || 'Unknown customer',
+            phone: matchPhone,
+            email: matchEmail,
+          });
+          return acc;
+        }, []);
+
+        setCustomerSuggestions(matches.slice(0, 6));
+      } catch {
+        setCustomerSuggestions([]);
+      }
+    }, 2000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [customer.name, customer.phone, customerSelectionLocked]);
   
   // Cart totals
+  const getItemTaxSummary = (item) => buildTaxProfileForItem({ ...item, category: item.category || 'default', gst: Number(item.gst ?? 0) || 0 }, billType);
+  const isGstBill = billType === BILL_TYPES.GST;
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-  const gstAmount = cart.reduce((sum, item) => sum + (item.price * item.qty * item.gst / 100), 0);
-  const grandTotal = subtotal + gstAmount;
+  const gstAmount = cart.reduce((sum, item) => sum + getItemTaxSummary(item).taxAmount, 0);
+  const grandTotal = billType === BILL_TYPES.NON_GST ? subtotal : subtotal + gstAmount;
+  const cartQuantity = cart.reduce((sum, item) => sum + item.qty, 0);
+  const gstSummaryLabel = billType === BILL_TYPES.NON_GST
+    ? 'GST (0%)'
+    : `GST (${cart.length > 0 ? `${((gstAmount / Math.max(subtotal, 1)) * 100).toFixed(1)}%` : '0%'})`;
+
+  useEffect(() => {
+    if (!cartNotice) return undefined;
+    const timeoutId = window.setTimeout(() => setCartNotice(''), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [cartNotice]);
+
+  useEffect(() => {
+    if (latestAddedProductId === null) return;
+    if (cartItemsRef.current) {
+      cartItemRefs.current.get(latestAddedProductId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    setLatestAddedProductId(null);
+  }, [cart, latestAddedProductId]);
   
   // ✅ FIXED: Update price
   const updatePrice = (id, newPrice) => {
-    setCart(cart.map(item => 
+    if (!isBillingWritable) return;
+    setCart(currentCart => currentCart.map(item =>
       item.id === id ? { ...item, price: parseFloat(newPrice) || item.price } : item
     ));
   };
   
   // Add to cart
   const addToCart = (product) => {
+    if (!isBillingWritable) return;
     if (product.stock <= 0) {
       alert(`${product.name} - Out of stock!`);
       return;
@@ -120,16 +253,19 @@ const BillingPage = () => {
         alert('Stock limit reached!');
         return;
       }
-      setCart(cart.map(item => 
+      setCart(currentCart => currentCart.map(item =>
         item.id === product.id ? { ...item, qty: item.qty + 1 } : item
       ));
     } else {
-      setCart([...cart, { ...product, qty: 1 }]);
+      setCart(currentCart => [...currentCart, { ...product, qty: 1 }]);
     }
+    setCartNotice(`${product.name} added to cart`);
+    setLatestAddedProductId(product.id);
   };
   
   // Update quantity
   const updateQty = (id, qty) => {
+    if (!isBillingWritable) return;
     if (qty <= 0) {
       removeFromCart(id);
       return;
@@ -139,13 +275,14 @@ const BillingPage = () => {
       alert('Stock exceeded!');
       return;
     }
-    setCart(cart.map(item => 
+    setCart(currentCart => currentCart.map(item =>
       item.id === id ? { ...item, qty } : item
     ));
   };
   
   const removeFromCart = (id) => {
-    setCart(cart.filter(item => item.id !== id));
+    if (!isBillingWritable) return;
+    setCart(currentCart => currentCart.filter(item => item.id !== id));
   };
   
   // ✅ FIXED: Invoice number generation
@@ -162,6 +299,105 @@ const BillingPage = () => {
     });
   };
 
+  const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+
+  const toCustomerArray = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== 'object') return [];
+    if (Array.isArray(payload.customers)) return payload.customers;
+    if (Array.isArray(payload.content)) return payload.content;
+    if (Array.isArray(payload.items)) return payload.items;
+    if (Array.isArray(payload.results)) return payload.results;
+    if (Array.isArray(payload.data)) return payload.data;
+    if (payload.data && typeof payload.data === 'object') {
+      if (Array.isArray(payload.data.customers)) return payload.data.customers;
+      if (Array.isArray(payload.data.content)) return payload.data.content;
+      if (Array.isArray(payload.data.items)) return payload.data.items;
+    }
+    return [payload];
+  };
+
+  const readCustomerDueBalance = (source) => {
+    const amount = Number(
+      source?.dueBalance ??
+      source?.outstandingBalance ??
+      source?.balanceDue ??
+      source?.pendingAmount ??
+      source?.pendingBalance ??
+      source?.currentBalance ??
+      source?.amountDue ??
+      source?.totalDue ??
+      source?.customerBalance ??
+      source?.customerDue ??
+      source?.balance ??
+      source?.receivable ??
+      source?.outstanding ??
+      0
+    );
+    return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+  };
+
+  const resolveCustomerPreviousBalance = async () => {
+    const customerPhoneRaw = String(customer.phone || '').trim();
+    const customerPhoneDigits = normalizeDigits(customer.phone);
+    const customerName = String(customer.name || '').trim().toLowerCase();
+
+    if (!customerPhoneDigits && !customerName) return 0;
+
+    const fetchDueFromEndpoint = async (endpoint) => {
+      try {
+        const response = await apiFetch(endpoint);
+        if (!response.ok) return null;
+        const data = await response.json();
+        const customers = toCustomerArray(data);
+        if (!customers.length) return 0;
+
+        const matchedByPhone = customerPhoneDigits
+          ? customers.find((entry) => normalizeDigits(entry?.phone || entry?.mobile || entry?.contactNumber) === customerPhoneDigits)
+          : null;
+
+        const matchedByName = customerName
+          ? customers.find((entry) => {
+            const entryName = String(entry?.customerName || entry?.name || entry?.customer || '').trim().toLowerCase();
+            return entryName === customerName;
+          })
+          : null;
+
+        const selected = matchedByPhone || matchedByName || customers[0];
+        return readCustomerDueBalance(selected);
+      } catch {
+        return null;
+      }
+    };
+
+    if (customerPhoneDigits) {
+      const phoneInputs = [...new Set([customerPhoneRaw, customerPhoneDigits].filter(Boolean))];
+      const phoneEndpoints = phoneInputs.flatMap((phoneValue) => ([
+        API_ENDPOINTS.customerByPhone(phoneValue),
+        API_ENDPOINTS.customerProfileByPhone(phoneValue),
+      ]));
+
+      for (const endpoint of phoneEndpoints) {
+        const amount = await fetchDueFromEndpoint(endpoint);
+        if (amount !== null) return amount;
+      }
+    }
+
+    if (customerName) {
+      const nameEndpoints = [
+        API_ENDPOINTS.customerSearch(customer.name),
+        API_ENDPOINTS.customerProfilesSearch(customer.name),
+      ];
+
+      for (const endpoint of nameEndpoints) {
+        const amount = await fetchDueFromEndpoint(endpoint);
+        if (amount !== null) return amount;
+      }
+    }
+
+    return 0;
+  };
+
   const calculateInvoiceTotals = (items) => {
     const subtotal = items.reduce((sum, item) => sum + (Number(item.price || 0) * Number(item.qty || 0)), 0);
     const gst = items.reduce((sum, item) => {
@@ -173,7 +409,110 @@ const BillingPage = () => {
     return { subtotal, gst, grandTotal };
   };
 
-  const generateInvoicePdf = async (invoiceData) => buildInvoicePdf({ ...invoiceData, shopProfile });
+  const generateInvoicePdf = async (invoiceData) => {
+    const currentShopProfile = await getCurrentShopProfile(true);
+    setShopProfile(currentShopProfile);
+    return buildInvoicePdf({ ...invoiceData, shopProfile: currentShopProfile });
+  };
+
+  const resolveCustomerDueState = (previousBalanceValue, totalAmountValue, receivedAmountValue) => {
+    const safePreviousBalance = Number(previousBalanceValue || 0);
+    const safeTotalAmount = Number(totalAmountValue || 0);
+    const safeReceivedAmount = Number(receivedAmountValue || 0);
+    const invoiceDueAmount = Math.max(safeTotalAmount - safeReceivedAmount, 0);
+    const totalDueAmount = Math.max(safePreviousBalance + invoiceDueAmount, 0);
+    return { invoiceDueAmount, totalDueAmount };
+  };
+
+  const syncCustomerProfileDueBalance = async (balanceToStore) => {
+    const cashCustomerName = String(customer?.name || '').trim();
+    const cashCustomerPhone = normalizeDigits(customer?.phone || '');
+    const amount = Math.max(Number(balanceToStore || 0), 0);
+
+    if ((!cashCustomerPhone && !cashCustomerName) || !Number.isFinite(amount)) {
+      return;
+    }
+
+    const profileUpdatePayload = {
+      dueBalance: amount,
+      balanceDue: amount,
+      outstandingBalance: amount,
+      pendingAmount: amount,
+      pendingBalance: amount,
+      amountDue: amount,
+      totalDue: amount,
+      balance: amount,
+      receivable: amount,
+      outstanding: amount,
+    };
+
+    const candidateEndpoints = [];
+    if (cashCustomerPhone) {
+      candidateEndpoints.push(
+        API_ENDPOINTS.customerProfileByPhone(cashCustomerPhone),
+        API_ENDPOINTS.customerByPhone(cashCustomerPhone),
+      );
+    }
+    if (cashCustomerName) {
+      candidateEndpoints.push(
+        API_ENDPOINTS.customerProfilesSearch(cashCustomerName),
+        API_ENDPOINTS.customerSearch(cashCustomerName),
+      );
+    }
+
+    const uniqueEndpoints = [...new Set(candidateEndpoints.filter(Boolean))];
+
+    const tryUpdateProfile = async (url, method = 'PATCH') => {
+      try {
+        const response = await apiFetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(profileUpdatePayload),
+        });
+
+        if (response.ok) return true;
+
+        if (response.status === 404) return false;
+
+        const payload = await response.clone().json().catch(() => ({}));
+        logger.warn('Customer profile due sync failed', { url, status: response.status, payload });
+        return false;
+      } catch (error) {
+        logger.warn('Customer profile due sync exception', { url, error: error.message || String(error) });
+        return false;
+      }
+    };
+
+    const seenIds = new Set();
+    for (const endpoint of uniqueEndpoints) {
+      if (seenIds.has(endpoint)) continue;
+      seenIds.add(endpoint);
+
+      try {
+        const response = await apiFetch(endpoint, { method: 'GET' });
+        if (!response.ok) continue;
+
+        const payload = await response.json().catch(() => null);
+        const profileList = Array.isArray(payload) ? payload : (payload && typeof payload === 'object' ? toCustomerArray(payload) : []);
+        const matchedProfile = profileList.find((entry) => {
+          if (!cashCustomerPhone) return true;
+          const phoneValue = normalizeDigits(String(entry?.phone || entry?.mobile || entry?.contactNumber || ''));
+          return phoneValue === cashCustomerPhone;
+        }) || profileList[0];
+
+        if (matchedProfile?.id) {
+          const profileEndpoint = API_ENDPOINTS.customerProfileById(matchedProfile.id);
+          const updated = await tryUpdateProfile(profileEndpoint, 'PUT');
+          if (updated) return;
+        }
+
+        const fallbackUpdated = await tryUpdateProfile(endpoint, 'PATCH');
+        if (fallbackUpdated) return;
+      } catch (error) {
+        logger.warn('Customer profile lookup failed during due sync', { endpoint, error: error.message || String(error) });
+      }
+    }
+  };
 
   const shareInvoiceViaWhatsApp = async (invoiceData) => {
     const pdf = await generateInvoicePdf(invoiceData);
@@ -218,12 +557,28 @@ const BillingPage = () => {
     }
 
     const invoiceShopProfile = invoiceData.shopProfile || shopProfile;
-    const invoiceRows = invoiceData.items.map((item) => {
+    const isNonGst = invoiceData.billType === BILL_TYPES.NON_GST;
+    const invoiceRows = invoiceData.items.map((item, index) => {
       const amount = Number(item.price) * Number(item.qty);
-      const gstValue = (amount * Number(item.gst || 0)) / 100;
+      const gstValue = isNonGst ? 0 : (amount * Number(item.gst || 0)) / 100;
       const total = amount + gstValue;
+      if (isNonGst) {
+        return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${item.name}</td>
+            <td>${item.hsn || '9999'}</td>
+            <td>${item.qty}</td>
+            <td>₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `;
+      }
+
       return `
         <tr>
+          <td>${index + 1}</td>
           <td>${item.name}</td>
           <td>${item.hsn || '9999'}</td>
           <td>${item.qty}</td>
@@ -239,6 +594,13 @@ const BillingPage = () => {
     previewWindow.shareInvoiceViaWhatsApp = async () => shareInvoiceViaWhatsApp(invoiceData);
     previewWindow.shareInvoiceViaEmail = async () => shareInvoiceViaEmail(invoiceData);
     previewWindow.downloadInvoicePdf = async () => downloadInvoicePdf(invoiceData);
+
+    const receivedAmount = Number(invoiceData.receivedAmount ?? invoiceData.paidAmount ?? invoiceData.amountPaid ?? 0);
+    const previousBalance = Number(invoiceData.previousBalance ?? 0);
+    const invoiceDueAmount = Math.max(Number(invoiceData.grandTotal || 0) - receivedAmount, 0);
+    const balanceAmount = Number(invoiceData.balanceAmount ?? previousBalance + invoiceDueAmount);
+    const currentBalance = Number(invoiceData.currentBalance ?? balanceAmount);
+    const dueAmount = Math.max(currentBalance, 0);
 
     previewWindow.document.write(`
       <!doctype html>
@@ -408,6 +770,58 @@ const BillingPage = () => {
               color: var(--invoice-dark);
             }
 
+            .invoice-bottom {
+              display: grid;
+              grid-template-columns: 1.15fr 0.85fr;
+              gap: 20px;
+              margin-top: 22px;
+              align-items: start;
+            }
+
+            .words-panel,
+            .summary-panel {
+              border: 1px solid var(--invoice-border);
+              border-radius: 12px;
+              background: #f8fafc;
+              padding: 12px 14px;
+            }
+
+            .words-panel h4,
+            .summary-panel h4 {
+              margin: 0 0 10px;
+              font-size: 13px;
+              color: var(--invoice-dark);
+            }
+
+            .words-panel p {
+              margin: 0;
+              font-size: 12px;
+              color: var(--invoice-gray);
+              line-height: 1.7;
+            }
+
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              gap: 12px;
+              padding: 6px 0;
+              font-size: 12px;
+              color: var(--invoice-gray);
+              border-bottom: 1px solid var(--invoice-border);
+            }
+
+            .summary-row:last-child {
+              border-bottom: none;
+            }
+
+            .summary-row.total {
+              margin-top: 4px;
+              padding-top: 10px;
+              font-size: 13px;
+              font-weight: 800;
+              color: var(--invoice-dark);
+            }
+
             .notes-wrap {
               margin: 20px 0 8px;
               font-size: 12px;
@@ -442,6 +856,88 @@ const BillingPage = () => {
             .whatsapp { background: linear-gradient(135deg, #22c55e, #16a34a); }
             .email { background: linear-gradient(135deg, #3b82f6, #2563eb); }
             .download { background: linear-gradient(135deg, #64748b, #475569); }
+            .close { background: linear-gradient(135deg, #ef4444, #dc2626); }
+
+            @media (max-width: 700px) {
+              .invoice-shell {
+                width: min(100%, 100vw);
+                margin: 0;
+                border-radius: 0;
+                box-shadow: none;
+              }
+
+              .invoice-header-band {
+                padding: 18px 16px 14px;
+              }
+
+              .invoice-header-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+              }
+
+              .invoice-header-grid h1 {
+                font-size: 1.8rem;
+              }
+
+              .brand-meta,
+              .invoice-summary {
+                font-size: 11px;
+              }
+
+              .invoice-body {
+                padding: 16px 14px 8px;
+              }
+
+              .customer-grid {
+                grid-template-columns: 1fr;
+                gap: 8px;
+                font-size: 12px;
+              }
+
+              table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+              }
+
+              th, td {
+                padding: 8px 6px;
+                font-size: 10.5px;
+              }
+
+              .totals {
+                width: 100%;
+                margin-top: 14px;
+              }
+
+              .totals-row {
+                font-size: 12px;
+              }
+
+              .grand {
+                font-size: 18px;
+              }
+
+              .invoice-bottom {
+                grid-template-columns: 1fr;
+              }
+
+              .notes-wrap {
+                font-size: 11px;
+              }
+
+              .toolbar {
+                justify-content: stretch;
+                padding: 0 14px 18px;
+                gap: 10px;
+              }
+
+              .share-btn {
+                flex: 1 1 100%;
+                min-width: 0;
+                width: 100%;
+              }
+            }
 
             @media print {
               html, body {
@@ -477,11 +973,12 @@ const BillingPage = () => {
               <div class="invoice-header-grid">
                 <div>
                   <h1>${getShopDisplayName(invoiceShopProfile)}</h1>
-                  <div class="brand-meta">GSTIN: ${invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || '27ABCDE1234F1Z5'}<br> ${invoiceShopProfile.address || 'Aurangabad, Maharashtra 431001'}<br> ${invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '+91 98765 43210'}<br> ${invoiceShopProfile.email || invoiceShopProfile.supportEmail || 'sales@ibenterprises.com'}</div>
+                  <div class="brand-meta">GSTIN: ${invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || ''}<br> ${invoiceShopProfile.address || ''}<br> ${invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '+91 98765 43210'}<br> ${invoiceShopProfile.email || invoiceShopProfile.supportEmail || 'sales@ibenterprises.com'}</div>
                 </div>
                 <div class="invoice-summary">
                   <div><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>
                   <div><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}</div>
+                  <div><strong>Type:</strong> ${invoiceData.billType === BILL_TYPES.NON_GST ? 'Non-GST Bill' : 'GST Bill'}</div>
                   <div><strong>Status:</strong> <span class="status-pill ${invoiceData.paymentStatus === 'paid' ? 'status-paid' : 'status-pending'}">${invoiceData.paymentStatus}</span></div>
                 </div>
               </div>
@@ -504,43 +1001,45 @@ const BillingPage = () => {
                     <th>Qty</th>
                     <th>Rate</th>
                     <th>Amount</th>
-                    <th>GST%</th>
-                    <th>GST</th>
+                    ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : '<th>GST%</th><th>GST</th>'}
                     <th>Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${invoiceData.items.map((item, index) => {
-                    const amount = Number(item.price) * Number(item.qty);
-                    const gstValue = (amount * Number(item.gst || 0)) / 100;
-                    const total = amount + gstValue;
-                    return `
-                      <tr>
-                        <td>${index + 1}</td>
-                        <td>${item.name}</td>
-                        <td>${item.hsn || '9999'}</td>
-                        <td>${item.qty}</td>
-                        <td>₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                        <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                        <td>${item.gst || 0}%</td>
-                        <td>₹${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                        <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                      </tr>
-                    `;
-                  }).join('')}
+                  ${invoiceRows}
                 </tbody>
               </table>
 
               <div class="totals">
                 <div class="totals-row"><span>Total Qty</span><span>${invoiceData.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</span></div>
                 <div class="totals-row"><span>Subtotal</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                <div class="totals-row"><span>GST Total</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : `<div class="totals-row"><span>GST Total</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>`}
                 <div class="totals-row grand"><span>Grand Total</span><span>₹${invoiceData.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
               </div>
 
+              <div class="invoice-bottom">
+                <div class="words-panel">
+                  <h4>Invoice Amount in Words</h4>
+                  <p>${(invoiceData.grandTotal || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })} only</p>
+                </div>
+
+                <div class="summary-panel">
+                  <h4>Summary</h4>
+                  <div class="summary-row"><span>Sub Total</span><span>₹${(invoiceData.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Total</span><span>₹${(invoiceData.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Received Amount</span><span>₹${receivedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Previous Balance</span><span>₹${previousBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Due Amount</span><span>₹${dueAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row total"><span>Balance</span><span>₹${currentBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                  <div class="summary-row"><span>Payment mode</span><span>${invoiceData.paymentMethod || 'Cash'}</span></div>
+                </div>
+              </div>
+
               <div class="notes-wrap">
-                <div><strong>Notes:</strong> Goods sold are non-returnable unless defective or as per shop policy.</div>
-                <div><strong>Terms:</strong> Payment due within 7 days. Late payments may attract interest as per government guidelines.</div>
+                <div><strong>Terms and Conditions</strong></div>
+                <div>NO Guarantee</div>
+                <div>NO Warranty</div>
+                <div>NO Exchange</div>
               </div>
             </div>
 
@@ -548,6 +1047,7 @@ const BillingPage = () => {
               <button class="share-btn whatsapp" onclick="window.shareInvoiceViaWhatsApp();">📱 WhatsApp PDF</button>
               <button class="share-btn email" onclick="window.shareInvoiceViaEmail();">✉️ Email PDF</button>
               <button class="share-btn download" onclick="window.downloadInvoicePdf();">⬇️ Download PDF</button>
+              <button class="share-btn close" type="button" aria-label="Close invoice" onclick="window.close();">✕ Close</button>
             </div>
           </div>
         </body>
@@ -559,9 +1059,16 @@ const BillingPage = () => {
   };
 
   // Generate invoice
-  const submitInvoice = async (status) => {
+  const submitInvoice = async (status, amountReceived = 0) => {
+    if (!isBillingWritable) return;
     try {
-      const normalizedStatus = status === 'paid' ? 'paid' : 'pending';
+      const normalizedStatus = status === 'paid' ? 'paid' : status === 'partial' ? 'partial' : 'pending';
+      const paidAmount = Number(amountReceived) || 0;
+      const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
+      const previousBalance = await resolveCustomerPreviousBalance();
+      const { totalDueAmount } = resolveCustomerDueState(previousBalance, grandTotal, receivedAmount);
+      const balanceAmount = totalDueAmount;
+      const currentBalance = totalDueAmount;
       setPaymentStatus(normalizedStatus);
 
       const payload = {
@@ -570,19 +1077,37 @@ const BillingPage = () => {
         paymentMethod,
         paymentStatus: normalizedStatus,
         status: normalizedStatus,
-        items: cart.map((item) => ({
-          productId: item.id,
-          name: item.name,
-          sku: item.sku || '',
-          hsn: item.hsn || '9999',
-          gstRate: Number(item.gst) || 0,
-          price: Number(item.price) || 0,
-          qty: Number(item.qty) || 0,
-        }))
+        paidAmount: receivedAmount,
+        amountPaid: receivedAmount,
+        receivedAmount: receivedAmount,
+        previousBalance,
+        balanceAmount,
+        currentBalance,
+        totalAmount: grandTotal,
+        billType,
+        isGstInvoice: billType === BILL_TYPES.GST,
+        items: cart.map((item) => {
+          const taxSummary = getItemTaxSummary(item);
+          return {
+            productId: item.id,
+            name: item.name,
+            sku: item.sku || '',
+            hsn: item.hsn || '9999',
+            gstRate: Number(taxSummary.gstRate) || 0,
+            cgst: Number(taxSummary.cgst) || 0,
+            sgst: Number(taxSummary.sgst) || 0,
+            igst: Number(taxSummary.igst) || 0,
+            price: Number(item.price) || 0,
+            qty: Number(item.qty) || 0,
+            category: item.category || 'default',
+            taxAmount: Number(taxSummary.taxAmount) || 0,
+          };
+        })
       };
 
       logger.info('Submitting invoice to backend', payload);
-      const response = await apiFetch(API_ENDPOINTS.invoices, {
+      const invoiceEndpoint = billType === BILL_TYPES.NON_GST ? API_ENDPOINTS.nonGstInvoices : API_ENDPOINTS.invoices;
+      const response = await apiFetch(invoiceEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -602,6 +1127,13 @@ const BillingPage = () => {
 
       const generatedInvoiceNo = result?.invoiceNo || invoiceNo;
       logger.info('Invoice generated and saved', result);
+
+      try {
+        await syncCustomerProfileDueBalance(currentBalance);
+      } catch (error) {
+        logger.warn('Customer profile sync skipped after invoice save', error);
+      }
+
       const previewInvoice = {
         invoiceNo: generatedInvoiceNo,
         customerName: customer.name || 'Walk-in Customer',
@@ -609,6 +1141,13 @@ const BillingPage = () => {
         customerEmail: customer.email || '',
         paymentMethod,
         paymentStatus: normalizedStatus,
+        paidAmount: receivedAmount,
+        amountPaid: receivedAmount,
+        receivedAmount: receivedAmount,
+        previousBalance,
+        balanceAmount,
+        currentBalance,
+        billType,
         subtotal: subtotal,
         gst: gstAmount,
         grandTotal: grandTotal,
@@ -617,12 +1156,13 @@ const BillingPage = () => {
           hsn: item.hsn || '9999',
           qty: Number(item.qty) || 0,
           price: Number(item.price) || 0,
-          gst: Number(item.gst) || 0,
+          gst: Number(getItemTaxSummary(item).gstRate) || 0,
         }))
       };
 
       openInvoiceWindow(previewInvoice);
 
+      await refreshProducts();
       setCart([]);
       setCustomer({ name: '', phone: '', email: '' });
       setInvoiceNo(generatedInvoiceNo);
@@ -633,6 +1173,11 @@ const BillingPage = () => {
   };
 
   const generateInvoice = () => {
+    if (!isBillingWritable) {
+      alert('Your role has read-only billing access.');
+      return;
+    }
+
     if (cart.length === 0) {
       alert('Add items to cart first!');
       return;
@@ -643,19 +1188,61 @@ const BillingPage = () => {
 
   const handlePaymentDialogChoice = (paymentCollected) => {
     if (paymentCollected) {
+      setPartialPaymentAmount('');
+      setShowPartialInvoiceAction(false);
       setPaymentDialog({ open: false, step: 'payment-check' });
       submitInvoice('paid');
       return;
     }
 
+    setPartialPaymentAmount('');
+    setShowPartialInvoiceAction(false);
     setPaymentDialog({ open: true, step: 'pending-confirmation' });
   };
 
-  const handlePendingInvoiceDecision = (proceedWithoutPayment) => {
-    setPaymentDialog({ open: false, step: 'payment-check' });
-    if (proceedWithoutPayment) {
-      submitInvoice('pending');
+  const handlePendingInvoiceDecision = (decision) => {
+    if (decision === 'cancel') {
+      setPartialPaymentAmount('');
+      setShowPartialInvoiceAction(false);
+      setPaymentDialog({ open: false, step: 'payment-check' });
+      return;
     }
+
+    if (decision === 'partial-select') {
+      const amount = Number(partialPaymentAmount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        alert('Enter a valid partial payment amount before continuing.');
+        return;
+      }
+      if (amount > grandTotal) {
+        alert(`Partial payment cannot exceed the invoice total of ₹${grandTotal.toLocaleString()}.`);
+        return;
+      }
+      setShowPartialInvoiceAction(true);
+      return;
+    }
+
+    if (decision === 'partial-final') {
+      const amount = Number(partialPaymentAmount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        alert('Enter a valid partial payment amount before creating the final invoice.');
+        return;
+      }
+      if (amount > grandTotal) {
+        alert(`Partial payment cannot exceed the invoice total of ₹${grandTotal.toLocaleString()}.`);
+        return;
+      }
+      setPartialPaymentAmount('');
+      setShowPartialInvoiceAction(false);
+      setPaymentDialog({ open: false, step: 'payment-check' });
+      submitInvoice('partial', amount);
+      return;
+    }
+
+    setPartialPaymentAmount('');
+    setShowPartialInvoiceAction(false);
+    setPaymentDialog({ open: false, step: 'payment-check' });
+    submitInvoice('pending');
   };
   
   if (loading) {
@@ -672,9 +1259,12 @@ const BillingPage = () => {
         <button className="back-btn" onClick={() => navigate('/dashboard')}>
           ← Back to Dashboard
         </button>
-        <div>
-          <h1>🛒 POS Billing</h1>
-          <p>Invoice #{invoiceNo} | Cart: {cart.reduce((sum, i) => sum + i.qty, 0)} items</p>
+        <div className="billing-header-copy">
+          <h1>POS Billing</h1>
+          <p>
+            Invoice #{invoiceNo} | Cart: {cart.length} products · {cartQuantity} units
+          </p>
+          {!isBillingWritable && <p className="error-text">Read-only mode: billing viewer access.</p>}
         </div>
       </header>
 
@@ -699,13 +1289,55 @@ const BillingPage = () => {
               <>
                 <div className="payment-dialog-icon warning">⚠️</div>
                 <h3>Pending payment</h3>
-                <p>Payment has not been collected yet. Do you want to proceed to generate the invoice without payment right now?</p>
+
+                <div className="partial-payment-customer-meta">
+                  <div className="partial-payment-customer-name">
+                    Customer: <strong>{customer?.name || 'Walk-in Customer'}</strong>
+                  </div>
+                  <div className="partial-payment-due-pill">
+                    Due balance: ₹{readCustomerDueBalance(customer).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div className="partial-payment-field-wrap">
+                  <label htmlFor="partial-payment-amount" className="partial-payment-label">Amount received</label>
+                  <input
+                    id="partial-payment-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    className="partial-payment-input"
+                    value={partialPaymentAmount}
+                    onChange={(event) => {
+                      setPartialPaymentAmount(event.target.value);
+                      setShowPartialInvoiceAction(false);
+                    }}
+                    placeholder={`Enter amount up to ₹${grandTotal.toLocaleString()}`}
+                  />
+                  <div className="partial-payment-hint">
+                    {partialPaymentAmount && Number(partialPaymentAmount) > 0
+                      ? `Balance due: ₹${Math.max(grandTotal - Number(partialPaymentAmount), 0).toLocaleString()}`
+                      : `Total bill: ₹${grandTotal.toLocaleString()}`}
+                  </div>
+                </div>
+
                 <div className="payment-dialog-actions">
-                  <button type="button" className="dialog-btn dialog-btn-secondary" onClick={() => handlePendingInvoiceDecision(false)}>
+                  <button type="button" className="dialog-btn dialog-btn-secondary" onClick={() => handlePendingInvoiceDecision('cancel')}>
                     Cancel
                   </button>
-                  <button type="button" className="dialog-btn dialog-btn-primary" onClick={() => handlePendingInvoiceDecision(true)}>
-                    Proceed anyway
+                  <button
+                    type="button"
+                    className="dialog-btn dialog-btn-primary"
+                    onClick={() => {
+                      if (showPartialInvoiceAction) {
+                        handlePendingInvoiceDecision('partial-final');
+                        return;
+                      }
+                      handlePendingInvoiceDecision('partial-select');
+                    }}
+                  >
+                    {showPartialInvoiceAction ? 'Create final invoice' : 'Partially paid'}
                   </button>
                 </div>
               </>
@@ -719,23 +1351,58 @@ const BillingPage = () => {
         <div className="billing-left">
           <div className="customer-section">
             <h3>👤 Customer Details</h3>
-            <input 
-              placeholder="Customer Name" 
-              value={customer.name}
-              onChange={e => setCustomer({...customer, name: e.target.value})}
-              className="input-field"
-            />
+            <div className="customer-name-field-wrap">
+              <input 
+                placeholder="Customer Name" 
+                value={customer.name}
+                onChange={e => {
+                  const nextValue = e.target.value;
+                  setCustomer({ ...customer, name: nextValue });
+                  setCustomerSelectionLocked(false);
+                  if (!nextValue.trim()) {
+                    setCustomerSuggestions([]);
+                  }
+                }}
+                className="input-field"
+                disabled={!isBillingWritable}
+              />
+              {!customerSelectionLocked && customerSuggestions.length > 0 && (
+                <div className="customer-suggestions">
+                  {customerSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.key}
+                      type="button"
+                      className="customer-suggestion-item"
+                      onClick={() => {
+                        setCustomer({
+                          name: suggestion.name,
+                          phone: suggestion.phone || customer.phone,
+                          email: suggestion.email || customer.email,
+                        });
+                        setCustomerSuggestions([]);
+                        setCustomerSelectionLocked(true);
+                      }}
+                    >
+                      <span className="customer-suggestion-name">{suggestion.name}</span>
+                      {suggestion.phone && <span className="customer-suggestion-meta">{suggestion.phone}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <input 
               placeholder="📱 Phone" 
               value={customer.phone}
               onChange={e => setCustomer({...customer, phone: e.target.value})}
               className="input-field"
+              disabled={!isBillingWritable}
             />
             <input 
               placeholder="✉️ Email (optional)" 
               value={customer.email}
               onChange={e => setCustomer({...customer, email: e.target.value})}
               className="input-field"
+              disabled={!isBillingWritable}
             />
           </div>
 
@@ -752,7 +1419,7 @@ const BillingPage = () => {
             <div className="products-grid">
               {filteredProducts.length > 0 ? (
                 filteredProducts.map(product => (
-                  <div key={product.id} className="product-card" onClick={() => addToCart(product)}>
+                  <div key={product.id} className="product-card" onClick={() => isBillingWritable && addToCart(product)}>
                     <div className="product-info">
                       <div className="product-card-topline">
                         <h4>{product.name}</h4>
@@ -760,7 +1427,17 @@ const BillingPage = () => {
                           <span className="product-popular-tag">Popular</span>
                         )}
                       </div>
-                      <p className="price-gst">₹{product.price.toLocaleString()} + {product.gst}% GST</p>
+                      <p className="price-gst">
+                        ₹{product.price.toLocaleString()}
+                        {isGstBill && (
+                          <>
+                            {' + '}{product.gst}% GST
+                          </>
+                        )}
+                        {Number(product.mrp ?? 0) > 0 && (
+                          <span className="mrp-tag"> | MRP ₹{Number(product.mrp).toLocaleString()}</span>
+                        )}
+                      </p>
                       <small>
                         HSN: {product.hsn} | Stock: {product.stock}
                         {Number(product.salesCount ?? 0) > 0 ? ` | Sold: ${product.salesCount}` : ''}
@@ -778,14 +1455,25 @@ const BillingPage = () => {
         {/* Right: Cart + Payment */}
         <div className="billing-right">
           <div className="cart-section">
-            <h3>🛒 Cart ({cart.reduce((sum, i) => sum + i.qty, 0)} items)</h3>
-            <div className="cart-items">
-              {cart.map(item => {
-                const itemGstAmount = (item.price * item.qty * item.gst / 100);
+            <h3>🛒 Cart ({cart.length} products · {cartQuantity} units)</h3>
+            <p className="cart-live-notice" aria-live="polite">{cartNotice}</p>
+            <div className="cart-items" ref={cartItemsRef} aria-label="Cart items">
+              {cart.length === 0 ? (
+                <p className="cart-empty-state">Your cart is empty. Select a product to get started.</p>
+              ) : cart.map(item => {
+                const taxSummary = getItemTaxSummary(item);
+                const itemGstAmount = billType === BILL_TYPES.NON_GST ? 0 : taxSummary.taxAmount;
                 const itemTotalWithGst = (item.price * item.qty) + itemGstAmount;
                 
                 return (
-                  <div key={item.id} className="cart-item">
+                  <div
+                    key={item.id}
+                    className="cart-item"
+                    ref={(element) => {
+                      if (element) cartItemRefs.current.set(item.id, element);
+                      else cartItemRefs.current.delete(item.id);
+                    }}
+                  >
                     <div className="cart-item-left">
                       <h4>{item.name}</h4>
                       <div className="cart-price-row">
@@ -802,12 +1490,14 @@ const BillingPage = () => {
                         ) : (
                           <span 
                             className="price-display"
-                            onClick={() => setEditingPriceId(item.id)}
+                            onClick={() => isBillingWritable && setEditingPriceId(item.id)}
                           >
                             ₹{item.price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                           </span>
                         )}
-                        <span className="gst-equation">+ {item.gst}% GST</span>
+                        {isGstBill ? (
+                          <span className="gst-equation">+ {taxSummary.gstRate}% GST</span>
+                        ) : null}
                         <span className="item-total-equation">
                           = ₹{itemTotalWithGst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                         </span>
@@ -816,10 +1506,10 @@ const BillingPage = () => {
                     </div>
                     <div className="cart-item-right">
                       <div className="qty-controls">
-                        <button onClick={() => updateQty(item.id, item.qty - 1)}>-</button>
+                        <button onClick={() => updateQty(item.id, item.qty - 1)} disabled={!isBillingWritable}>-</button>
                         <span>{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, item.qty + 1)}>+</button>
-                        <button className="remove" onClick={() => removeFromCart(item.id)}>✕</button>
+                        <button onClick={() => updateQty(item.id, item.qty + 1)} disabled={!isBillingWritable}>+</button>
+                        <button className="remove" onClick={() => removeFromCart(item.id)} disabled={!isBillingWritable}>✕</button>
                       </div>
                     </div>
                   </div>
@@ -827,32 +1517,48 @@ const BillingPage = () => {
               })}
             </div>
 
-            <div className="totals">
+            <div className="totals" aria-live="polite" aria-atomic="true">
               <div className="total-row">
                 <span>Subtotal:</span>
                 <span>₹{subtotal.toLocaleString()}</span>
               </div>
-              <div className="total-row gst-row">
-                <span>GST ({cart.length > 0 ? `${((gstAmount/subtotal)*100).toFixed(1)}%` : '0%'}):</span>
-                <span>₹{gstAmount.toLocaleString()}</span>
-              </div>
+              {isGstBill && (
+                <div className="total-row gst-row">
+                  <span>{gstSummaryLabel}:</span>
+                  <span>₹{gstAmount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="grand-total">
                 <span>Grand Total:</span>
                 <span>₹{grandTotal.toLocaleString()}</span>
               </div>
             </div>
 
+            <button
+              type="button"
+              className={`bill-type-toggle ${isGstBill ? 'gst' : 'non-gst'}`}
+              onClick={() => isBillingWritable && setBillType(isGstBill ? BILL_TYPES.NON_GST : BILL_TYPES.GST)}
+              aria-label={`Switch to ${isGstBill ? 'Non-GST' : 'GST'} billing`}
+              aria-pressed={isGstBill}
+              disabled={!isBillingWritable}
+            >
+              <span className="toggle-track">
+                <span className="toggle-thumb" />
+              </span>
+              <span className="toggle-label">{isGstBill ? 'GST' : 'Non-GST'}</span>
+            </button>
+
             <div className="payment-section">
-              <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="payment-select">
+              <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="payment-select" disabled={!isBillingWritable}>
                 <option>UPI (PhonePe/GPay)</option>
                 <option>Card</option>
                 <option>Cash</option>
                 <option>Wallet</option>
               </select>
-              <div className={`payment-status-pill ${paymentStatus === 'paid' ? 'paid' : 'pending'}`}>
-                {paymentStatus === 'paid' ? 'Payment: Paid' : 'Payment: Pending'}
+              <div className={`payment-status-pill ${paymentStatus === 'paid' ? 'paid' : paymentStatus === 'partial' ? 'partial' : 'pending'}`}>
+                {paymentStatus === 'paid' ? 'Payment: Paid' : paymentStatus === 'partial' ? 'Payment: Partial' : 'Payment: Pending'}
               </div>
-              <button className="pay-btn primary" onClick={generateInvoice}>
+              <button className="pay-btn primary" onClick={generateInvoice} disabled={!isBillingWritable || cart.length === 0}>
                 💳 Pay ₹{grandTotal.toLocaleString()}
               </button>
             </div>

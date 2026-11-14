@@ -1,28 +1,30 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Dashboard from './Dashboard/DashboardEntry.jsx';
+import LedgerReportPage from './Dashboard/LedgerReportPage.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
 import Login from './Login/Login.jsx';
+import PasswordReset from './Login/PasswordReset.jsx';
 import App from './App.jsx';
 import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
 import SignupPage from './Login/SignupPage.jsx';
 import SellPage from './sell/SellPage.jsx';
 import MfaScreen from './auth/mfa/MfaScreen.jsx';
+import AccessDenied from './Security/AccessDenied.jsx';
+import UsersRolesPage from './Security/UsersRolesPage.jsx';
+import StoreUsersPage from './Security/StoreUsersPage.jsx';
+import CustomerPage from './Customers/CustomerPage.jsx';
 import { resolveMfaContext } from './auth/mfa/mfaService.js';
-import { refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile } from './Config/api.js';
-
-const readPendingMfaUser = () => {
-  const stored = localStorage.getItem('pendingMfaUser');
-  if (!stored) return null;
-
-  try {
-    return JSON.parse(stored);
-  } catch {
-    localStorage.removeItem('pendingMfaUser');
-    return null;
-  }
-};
+import AuditPage from './Audit/AuditPage.jsx';
+import AdminDashboardPage from './Admin/AdminDashboardPage.jsx';
+import AdminRetailersPage from './Admin/AdminRetailersPage.jsx';
+import AdminReportsPage from './Admin/AdminReportsPage.jsx';
+import AdminSignupApprovalsPage from './Admin/AdminSignupApprovalsPage.jsx';
+import AdminUsersPage from './Admin/AdminUsersPage.jsx';
+import AdminAuditLogsPage from './Admin/AdminAuditLogsPage.jsx';
+import { API_ENDPOINTS, refreshAccessToken, setAccessToken, getAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile, advanceAuthSessionRevision } from './Config/api.js';
+import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canAccessAdminPanel, canManageUsers, canAccessAudit } from './Security/storeRoles.js';
 
 const clearAuthStorage = () => {
   clearAuthState();
@@ -32,6 +34,19 @@ const clearAuthStorage = () => {
   sessionStorage.removeItem('mfaVerified');
 };
 
+const clearScopedShopProfiles = () => {
+  try {
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith('shopProfile:'))
+      .forEach((key) => localStorage.removeItem(key));
+  } catch {
+    // Ignore storage access errors.
+  }
+};
+
+const SESSION_VALIDATION_INTERVAL_MS = 2 * 60 * 1000;
+const SESSION_VALIDATION_MIN_GAP_MS = 30 * 1000;
+
 const AppRoutes = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -39,8 +54,13 @@ const AppRoutes = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const lastSessionValidationAtRef = useRef(0);
+  const sessionValidationInFlightRef = useRef(false);
+  const authTransitionVersionRef = useRef(0);
 
   const logoutUser = useCallback(async (callBackend = true) => {
+    authTransitionVersionRef.current += 1;
+    advanceAuthSessionRevision();
     try {
       if (callBackend) await logoutRequest().catch(() => {});
     } finally {
@@ -55,13 +75,41 @@ const AppRoutes = () => {
   }, [navigate]);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => logoutUser(false));
+    setUnauthorizedHandler(() => {
+      logoutUser(false);
+    });
     return () => setUnauthorizedHandler(null);
   }, [logoutUser]);
+
+  const validateServerSession = useCallback(async (reason = 'periodic') => {
+    if (!isAuthenticated || loading) return;
+    if (sessionValidationInFlightRef.current) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+    const now = Date.now();
+    if (now - lastSessionValidationAtRef.current < SESSION_VALIDATION_MIN_GAP_MS) return;
+
+    sessionValidationInFlightRef.current = true;
+    try {
+      await getCurrentUserProfile();
+      lastSessionValidationAtRef.current = now;
+    } catch (error) {
+      // apiFetch already handles unauthorized response by clearing auth state and invoking the unauthorized handler.
+      if (reason !== 'periodic') {
+        console.warn(`Session validation failed during ${reason}:`, error);
+      }
+    } finally {
+      sessionValidationInFlightRef.current = false;
+    }
+  }, [isAuthenticated, loading]);
+
+  // Do not call backend logout on beforeunload/pagehide.
+  // Browser refresh also triggers these events and would invalidate refresh tokens.
 
   useEffect(() => {
     const onStorage = (event) => {
       if (event.key === 'auth_logout') {
+        authTransitionVersionRef.current += 1;
         clearAuthStorage();
         emitAuthToast('Your session expired. Please log in again.');
         setIsAuthenticated(false);
@@ -76,23 +124,89 @@ const AppRoutes = () => {
       window.setTimeout(() => setToast(null), 3200);
     };
 
+    const onApiToast = (event) => {
+      const message = event?.detail?.message || 'Request failed. Please try again.';
+      setToast(message);
+      window.setTimeout(() => setToast(null), 3200);
+    };
+
     window.addEventListener('storage', onStorage);
     window.addEventListener('auth:toast', onToast);
+    window.addEventListener('api:toast', onApiToast);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('auth:toast', onToast);
+      window.removeEventListener('api:toast', onApiToast);
     };
   }, [navigate]);
 
   useEffect(() => {
+    if (!isAuthenticated || loading) return undefined;
+
+    const onFocus = () => {
+      validateServerSession('focus');
+    };
+
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        validateServerSession('visibility');
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        validateServerSession('periodic');
+      }
+    }, SESSION_VALIDATION_INTERVAL_MS);
+
+    window.addEventListener('focus', onFocus);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
+
+    // Validate immediately after auth state is restored to catch server-side revoked sessions.
+    validateServerSession('startup');
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+    };
+  }, [isAuthenticated, loading, validateServerSession]);
+
+  useEffect(() => {
     let active = true;
     const restoreSession = async () => {
+      const transitionVersion = authTransitionVersionRef.current;
+      const isCurrentTransition = () => active && transitionVersion === authTransitionVersionRef.current;
       try {
         const storedUser = localStorage.getItem('user');
         const parsedUser = storedUser ? JSON.parse(storedUser) : null;
-        if (!parsedUser) return;
+        if (!parsedUser) {
+          if (isCurrentTransition()) setLoading(false);
+          return;
+        }
 
-        await refreshAccessToken(localStorage.getItem('username') || parsedUser.name || '');
+        try {
+          await refreshAccessToken(localStorage.getItem('username') || parsedUser.username || parsedUser.userName || parsedUser.name || '');
+        } catch (error) {
+          console.warn('Session refresh failed during app startup.', error);
+          if (isCurrentTransition()) {
+            if (getAccessToken()) {
+              setUser(parsedUser);
+              setIsAuthenticated(true);
+            } else {
+              clearAuthStorage();
+              emitAuthToast('Your session expired. Please log in again.');
+              emitAuthLogout();
+              setUser(null);
+              setIsAuthenticated(false);
+            }
+          }
+          return;
+        }
 
         let nextUser = parsedUser;
         try {
@@ -101,22 +215,30 @@ const AppRoutes = () => {
             ...parsedUser,
             ...profile,
             id: profile.id ?? parsedUser.id ?? null,
-            username: profile.username || profile.ownerName || profile.name || parsedUser.username || parsedUser.name || 'user',
-            name: profile.ownerName || profile.name || profile.businessName || parsedUser.name || parsedUser.username || 'User',
+            username: profile.username || profile.userName || parsedUser.username || parsedUser.userName || profile.email || parsedUser.email || 'user',
+            name: profile.ownerName || profile.name || profile.businessName || parsedUser.name || parsedUser.ownerName || 'User',
             email: profile.email || parsedUser.email || '',
-            role: profile.role || parsedUser.role || 'ADMIN',
+            role: normalizeStoreRole(profile.role || parsedUser.role),
           };
         } catch {
           // Fall back to the stored session user if the profile endpoint is unavailable.
+          nextUser = {
+            ...parsedUser,
+            role: normalizeStoreRole(parsedUser.role),
+          };
         }
 
-        if (active) {
+        if (isCurrentTransition()) {
           setUser(nextUser);
           setIsAuthenticated(true);
           localStorage.setItem('user', JSON.stringify(nextUser));
         }
-      } catch {
-        clearAuthStorage();
+      } catch (error) {
+        console.warn('Session restoration failed:', error);
+        if (isCurrentTransition()) {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -126,20 +248,30 @@ const AppRoutes = () => {
   }, []);
 
   const loginUser = (userData) => {
+    authTransitionVersionRef.current += 1;
+    advanceAuthSessionRevision();
     const normalizedUser = {
       ...userData,
-      username: userData?.username || userData?.name || 'user',
-      name: userData?.name || userData?.username || 'User'
+      username: userData?.username || userData?.userName || userData?.email || 'user',
+      name: userData?.name || userData?.ownerName || userData?.businessName || userData?.username || 'User',
+      role: normalizeStoreRole(userData?.role),
     };
 
     const backendConfig = userData?.config || {};
     const mfaEnabled = resolveMfaContext(backendConfig, userData).enabled;
+    const isPlatformAdmin = canAccessAdminPanel(normalizedUser.role);
+
+    clearScopedShopProfiles();
 
     if (mfaEnabled) {
       const pendingUser = { ...normalizedUser, mfaRequired: true, config: backendConfig };
+      setAccessToken(null);
+      sessionStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      localStorage.removeItem('username');
       setIsAuthenticated(false);
       setUser(pendingUser);
-      localStorage.setItem('pendingMfaUser', JSON.stringify(pendingUser));
+      localStorage.removeItem('pendingMfaUser');
       navigate('/mfa', { replace: true });
       return;
     }
@@ -149,22 +281,51 @@ const AppRoutes = () => {
     localStorage.setItem('user', JSON.stringify(normalizedUser));
     localStorage.removeItem('pendingMfaUser');
     localStorage.removeItem('shopProfile');
-    navigate('/dashboard', { replace: true });
+    navigate(isPlatformAdmin ? '/admin/dashboard' : '/dashboard', { replace: true });
   };
 
-  const handleMfaVerified = (verifiedUser) => {
+  const handleMfaVerified = async (verifiedUser) => {
+    authTransitionVersionRef.current += 1;
+    advanceAuthSessionRevision();
+    const verifiedProfile = { ...(verifiedUser || {}) };
+    let nextAccessToken = verifiedProfile.accessToken || verifiedProfile.token || verifiedProfile.firebaseIdToken || null;
+    const refreshToken = verifiedProfile.refreshToken;
+    delete verifiedProfile.accessToken;
+    delete verifiedProfile.token;
+    delete verifiedProfile.firebaseIdToken;
+    delete verifiedProfile.refreshToken;
+    delete verifiedProfile.mfaChallenge;
+
     const normalizedUser = {
-      ...verifiedUser,
-      username: verifiedUser?.username || verifiedUser?.name || 'user',
-      name: verifiedUser?.name || verifiedUser?.username || 'User'
+      ...verifiedProfile,
+      username: verifiedProfile?.username || verifiedProfile?.userName || verifiedProfile?.email || 'user',
+      name: verifiedProfile?.name || verifiedProfile?.ownerName || verifiedProfile?.businessName || verifiedProfile?.username || 'User',
+      role: normalizeStoreRole(verifiedProfile?.role),
+      mfaRequired: false,
     };
+
+    if (refreshToken) {
+      sessionStorage.setItem('refreshToken', refreshToken);
+    }
+    localStorage.setItem('username', normalizedUser.username);
+    if (!nextAccessToken) {
+      try {
+        nextAccessToken = await refreshAccessToken(normalizedUser.username);
+      } catch (error) {
+        throw new Error('Your code was accepted, but the app could not establish a session. Please sign in again or contact support.');
+      }
+    }
+
+    setAccessToken(nextAccessToken);
+    clearScopedShopProfiles();
 
     setIsAuthenticated(true);
     setUser(normalizedUser);
     localStorage.setItem('user', JSON.stringify(normalizedUser));
     localStorage.removeItem('pendingMfaUser');
     sessionStorage.setItem('mfaVerified', 'true');
-    navigate('/dashboard', { replace: true });
+    lastSessionValidationAtRef.current = Date.now();
+    sessionValidationInFlightRef.current = false;
   };
 
   useEffect(() => {
@@ -177,7 +338,13 @@ const AppRoutes = () => {
     return <div className="loading-screen">Loading...</div>;
   }
 
-  const pendingMfaUser = readPendingMfaUser();
+  const role = normalizeStoreRole(user?.role);
+  const canOpenBilling = canAccessBilling(role);
+  const canOpenInventory = canAccessInventory(role);
+  const canOpenSellOrders = canAccessSellOrders(role);
+  const canOpenAudit = canAccessAudit(role);
+  const canViewAdminPanel = canAccessAdminPanel(role);
+  const canManageUsersList = canManageUsers(role);
 
   return (
     <>
@@ -189,14 +356,39 @@ const AppRoutes = () => {
 
       <Routes>
       <Route path="/login" element={<Login onLogin={loginUser} />} />
-      <Route path="/mfa" element={user?.mfaRequired || pendingMfaUser ? <MfaScreen user={user || pendingMfaUser} onVerified={handleMfaVerified} onCancel={logoutUser} /> : <Navigate to="/login" replace />} />
-      <Route path="/" element={!isAuthenticated ? <App /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/dashboard" element={isAuthenticated ? <Dashboard username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
+      <Route path="/forgot-password" element={<Login onLogin={loginUser} />} />
+      <Route path="/reset-password" element={<PasswordReset />} />
+      <Route
+        path="/mfa"
+        element={user?.mfaRequired
+          ? <MfaScreen user={user} onVerified={handleMfaVerified} onCancel={logoutUser} />
+          : user?.mfaVerified && !isAuthenticated
+            ? <div className="loading-screen" role="status">Completing sign-in...</div>
+            : isAuthenticated
+              ? <Navigate to={canAccessAdminPanel(role) ? '/admin/dashboard' : '/dashboard'} replace />
+              : <Navigate to="/login" replace />}
+      />
+      <Route path="/" element={!isAuthenticated ? <App /> : (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />)} />
+      <Route path="/dashboard" element={isAuthenticated ? (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : <Dashboard username={user?.name || ''} onLogout={logoutUser} />) : <Navigate to="/login" replace />} />
       <Route path="/profile" element={isAuthenticated ? <ProfilePage username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
-      <Route path="/billing" element={isAuthenticated ? <BillingPage /> : <Navigate to="/login" replace />} />
-      <Route path="/inventory" element={isAuthenticated ? <InventoryPage /> : <Navigate to="/login" replace />} />
+      <Route path="/billing" element={isAuthenticated ? (canOpenBilling ? <BillingPage /> : <Navigate to="/access-denied" state={{ from: '/billing', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/ledger" element={isAuthenticated ? (canOpenBilling ? <LedgerReportPage /> : <Navigate to="/access-denied" state={{ from: '/ledger', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/inventory" element={isAuthenticated ? (canOpenInventory ? <InventoryPage /> : <Navigate to="/access-denied" state={{ from: '/inventory', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/signup" element={<SignupPage />} />
-      <Route path="/sell" element={isAuthenticated ? <SellPage /> : <Navigate to="/login" replace />} />
+      <Route path="/customer" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
+      <Route path="/customers" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
+      <Route path="/sell" element={isAuthenticated ? (canOpenSellOrders ? <SellPage /> : <Navigate to="/access-denied" state={{ from: '/sell', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/audit" element={isAuthenticated ? (canOpenAudit ? <AuditPage /> : <Navigate to="/access-denied" state={{ from: '/audit', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin" element={isAuthenticated ? (canViewAdminPanel ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/access-denied" state={{ from: '/admin', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/dashboard" element={isAuthenticated ? (canViewAdminPanel ? <AdminDashboardPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/dashboard', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/retailers" element={isAuthenticated ? (canViewAdminPanel ? <AdminRetailersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/retailers', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/reports" element={isAuthenticated ? (canViewAdminPanel ? <AdminReportsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/reports', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/signup-approvals" element={isAuthenticated ? (canViewAdminPanel ? <AdminSignupApprovalsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/signup-approvals', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/users" element={isAuthenticated ? (canManageUsersList ? <AdminUsersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/users', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/audit-logs" element={isAuthenticated ? (canViewAdminPanel ? <AdminAuditLogsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/audit-logs', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/users-roles" element={isAuthenticated ? (canManageUsersList ? <UsersRolesPage /> : <Navigate to="/access-denied" state={{ from: '/users-roles', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/store-users" element={isAuthenticated ? (canManageUsersList ? <StoreUsersPage /> : <Navigate to="/access-denied" state={{ from: '/store-users', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/access-denied" element={isAuthenticated ? <AccessDenied /> : <Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
     </>

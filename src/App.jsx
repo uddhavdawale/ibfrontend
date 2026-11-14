@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import './App.css';
+import { APP_CONFIG } from './Config/appConfig';
+import ProductTour from './modules/marketing/ProductTour';
 
 const themeOptions = [
   { value: 'light', label: 'Light' },
@@ -26,13 +28,13 @@ function App() {
           <div className="brand-mark">
             <span className="logo-icon">📦</span>
             <div>
-              <strong>Veyra</strong>
-              <small>CA + Retail Suite</small>
+              <strong>{APP_CONFIG.appName}</strong>
+              <small>{APP_CONFIG.appTagline}</small>
             </div>
           </div>
           <div className="nav-actions">
-            <span className="nav-pill">GST Ready</span>
-            <span className="nav-pill muted">Retail Ops</span>
+            <span className="nav-pill">Made for Indian retail</span>
+            <span className="nav-pill muted">Stock · Billing · Reports</span>
             <div className="theme-switcher" aria-label="Theme selector">
               {themeOptions.map((option) => (
                 <button
@@ -52,29 +54,29 @@ function App() {
 
       <main className="landing-main">
         <section className="hero-copy">
-          <div className="eyebrow">Built for modern finance teams</div>
-          <h1>Smarter inventory, billing, and GST operations for retailers and CAs.</h1>
+          <div className="eyebrow">Your shop, running in sync</div>
+          <h1>Everyday retail operations, made simpler.</h1>
           <p>
-            Manage stock movement, invoice flows, receivables, and compliance from one elegant workspace designed for fast-moving businesses and trusted advisory teams.
+            Keep products and stock organized, create customer invoices, track dues, and review business reports from one workspace built for Indian retailers and their CA partners.
           </p>
 
           <div className="hero-actions">
-            <Link to="/login" className="cta-button primary">Access dashboard</Link>
-            <Link to="/signup" className="cta-button secondary">Create account</Link>
+            <Link to="/login" className="cta-button primary">Sign in to your workspace</Link>
+            <Link to="/signup" className="cta-button secondary">Set up your account</Link>
           </div>
 
           <div className="proof-row">
             <div>
-              <strong>12k+</strong>
-              <span>Invoices processed</span>
+              <strong>01</strong>
+              <span>Manage products</span>
             </div>
             <div>
-              <strong>99.2%</strong>
-              <span>Data accuracy</span>
+              <strong>02</strong>
+              <span>Bill customers</span>
             </div>
             <div>
-              <strong>24/7</strong>
-              <span>Monitoring</span>
+              <strong>03</strong>
+              <span>Review reports</span>
             </div>
           </div>
         </section>
@@ -83,16 +85,16 @@ function App() {
           <div className="panel-card primary-card">
             <div className="card-topline">
               <span className="status-dot" />
-              Live operational snapshot
+              Your retail workspace
             </div>
             <div className="metric-stack">
               <div>
-                <label>Monthly sales</label>
-                <strong>₹18.4L</strong>
+                <label>Products & stock</label>
+                <strong>Know what is on hand</strong>
               </div>
               <div>
-                <label>Pending collections</label>
-                <strong>₹2.6L</strong>
+                <label>Sales & invoices</label>
+                <strong>Keep every sale recorded</strong>
               </div>
             </div>
             <div className="mini-chart">
@@ -110,52 +112,54 @@ function App() {
               <span className="icon-badge purple">📦</span>
               <div>
                 <strong>Inventory health</strong>
-                <small>8 low-stock alerts</small>
+                <small>Keep an eye on stock levels</small>
               </div>
             </div>
             <div className="card-list-item">
               <span className="icon-badge blue">💰</span>
               <div>
                 <strong>Billing flow</strong>
-                <small>42 invoices this week</small>
+                <small>Create GST and non-GST bills</small>
               </div>
             </div>
             <div className="card-list-item">
               <span className="icon-badge green">📋</span>
               <div>
                 <strong>GST compliance</strong>
-                <small>2 filings ready</small>
+                <small>Review your business reports</small>
               </div>
             </div>
           </div>
         </section>
       </main>
 
+      <ProductTour />
+
       <section className="feature-band">
         <div className="feature-card">
           <span>📊</span>
-          <h3>Real-time dashboards</h3>
-          <p>Track sales, cash flow, and operational metrics across retail branches and partner accounts.</p>
+          <h3>A clear business overview</h3>
+          <p>Review sales, customer dues, and day-to-day activity from your dashboard.</p>
         </div>
         <div className="feature-card">
           <span>📦</span>
           <h3>Inventory intelligence</h3>
-          <p>Monitor stock health, reorder thresholds, and product movement with actionable alerts.</p>
+          <p>Organize your products and follow stock movement as you buy and sell.</p>
         </div>
         <div className="feature-card">
           <span>💳</span>
-          <h3>Billing + collections</h3>
-          <p>Prepare invoices, reconcile payments, and reduce delays in customer follow-up.</p>
+          <h3>Billing and customer dues</h3>
+          <p>Create invoices, record payments, and keep customer balances close at hand.</p>
         </div>
         <div className="feature-card">
           <span>🧾</span>
-          <h3>GST / CA workflows</h3>
-          <p>Keep filing summaries, taxable values, and reporting aligned with compliance calendars.</p>
+          <h3>GST-ready records</h3>
+          <p>Keep invoice and tax details organized for your own review and CA workflows.</p>
         </div>
       </section>
 
       <footer className="landing-footer">
-        <p>© 2026 Veyra. Designed for retailers, finance teams, and CA partners.</p>
+        <p>© {APP_CONFIG.footerYear} {APP_CONFIG.appName}. Tools for Indian retailers and their accounting partners.</p>
       </footer>
     </div>
   );

@@ -1,6 +1,7 @@
 export const normalizeInvoiceData = (invoiceData = {}) => {
   const items = Array.isArray(invoiceData.items) ? invoiceData.items : [];
   const rupee = 'Rs.';
+  const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
 
   const subtotal = Number(
     invoiceData.subtotal ??
@@ -11,17 +12,24 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
   );
 
   const gstTotal = Number(
-    invoiceData.gstTotal ??
+    isNonGstInvoice ? 0 : (
+      invoiceData.gstTotal ??
       invoiceData.totalGst ??
       items.reduce((sum, item) => {
         const amount = Number(item.price ?? item.rate ?? 0) * Number(item.qty ?? 0);
         const gstPercent = Number(item.gst ?? 0);
         return sum + (amount * gstPercent) / 100;
       }, 0)
+    )
   );
 
   const grandTotal = Number(invoiceData.grandTotal ?? subtotal + gstTotal);
   const totalQty = items.reduce((sum, item) => sum + Number(item.qty ?? 0), 0);
+  const receivedAmount = Number(invoiceData.receivedAmount ?? invoiceData.paidAmount ?? invoiceData.amountPaid ?? invoiceData.amountReceived ?? 0);
+  const previousBalance = Number(invoiceData.previousBalance ?? 0);
+  const invoiceDueAmount = Math.max(grandTotal - receivedAmount, 0);
+  const balanceAmount = Number(invoiceData.balanceAmount ?? previousBalance + invoiceDueAmount);
+  const currentBalance = Number(invoiceData.currentBalance ?? balanceAmount);
 
   const customerName = invoiceData.customer?.name ?? invoiceData.customerName ?? 'Walk-in Customer';
   const customerPhone = invoiceData.customer?.phone ?? invoiceData.customerPhone ?? '0000000000';
@@ -38,6 +46,8 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     const gstValue = Number(((amount * gstPercent) / 100).toFixed(2));
     const total = Number((amount + gstValue).toFixed(2));
 
+    // Always emit the same 9-column shape so GST and Non-GST invoices render an
+    // identical item table structure. Non-GST rows simply carry 0% / Rs.0.00 GST.
     return [
       String(index + 1),
       item.item || item.name || '-',
@@ -45,9 +55,9 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
       String(qty),
       `${rupee}${rate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       `${rupee}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `${gstPercent}%`,
-      `${rupee}${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `${rupee}${total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `${isNonGstInvoice ? 0 : gstPercent}%`,
+      `${rupee}${(isNonGstInvoice ? 0 : gstValue).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `${rupee}${(isNonGstInvoice ? amount : total).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     ];
   });
 
@@ -57,6 +67,10 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     gstTotal,
     grandTotal,
     totalQty,
+    receivedAmount,
+    previousBalance,
+    balanceAmount,
+    currentBalance,
     customerName,
     customerPhone,
     paymentMethod,

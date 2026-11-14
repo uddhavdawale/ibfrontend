@@ -2,12 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './SignupPage.css';
 import { API_BASE_URL } from '../Config/api';
+import { APP_CONFIG } from '../Config/appConfig';
+import ProductTour from '../modules/marketing/ProductTour';
 
 const themeOptions = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
   { value: 'aurora', label: 'Aurora' }
 ];
+
+const MIN_PASSWORD_LENGTH = 12;
 
 const SignupPage = () => {
   const navigate = useNavigate();
@@ -16,7 +20,7 @@ const SignupPage = () => {
   const [role, setRole] = useState('retailer');
   const [formData, setFormData] = useState({
     // Common fields
-    businessName: '', ownerName: '', email: '', phone: '', password: '',
+    businessName: '', ownerName: '', username: '', email: '', phone: '', password: '',
     confirmPassword: '', address: '', city: 'Pune', pincode: '',
     
     // Retailer fields
@@ -28,6 +32,15 @@ const SignupPage = () => {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
+  });
+
+  const isPasswordLengthValid = formData.password.length >= MIN_PASSWORD_LENGTH;
+  const isPasswordMatch = formData.password.length > 0 && formData.password === formData.confirmPassword;
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -35,37 +48,83 @@ const SignupPage = () => {
   }, [theme]);
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
     setError('');
+    if (fieldErrors[name]) {
+      setFieldErrors({ ...fieldErrors, [name]: '' });
+    }
+  };
+
+  const mapSignupErrorToFields = (message = '') => {
+    const normalized = String(message || '').toLowerCase();
+    const nextFieldErrors = { username: '', email: '', password: '', confirmPassword: '' };
+
+    if (normalized.includes('username')) {
+      nextFieldErrors.username = message || 'Username is already taken';
+    }
+
+    if (normalized.includes('at least 12 characters') || normalized.includes('password')) {
+      nextFieldErrors.password = message || 'Password must be at least 12 characters long';
+    }
+
+    if (normalized.includes('email already exists') || normalized.includes('email')) {
+      nextFieldErrors.email = message || 'Email already exists';
+    }
+
+    return nextFieldErrors;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const normalizedUsername = formData.username.trim();
+    if (!normalizedUsername) {
+      setFieldErrors({
+        username: 'Username is required',
+        email: '',
+        password: '',
+        confirmPassword: ''
+      });
+      setError('Username is required');
+      return;
+    }
     
     if (formData.password !== formData.confirmPassword) {
+      setFieldErrors({
+        username: '',
+        email: '',
+        password: '',
+        confirmPassword: 'Passwords do not match'
+      });
       setError('Passwords do not match');
       return;
     }
     
-    if (formData.password.length < 8) {
-      setError('Password must be 8+ characters');
+    if (!isPasswordLengthValid) {
+      setFieldErrors({
+        username: '',
+        email: '',
+        password: 'Password must be at least 12 characters long',
+        confirmPassword: ''
+      });
+      setError('Password must be at least 12 characters long');
       return;
     }
 
     setLoading(true);
+    setFieldErrors({ username: '', email: '', password: '', confirmPassword: '' });
     try {
-      // 👈 ENCRYPTION READY
-      const signupFields = { ...formData };
+      const signupFields = { ...formData, username: normalizedUsername };
       delete signupFields.confirmPassword;
+      delete signupFields.password;
       const payload = {
         role,
         ...signupFields,
-        // Preserve the backend's existing passwordHash request field.
-        // This is Base64 encoding, not BCrypt; the backend must BCrypt-hash it.
-        passwordHash: btoa(formData.password),
+        // Backend expects this field name and now performs secure hashing server-side.
+        passwordHash: formData.password,
       };
-      //http://localhost:8080/api/signup
-      //  https://ibbackend-production.up.railway.app/api/signup
+
       const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,10 +144,18 @@ const SignupPage = () => {
         alert(`${role.toUpperCase()} Account Created!`);
         navigate('/login');
       } else {
-        setError(data.message || `Signup failed (${response.status}). Check the backend logs.`);
+        const backendMessage = data.message || data.error || data.details || '';
+        if (response.status === 400) {
+          setFieldErrors(mapSignupErrorToFields(backendMessage));
+          setError(backendMessage || 'Invalid signup request. Please review your inputs.');
+        } else {
+          setFieldErrors({ email: '', password: '', confirmPassword: '' });
+          setError(backendMessage || `Signup failed (${response.status}).`);
+        }
       }
     } catch (err) {
-      setError('Network error');
+      setFieldErrors({ email: '', password: '', confirmPassword: '' });
+      setError('Unable to sign up right now. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -103,7 +170,7 @@ const SignupPage = () => {
         <div className="brand-row">
           <div className="auth-logo">
             <span className="logo-icon">📦</span>
-            <span className="logo-text">Veyra</span>
+            <span className="logo-text">{APP_CONFIG.appName}</span>
           </div>
 
           <div className="signup-theme-switcher" aria-label="Theme selector">
@@ -120,33 +187,16 @@ const SignupPage = () => {
           </div>
         </div>
 
-        <h1>Launch smarter operations from day one.</h1>
+        <h1>A better routine for your shop starts here.</h1>
         <p>
-          Build your retail or advisory practice with one dashboard for inventory, billing,
-          collections, and GST-ready reporting.
+          Bring products, invoices, customer balances, and business reports into one place with {APP_CONFIG.appName}.
         </p>
 
-        <div className="visual-stats">
-          <div className="mini-stat">
-            <strong>18k+</strong>
-            <span>Accounts onboarded</span>
-          </div>
-          <div className="mini-stat">
-            <strong>99.2%</strong>
-            <span>Data accuracy</span>
-          </div>
-          <div className="mini-stat">
-            <strong>24/7</strong>
-            <span>Monitoring</span>
-          </div>
-        </div>
-
         <div className="feature-list">
-          <div>Fast onboarding</div>
-          <div>GST ready</div>
-          <div>Inventory aware</div>
-          <div>Partner friendly</div>
+          <div>For retailers and CA partners</div>
+          <div>Stock, billing, and reports</div>
         </div>
+        <ProductTour compact />
       </div>
 
       <div className="signup-card">
@@ -155,8 +205,8 @@ const SignupPage = () => {
             <span className="logo-icon">📦</span>
             <span className="logo-text">Create Account</span>
           </div>
-          <h1>Join Veyra</h1>
-          <p>Set up your retailer or CA partner profile.</p>
+          <h1>Join {APP_CONFIG.appName}</h1>
+          <p>Create a workspace for your retail business or CA practice.</p>
         </div>
 
         <div className="input-group">
@@ -200,14 +250,29 @@ const SignupPage = () => {
               <label>Owner/CA Name *</label>
               <div className="input-wrapper">
                 <span className="input-icon">👤</span>
-                <input name="ownerName" placeholder="Uddhav Dawale" onChange={handleChange} required />
+                <input name="ownerName" placeholder="Uddhav Dawale" value={formData.ownerName} onChange={handleChange} required />
               </div>
+            </div>
+            <div className="input-group">
+              <label>Username *</label>
+              <div className="input-wrapper">
+                <span className="input-icon">@</span>
+                <input
+                  name="username"
+                  placeholder="choose-login-name"
+                  value={formData.username}
+                  onChange={handleChange}
+                  className={fieldErrors.username ? 'input-invalid' : ''}
+                  required
+                />
+              </div>
+              {fieldErrors.username && <div className="field-error">{fieldErrors.username}</div>}
             </div>
             <div className="input-group">
               <label>Phone *</label>
               <div className="input-wrapper">
                 <span className="input-icon">📱</span>
-                <input name="phone" type="tel" placeholder="9876543210" onChange={handleChange} required />
+                <input name="phone" type="tel" placeholder="9876543210" value={formData.phone} onChange={handleChange} required />
               </div>
             </div>
           </div>
@@ -216,8 +281,17 @@ const SignupPage = () => {
             <label>Email *</label>
             <div className="input-wrapper">
               <span className="input-icon">✉️</span>
-              <input name="email" type="email" placeholder="name@domain.com" onChange={handleChange} required />
+              <input
+                name="email"
+                type="email"
+                placeholder="name@domain.com"
+                value={formData.email}
+                onChange={handleChange}
+                className={fieldErrors.email ? 'input-invalid' : ''}
+                required
+              />
             </div>
+            {fieldErrors.email && <div className="field-error">{fieldErrors.email}</div>}
           </div>
 
           {isRetailer && (
@@ -226,7 +300,7 @@ const SignupPage = () => {
                 <label>GSTIN</label>
                 <div className="input-wrapper">
                   <span className="input-icon">🆔</span>
-                  <input name="gstin" placeholder="27ABCDE1234F1Z5" onChange={handleChange} />
+                  <input name="gstin" value={formData.gstin} onChange={handleChange} />
                 </div>
               </div>
               <div className="input-group">
@@ -279,7 +353,31 @@ const SignupPage = () => {
             <label>Password *</label>
             <div className="input-wrapper">
               <span className="input-icon">🔒</span>
-              <input name="password" type="password" placeholder="Minimum 8 characters" onChange={handleChange} required />
+              <input
+                name="password"
+                type="password"
+                placeholder="Minimum 12 characters"
+                value={formData.password}
+                onChange={handleChange}
+                className={fieldErrors.password ? 'input-invalid' : ''}
+                required
+              />
+            </div>
+            {formData.password.length > 0 && !isPasswordLengthValid && (
+              <div className="field-error">Password must be at least 12 characters long</div>
+            )}
+            {fieldErrors.password && fieldErrors.password !== 'Password must be at least 12 characters long' && (
+              <div className="field-error">{fieldErrors.password}</div>
+            )}
+            <div className="password-checklist" aria-live="polite">
+              <div className={`password-rule ${isPasswordLengthValid ? 'pass' : 'pending'}`}>
+                <span>{isPasswordLengthValid ? '✓' : '•'}</span>
+                Password must be at least 12 characters long
+              </div>
+              <div className={`password-rule ${isPasswordMatch ? 'pass' : 'pending'}`}>
+                <span>{isPasswordMatch ? '✓' : '•'}</span>
+                Password and confirm password must match
+              </div>
             </div>
           </div>
 
@@ -287,8 +385,17 @@ const SignupPage = () => {
             <label>Confirm Password *</label>
             <div className="input-wrapper">
               <span className="input-icon">🔒</span>
-              <input name="confirmPassword" type="password" placeholder="Retype password" onChange={handleChange} required />
+              <input
+                name="confirmPassword"
+                type="password"
+                placeholder="Retype password"
+                value={formData.confirmPassword}
+                onChange={handleChange}
+                className={fieldErrors.confirmPassword ? 'input-invalid' : ''}
+                required
+              />
             </div>
+            {fieldErrors.confirmPassword && <div className="field-error">{fieldErrors.confirmPassword}</div>}
           </div>
 
           <div className="input-group">
@@ -310,7 +417,7 @@ const SignupPage = () => {
             </div>
           </div>
 
-          <button type="submit" className="signup-btn" disabled={loading}>
+          <button type="submit" className="signup-btn" disabled={loading || !isPasswordLengthValid}>
             {loading ? 'Creating Account...' : `Create ${role === 'retailer' ? 'Retailer' : 'CA Partner'} Account`}
           </button>
         </form>

@@ -1,9 +1,34 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { useNavigate } from 'react-router-dom';
 import './InventoryPage.css';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import logger from '../utils/logger';
 import InventoryUploadDialog from '../modules/inventoryUpload/InventoryUploadDialog';
+import { canWriteInventory, getCurrentUserRole } from '../Security/storeRoles';
+
+const exportInventoryData = (items, format = 'csv') => {
+  const rows = items.map((item) => ({
+    Id: item.id,
+    Product: item.name,
+    Category: item.category || 'General',
+    HSN_SAC: item.hsnSac || item.hsn || item.sku || '-',
+    MRP: Number(item.mrp || 0),
+    Quantity: Number(item.quantity || 0),
+    Min_Stock: Number(item.minStock || 0),
+    Selling_Price: Number(item.price || 0),
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventory');
+
+  const fileExtension = format === 'excel' ? 'xlsx' : 'csv';
+  XLSX.writeFile(workbook, `inventory-export.${fileExtension}`);
+};
+
+const MAX_EXPORT_ROWS = 500;
+const EXPORT_COOLDOWN_MS = 60 * 1000;
 
 const InventoryPage = () => {
   const navigate = useNavigate();
@@ -16,6 +41,10 @@ const InventoryPage = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [exportFormat, setExportFormat] = useState('csv');
+  const [lastExportAt, setLastExportAt] = useState(0);
+  const [role, setRole] = useState(() => getCurrentUserRole());
+  const isInventoryWritable = canWriteInventory(role);
   
   const PAGE_SIZE = 10;
 
@@ -45,8 +74,17 @@ const InventoryPage = () => {
       const pageNumber = normalizePage(pagePayload?.number ?? requestedPage, requestedPage);
       const totalPages = normalizePage(pagePayload?.totalPages ?? 0, 0);
       const safeTotalPages = totalPages > 0 ? totalPages : 0;
+      const normalizedProducts = (Array.isArray(data.content) ? data.content : []).map((product) => ({
+        ...product,
+        category: product.category ?? product.categoryName ?? product.group ?? product.type ?? 'General',
+        hsnSac: product.hsnSac || product.hsn || product.hsnCode || product.sku || '',
+        mrp: Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? product.price ?? 0) || 0,
+        price: Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0,
+        quantity: Number(product.quantity ?? product.stock ?? product.qty ?? product.ItemQty ?? 0) || 0,
+        minStock: Number(product.minStock ?? product.minimumStock ?? 0) || 0,
+      }));
 
-      setProducts(Array.isArray(data.content) ? data.content : []);
+      setProducts(normalizedProducts);
       setTotalPages(safeTotalPages);
       setCurrentPage(Math.min(pageNumber, safeTotalPages > 0 ? safeTotalPages - 1 : 0));
     } catch (error) {
@@ -60,6 +98,7 @@ const InventoryPage = () => {
   };
   
   useEffect(() => {
+    setRole(getCurrentUserRole());
     fetchProducts();
   }, []);
   
@@ -80,20 +119,28 @@ const InventoryPage = () => {
   
 const saveProduct = async (e, isEdit = false) => {
   e.preventDefault();
+  if (!isInventoryWritable) return;
 
   const formData = new FormData(e.target);
 
   const product = {
     name: formData.get('name'),
-    sku: formData.get('sku'),
+    category: String(formData.get('category') || '').trim() || 'General',
+    hsnSac: formData.get('hsnSac') || formData.get('sku') || '',
+    mrp: parseFloat(formData.get('mrp') || 0),
     quantity: parseInt(formData.get('quantity') || 0),
     minStock: parseInt(formData.get('minStock') || 0),
     price: parseFloat(formData.get('price') || 0),
   };
 
   try {
-    const response = await apiFetch(API_ENDPOINTS.products, {
-      method: 'POST',
+    const endpoint = isEdit && editingItem?.id
+      ? API_ENDPOINTS.productById(editingItem.id)
+      : API_ENDPOINTS.products;
+    const method = isEdit && editingItem?.id ? 'PUT' : 'POST';
+
+    const response = await apiFetch(endpoint, {
+      method,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -118,6 +165,7 @@ const saveProduct = async (e, isEdit = false) => {
 };
   
   const deleteItem = async (id) => {
+    if (!isInventoryWritable) return;
     if (confirm('Delete product?')) {
       const response = await apiFetch(API_ENDPOINTS.productById(id), {
         method: 'DELETE',
@@ -128,13 +176,32 @@ const saveProduct = async (e, isEdit = false) => {
   };
   
   const editItem = (item) => {
+    if (!isInventoryWritable) return;
     setEditingItem(item);
     setShowAddModal(true);
   };
 
   const handleInventoryUploadSuccess = async () => {
+    if (!isInventoryWritable) return;
     await fetchProducts(currentPage, searchTerm);
     setShowUploadModal(false);
+  };
+
+  const handleInventoryExport = () => {
+    const now = Date.now();
+    if (now - lastExportAt < EXPORT_COOLDOWN_MS) {
+      const waitSeconds = Math.ceil((EXPORT_COOLDOWN_MS - (now - lastExportAt)) / 1000);
+      alert(`Please wait ${waitSeconds}s before exporting again.`);
+      return;
+    }
+
+    if (products.length > MAX_EXPORT_ROWS) {
+      alert(`Export is limited to ${MAX_EXPORT_ROWS} rows. Please refine your search first.`);
+      return;
+    }
+
+    exportInventoryData(products, exportFormat);
+    setLastExportAt(now);
   };
 
   const lowStockProducts = products.filter(item => Number(item.quantity || 0) <= Number(item.minStock || 0));
@@ -157,22 +224,37 @@ const saveProduct = async (e, isEdit = false) => {
         <div>
           <h1>📦 Inventory Management</h1>
           <p>{products.length} of {totalPages * PAGE_SIZE} products</p>
+          {!isInventoryWritable && <p className="error-text">Read-only mode: inventory viewer access.</p>}
         </div>
       </header>
 
       <div className="inventory-controls">
         <input 
           type="text" 
-          placeholder="🔍 Search name/SKU..." 
+          placeholder="🔍 Search name/category/HSN/SAC..." 
           value={searchTerm}
           onChange={(e) => handleSearch(e.target.value)}
           className="search-input"
         />
         <div className="inventory-actions">
-          <button className="add-btn secondary" onClick={() => setShowUploadModal(true)}>
+          <div className="export-controls">
+            <select
+              className="export-select"
+              value={exportFormat}
+              onChange={(event) => setExportFormat(event.target.value)}
+              aria-label="Choose export format"
+            >
+              <option value="csv">CSV</option>
+              <option value="excel">Excel</option>
+            </select>
+            <button className="add-btn secondary export-btn" onClick={handleInventoryExport}>
+              ⬇️ Export
+            </button>
+          </div>
+          <button className="add-btn secondary" onClick={() => setShowUploadModal(true)} disabled={!isInventoryWritable}>
             ⬆️ Upload Inventory
           </button>
-          <button className="add-btn primary" onClick={() => setShowAddModal(true)}>
+          <button className="add-btn primary" onClick={() => setShowAddModal(true)} disabled={!isInventoryWritable}>
             ➕ Add Product
           </button>
         </div>
@@ -229,7 +311,9 @@ const saveProduct = async (e, isEdit = false) => {
             <tr>
               <th>ID</th>
               <th>Product</th>
-              <th>SKU</th>
+              <th>Category</th>
+              <th>HSN/SAC</th>
+              <th>MRP</th>
               <th>Qty</th>
               <th>Min Stock</th>
               <th>Price</th>
@@ -242,7 +326,9 @@ const saveProduct = async (e, isEdit = false) => {
               <tr key={item.id} className={item.quantity < item.minStock ? 'low-stock' : ''}>
                 <td>#{item.id}</td>
                 <td>{item.name}</td>
-                <td>{item.sku || '-'}</td>
+                <td>{item.category || 'General'}</td>
+                <td>{item.hsnSac || item.hsn || item.sku || '-'}</td>
+                <td>₹{Number(item.mrp || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 <td className={item.quantity < item.minStock ? 'alert' : ''}>
                   {item.quantity} {item.quantity < item.minStock && '⚠️'}
                 </td>
@@ -250,8 +336,8 @@ const saveProduct = async (e, isEdit = false) => {
                 <td>₹{item.price?.toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                 <td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '-'}</td>
                 <td>
-                  <button className="action-btn edit" onClick={() => editItem(item)}>✏️</button>
-                  <button className="action-btn delete" onClick={() => deleteItem(item.id)}>🗑️</button>
+                  <button className="action-btn edit" onClick={() => editItem(item)} disabled={!isInventoryWritable}>✏️</button>
+                  <button className="action-btn delete" onClick={() => deleteItem(item.id)} disabled={!isInventoryWritable}>🗑️</button>
                 </td>
               </tr>
             ))}
@@ -275,7 +361,9 @@ const saveProduct = async (e, isEdit = false) => {
             <h3>{editingItem ? 'Edit Product' : 'Add New Product'}</h3>
             <form onSubmit={(e) => saveProduct(e, !!editingItem)}>
               <input name="name" defaultValue={editingItem?.name || ''} placeholder="Product Name *" required />
-              <input name="sku" defaultValue={editingItem?.sku || ''} placeholder="SKU (optional)" />
+              <input name="category" defaultValue={editingItem?.category || ''} placeholder="Category" />
+              <input name="hsnSac" defaultValue={editingItem?.hsnSac || editingItem?.hsn || editingItem?.sku || ''} placeholder="HSN/SAC" />
+              <input name="mrp" type="number" step="0.01" defaultValue={editingItem?.mrp || ''} placeholder="MRP ₹" min="0" />
               <input name="quantity" type="number" defaultValue={editingItem?.quantity || 0} placeholder="Quantity *" required min="0" />
               <input name="minStock" type="number" defaultValue={editingItem?.minStock || ''} placeholder="Min Stock" min="0" />
               <input name="price" type="number" step="0.01" defaultValue={editingItem?.price || ''} placeholder="Price ₹ *" required min="0" />
