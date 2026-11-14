@@ -1,5 +1,5 @@
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+  import.meta.env.VITE_API_BASE_URL || "";
 
 export const API_ENDPOINTS = {
   login: `${API_BASE_URL}/api/login`,
@@ -121,23 +121,24 @@ export const advanceAuthSessionRevision = () => {
 };
 
 const persistAccessToken = (token) => {
-  if (!token) {
-    sessionStorage.removeItem('accessToken');
-    localStorage.removeItem('accessToken');
-    return;
-  }
-
   try {
-    sessionStorage.setItem('accessToken', token);
-    localStorage.setItem('accessToken', token);
+    if (token) {
+      sessionStorage.setItem('accessToken', token);
+    } else {
+      sessionStorage.removeItem('accessToken');
+    }
+    localStorage.removeItem('accessToken');
   } catch {
-    // Ignore storage quota issues in browser-private or restricted environments.
+    // Keep the in-memory session usable when browser storage is unavailable.
   }
 };
 
 const restoreAccessToken = () => {
-  const token = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken');
-  accessToken = token || null;
+  try {
+    accessToken = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken') || null;
+  } catch {
+    accessToken = null;
+  }
   return accessToken;
 };
 
@@ -165,10 +166,6 @@ export const clearAuthState = () => {
       .forEach((key) => localStorage.removeItem(key));
   } catch {
     // Ignore storage errors.
-  }
-  if (typeof document !== 'undefined') {
-    document.cookie = 'refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax';
-    document.cookie = 'token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax';
   }
 };
 
@@ -198,27 +195,28 @@ export const emitApiToast = (message = 'Request failed. Please try again.') => {
   }));
 };
 
+const getRefreshTokenFallback = () => sessionStorage.getItem('refreshToken') || '';
+
 const saveRefreshTokenFallback = (token) => {
   if (token) sessionStorage.setItem('refreshToken', token);
   else sessionStorage.removeItem('refreshToken');
 };
 
-const getRefreshTokenFallback = () => sessionStorage.getItem('refreshToken') || '';
-
-export async function refreshAccessToken(username) {
+export async function refreshAccessToken(username = '') {
   if (refreshPromise) return refreshPromise;
 
-  refreshPromise = (async () => {
+  const refreshSessionRevision = authSessionRevision;
+  const requestPromise = (async () => {
     const refreshToken = getRefreshTokenFallback();
-    const refreshHeaders = { 'Content-Type': 'application/json' };
-    if (refreshToken) refreshHeaders['X-Refresh-Token'] = refreshToken;
+    const headers = { 'Content-Type': 'application/json' };
+    if (refreshToken) headers['X-Refresh-Token'] = refreshToken;
 
     const response = await fetch(API_ENDPOINTS.refresh, {
       method: 'POST',
-      headers: refreshHeaders,
+      headers,
       credentials: 'include',
       ...(refreshToken ? {
-        body: JSON.stringify({ username: username || '', refreshToken }),
+        body: JSON.stringify({ username, refreshToken }),
       } : {}),
     });
 
@@ -238,17 +236,20 @@ export async function refreshAccessToken(username) {
       throw new Error(data.message || data.error || 'Refresh response did not include an access token.');
     }
 
+    if (refreshSessionRevision !== authSessionRevision) {
+      throw new Error('Authentication session changed during token refresh.');
+    }
+
     setAccessToken(nextAccessToken);
-    // The cookie is the preferred store; this session-only fallback supports deployments
-    // where the backend cannot set/read an HttpOnly cookie.
     if (data.refreshToken) saveRefreshTokenFallback(data.refreshToken);
     return nextAccessToken;
   })();
+  refreshPromise = requestPromise;
 
   try {
-    return await refreshPromise;
+    return await requestPromise;
   } finally {
-    refreshPromise = null;
+    if (refreshPromise === requestPromise) refreshPromise = null;
   }
 }
 
@@ -327,22 +328,15 @@ export async function apiFetch(input, options = {}) {
   if (requestSessionRevision !== authSessionRevision) return response;
 
   try {
-    const token = await refreshAccessToken(localStorage.getItem('username') || '');
+    const token = await refreshAccessToken();
     response = await request(token);
     const retriedBodyText = await response.clone().text().catch(() => '');
     if (!isAuthSessionError(response, retriedBodyText)) return response;
   } catch {
-    // Handled below as an expired session, unless the user is simply refreshing without a valid refresh token.
+    // A failed refresh means the expired session cannot be restored.
   }
 
   if (requestSessionRevision !== authSessionRevision) return response;
-
-  const hasSavedUser = Boolean(localStorage.getItem('user'));
-  const hasRefreshToken = Boolean(sessionStorage.getItem('refreshToken'));
-
-  if (hasSavedUser && !hasRefreshToken) {
-    return response;
-  }
 
   clearAuthState();
   emitAuthToast('Your session expired. Please log in again.');
@@ -351,7 +345,7 @@ export async function apiFetch(input, options = {}) {
 }
 
 export async function logoutRequest(options = {}) {
-  const refreshToken = sessionStorage.getItem('refreshToken');
+  const refreshToken = getRefreshTokenFallback();
   try {
     await fetch(API_ENDPOINTS.logout, {
       method: 'POST',

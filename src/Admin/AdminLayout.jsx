@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { clearAuthState, emitAuthLogout } from '../Config/api.js';
 import './Admin.css';
 
 const navItems = [
@@ -39,9 +40,8 @@ const AdminLayout = ({ title, subtitle, currentUser = 'Store Admin', children, i
       onLogout();
       return;
     }
-    localStorage.removeItem('user');
-    sessionStorage.removeItem('accessToken');
-    localStorage.removeItem('accessToken');
+    clearAuthState();
+    emitAuthLogout();
     navigate('/login', { replace: true });
   };
 

@@ -105,6 +105,16 @@ const readBackendConfig = async () => {
   }
 };
 
+const getPasswordResetToken = (location) => {
+  const searchParams = new URLSearchParams(location.search);
+  const hashParams = new URLSearchParams(location.hash.slice(1));
+  return searchParams.get('resetToken') ||
+    searchParams.get('token') ||
+    hashParams.get('resetToken') ||
+    hashParams.get('token') ||
+    '';
+};
+
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
     username: '',
@@ -114,11 +124,12 @@ const Login = ({ onLogin }) => {
   const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [recoveryMode, setRecoveryMode] = useState(
-    location.pathname === '/forgot-password' ? 'forgot' : 'login'
-  );
+  const [recoveryMode, setRecoveryMode] = useState(() => {
+    if (getPasswordResetToken(location) || location.pathname === '/reset-password') return 'reset';
+    return location.pathname === '/forgot-password' ? 'forgot' : 'login';
+  });
   const [recoveryEmail, setRecoveryEmail] = useState(location.state?.email || '');
-  const [recoveryToken, setRecoveryToken] = useState('');
+  const [recoveryToken, setRecoveryToken] = useState(() => getPasswordResetToken(location));
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [recoveryMessage, setRecoveryMessage] = useState('');
@@ -132,25 +143,36 @@ const Login = ({ onLogin }) => {
   }, [theme]);
 
   useEffect(() => {
-    if (location.pathname === '/forgot-password') {
+    const resetToken = getPasswordResetToken(location);
+    const resetRoute = location.pathname === '/reset-password';
+
+    if (resetToken) {
+      setRecoveryToken(resetToken);
+      setRecoveryMode('reset');
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('resetToken');
+      cleanUrl.searchParams.delete('token');
+      cleanUrl.hash = '';
+      window.history.replaceState(window.history.state, '', `${cleanUrl.pathname}${cleanUrl.search}`);
+    } else if (resetRoute) {
+      setRecoveryToken('');
+      setRecoveryMode('reset');
+    } else if (location.pathname === '/forgot-password') {
       setRecoveryMode('forgot');
       setRecoveryEmail(location.state?.email || '');
+      setRecoveryToken('');
     } else if (location.pathname === '/login' && !window.location.hash) {
       setRecoveryMode('login');
       setRecoveryToken('');
     }
     setError('');
-    setRecoveryMessage('');
-  }, [location.pathname, location.state]);
-
-  useEffect(() => {
-    const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('resetToken');
-    if (resetToken) {
-      setRecoveryToken(resetToken);
-      setRecoveryMode('reset');
-      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    setRecoveryMessage(location.state?.passwordReset
+      ? 'Your password has been reset. Sign in with your new password.'
+      : '');
+    if (resetRoute && !resetToken) {
+      setError('This password reset link is invalid or expired. Request a new one.');
     }
-  }, []);
+  }, [location.pathname, location.search, location.hash, location.state]);
   
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -249,6 +271,7 @@ const handleSubmit = async (e) => {
         setAccessToken(accessToken);
         localStorage.removeItem('auth_logout');
         if (data.refreshToken) sessionStorage.setItem('refreshToken', data.refreshToken);
+        else sessionStorage.removeItem('refreshToken');
         localStorage.setItem('username', username);
         localStorage.setItem('user', JSON.stringify(resolvedUser));
         onLogin(resolvedUser);
@@ -298,9 +321,11 @@ const handleSubmit = async (e) => {
       setRecoveryToken('');
       setNewPassword('');
       setConfirmPassword('');
-      setRecoveryMessage('Your password has been reset. Sign in with your new password.');
+      navigate('/login', { replace: true, state: { passwordReset: true } });
     } catch (recoveryError) {
-      setError(recoveryError?.message || 'Unable to complete the request. Please try again.');
+      setError(recoveryError instanceof TypeError
+        ? 'Network error. Check your connection and try again.'
+        : recoveryError?.message || 'Unable to complete the request. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -521,6 +546,11 @@ const handleSubmit = async (e) => {
             <Link className="link-action" to="/login">
               Back to sign in
             </Link>
+            {recoveryMode === 'reset' && (
+              <Link className="link-action" to="/forgot-password">
+                Request a new reset link
+              </Link>
+            )}
           </form>
         )}
 

@@ -4,6 +4,7 @@ import Dashboard from './Dashboard/DashboardEntry.jsx';
 import LedgerReportPage from './Dashboard/LedgerReportPage.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
 import Login from './Login/Login.jsx';
+import PasswordReset from './Login/PasswordReset.jsx';
 import App from './App.jsx';
 import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
@@ -22,7 +23,7 @@ import AdminReportsPage from './Admin/AdminReportsPage.jsx';
 import AdminSignupApprovalsPage from './Admin/AdminSignupApprovalsPage.jsx';
 import AdminUsersPage from './Admin/AdminUsersPage.jsx';
 import AdminAuditLogsPage from './Admin/AdminAuditLogsPage.jsx';
-import { API_ENDPOINTS, refreshAccessToken, setAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile, advanceAuthSessionRevision } from './Config/api.js';
+import { API_ENDPOINTS, refreshAccessToken, setAccessToken, getAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile, advanceAuthSessionRevision } from './Config/api.js';
 import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canAccessAdminPanel, canManageUsers, canAccessAudit } from './Security/storeRoles.js';
 
 const clearAuthStorage = () => {
@@ -75,11 +76,10 @@ const AppRoutes = () => {
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      if (loading) return;
       logoutUser(false);
     });
     return () => setUnauthorizedHandler(null);
-  }, [logoutUser, loading]);
+  }, [logoutUser]);
 
   const validateServerSession = useCallback(async (reason = 'periodic') => {
     if (!isAuthenticated || loading) return;
@@ -189,39 +189,21 @@ const AppRoutes = () => {
           return;
         }
 
-        const storedRefreshToken = sessionStorage.getItem('refreshToken');
-        const storedAccessToken = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken');
-
-        if (storedAccessToken) {
-          setAccessToken(storedAccessToken);
-        }
-
-        if (isCurrentTransition()) {
-          setUser(parsedUser);
-          setIsAuthenticated(true);
-        }
-
-        if (!storedRefreshToken && storedAccessToken) {
-          if (isCurrentTransition()) {
-            localStorage.setItem('user', JSON.stringify(parsedUser));
-          }
-          return;
-        }
-
-        if (!storedRefreshToken) {
-          if (isCurrentTransition()) {
-            localStorage.setItem('user', JSON.stringify(parsedUser));
-          }
-          return;
-        }
-
         try {
           await refreshAccessToken(localStorage.getItem('username') || parsedUser.username || parsedUser.userName || parsedUser.name || '');
         } catch (error) {
-          console.warn('Session refresh failed during app startup; keeping the saved session available.', error);
+          console.warn('Session refresh failed during app startup.', error);
           if (isCurrentTransition()) {
-            setUser(parsedUser);
-            setIsAuthenticated(true);
+            if (getAccessToken()) {
+              setUser(parsedUser);
+              setIsAuthenticated(true);
+            } else {
+              clearAuthStorage();
+              emitAuthToast('Your session expired. Please log in again.');
+              emitAuthLogout();
+              setUser(null);
+              setIsAuthenticated(false);
+            }
           }
           return;
         }
@@ -325,13 +307,11 @@ const AppRoutes = () => {
     if (refreshToken) {
       sessionStorage.setItem('refreshToken', refreshToken);
     }
-
     localStorage.setItem('username', normalizedUser.username);
     if (!nextAccessToken) {
       try {
         nextAccessToken = await refreshAccessToken(normalizedUser.username);
       } catch (error) {
-        sessionStorage.removeItem('refreshToken');
         throw new Error('Your code was accepted, but the app could not establish a session. Please sign in again or contact support.');
       }
     }
@@ -377,6 +357,7 @@ const AppRoutes = () => {
       <Routes>
       <Route path="/login" element={<Login onLogin={loginUser} />} />
       <Route path="/forgot-password" element={<Login onLogin={loginUser} />} />
+      <Route path="/reset-password" element={<PasswordReset />} />
       <Route
         path="/mfa"
         element={user?.mfaRequired
