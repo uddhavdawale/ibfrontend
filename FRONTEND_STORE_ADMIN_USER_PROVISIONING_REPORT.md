@@ -32,6 +32,8 @@ Frontend rules:
 - You may continue sending tenantId and ownerName for backward compatibility.
 - Do not assume sent values are persisted as-is.
 - Always render persisted tenant/owner from response/list APIs after create.
+- Store admins must not be offered the System Administrator role; the create form also rejects that role if its state is changed outside the picker.
+- The backend must enforce the same creator-to-role restriction because frontend checks are not an authorization boundary.
 
 ## 4. Authorization and Role Behavior
 
