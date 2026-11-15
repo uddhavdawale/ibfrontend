@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_ENDPOINTS, apiFetch, getAuthContext } from '../Config/api';
-import { STORE_ROLES } from './storeRoles';
+import { getCurrentUserRole, isSystemAdmin, STORE_ROLES } from './storeRoles';
 import './UsersRolesPage.css';
 
 const MIN_PASSWORD_LENGTH = 12;
@@ -167,6 +167,10 @@ const getStoreAdminIdentity = () => {
 
 const UsersRolesPage = () => {
   const navigate = useNavigate();
+  const canCreateSystemAdministrator = isSystemAdmin(getCurrentUserRole());
+  const availableRoleOptions = canCreateSystemAdministrator
+    ? ROLE_OPTIONS
+    : ROLE_OPTIONS.filter((option) => option.value !== STORE_ROLES.SYSTEM_ADMINISTRATOR);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -219,6 +223,13 @@ const UsersRolesPage = () => {
       nextFieldErrors.role = 'Please select a valid role.';
       setFieldErrors(nextFieldErrors);
       return 'Please select a valid role.';
+    }
+
+    if (normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR && !canCreateSystemAdministrator) {
+      const message = 'Only a system administrator can create a system administrator.';
+      nextFieldErrors.role = message;
+      setFieldErrors(nextFieldErrors);
+      return message;
     }
 
     for (const key of rules.required) {
@@ -404,7 +415,7 @@ const UsersRolesPage = () => {
           <label>
             User Role
             <select value={form.role} onChange={(e) => updateField('role', e.target.value)}>
-              {ROLE_OPTIONS.map((option) => (
+              {availableRoleOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
