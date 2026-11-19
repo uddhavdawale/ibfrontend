@@ -532,6 +532,75 @@
   margin-top: 22px;
   flex-wrap: wrap;
 }
+.payment-screenshot-field {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--billing-border);
+}
+.payment-screenshot-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--billing-border);
+  border-radius: 10px;
+  background: var(--billing-surface);
+  color: var(--billing-text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.payment-screenshot-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+.payment-screenshot-field:focus-within .payment-screenshot-button {
+  outline: 2px solid var(--billing-primary);
+}
+.payment-screenshot-note,
+.payment-screenshot-error {
+  color: var(--billing-text-soft);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.payment-screenshot-error {
+  color: var(--billing-danger);
+}
+.payment-screenshot-preview {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.payment-screenshot-preview img {
+  display: block;
+  max-width: min(100%, 220px);
+  max-height: 180px;
+  object-fit: contain;
+  border: 1px solid var(--billing-border);
+  border-radius: 10px;
+  background: #fff;
+}
+.payment-screenshot-remove {
+  border: 0;
+  background: transparent;
+  color: var(--billing-danger);
+  font-weight: 700;
+  cursor: pointer;
+}
 .dialog-btn {
   border: none;
   border-radius: 10px;
@@ -623,6 +692,12 @@
 
   .payment-dialog-box {
     padding: 22px 18px 18px;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+
+  .payment-dialog-box h3 {
+    font-size: clamp(1.5rem, 7vw, 2rem);
   }
 
   .payment-dialog-actions {
