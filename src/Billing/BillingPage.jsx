@@ -8,6 +8,9 @@ import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from
 import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
 import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
 
+const PAYMENT_SCREENSHOT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_PAYMENT_SCREENSHOT_SIZE = 5 * 1024 * 1024;
+
 const BillingPage = () => {
   const navigate = useNavigate();
   
@@ -29,6 +32,10 @@ const BillingPage = () => {
   const [paymentDialog, setPaymentDialog] = useState({ open: false, step: 'payment-check' });
   const [partialPaymentAmount, setPartialPaymentAmount] = useState('');
   const [showPartialInvoiceAction, setShowPartialInvoiceAction] = useState(false);
+  const [paymentScreenshot, setPaymentScreenshot] = useState(null);
+  const [paymentScreenshotPreview, setPaymentScreenshotPreview] = useState('');
+  const [paymentScreenshotError, setPaymentScreenshotError] = useState('');
+  const paymentScreenshotInputRef = useRef(null);
   
   // Dynamic Products
   const [products, setProducts] = useState([]);
@@ -37,6 +44,17 @@ const BillingPage = () => {
   const [role, setRole] = useState(() => getCurrentUserRole());
   const shopDisplayName = getShopDisplayName(shopProfile);
   const isBillingWritable = canWriteBilling(role);
+
+  useEffect(() => {
+    if (!paymentScreenshot) {
+      setPaymentScreenshotPreview('');
+      return undefined;
+    }
+
+    const previewUrl = URL.createObjectURL(paymentScreenshot);
+    setPaymentScreenshotPreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [paymentScreenshot]);
   
   // ✅ Centralized GST logic lives in src/modules/tax/gstConfig.js
   const getGstSlab = (price, category = '') => {
@@ -515,6 +533,14 @@ const BillingPage = () => {
   };
 
   const shareInvoiceViaWhatsApp = async (invoiceData) => {
+    const customerPhone = String(invoiceData.customerPhone || '').replace(/\D/g, '');
+    const whatsappPhone = customerPhone.length === 10 ? `91${customerPhone}` : customerPhone;
+    const customerName = invoiceData.customerName || 'there';
+    const invoiceShopName = getShopDisplayName(invoiceData.shopProfile || shopProfile);
+    const whatsappMessage = `Hi ${customerName}! 😊\n\nThank you for shopping with ${invoiceShopName}. We truly appreciate your support and hope you enjoy your purchase.\n\nYour invoice ${invoiceData.invoiceNo} is ready. Total: ₹${invoiceData.grandTotal.toLocaleString('en-IN')}.\n\nIf you have any questions or need help, we're happy to assist. Have a wonderful day!\n\nWarm regards,\n${invoiceShopName}`;
+    const whatsappUrl = `https://wa.me/${whatsappPhone || '919999999999'}?text=${encodeURIComponent(whatsappMessage)}`;
+    window.open(whatsappUrl, '_blank');
+
     const pdf = await generateInvoicePdf(invoiceData);
     const pdfBlob = pdf.output('blob');
     const url = URL.createObjectURL(pdfBlob);
@@ -523,9 +549,7 @@ const BillingPage = () => {
     downloadLink.href = url;
     downloadLink.download = `invoice_${invoiceData.invoiceNo}.pdf`;
     downloadLink.click();
-
-    const whatsappUrl = `https://wa.me/${(invoiceData.customerPhone || '').replace(/\D/g, '') || '919999999999'}?text=${encodeURIComponent(`🧾 Invoice ${invoiceData.invoiceNo}\nCustomer: ${invoiceData.customerName}\nTotal: ₹${invoiceData.grandTotal.toLocaleString('en-IN')}`)}`;
-    window.open(whatsappUrl, '_blank');
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const shareInvoiceViaEmail = async (invoiceData) => {
@@ -550,7 +574,7 @@ const BillingPage = () => {
   };
 
   const openInvoiceWindow = (invoiceData) => {
-    const previewWindow = window.open('', '_blank', 'width=980,height=1200');
+    const previewWindow = window.open('', '_blank');
     if (!previewWindow) {
       alert('Please allow pop-ups to view the generated invoice preview.');
       return;
@@ -606,6 +630,7 @@ const BillingPage = () => {
       <!doctype html>
       <html>
         <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>Invoice ${invoiceData.invoiceNo}</title>
           <style>
             :root {
@@ -718,6 +743,12 @@ const BillingPage = () => {
               width: 100%;
               border-collapse: collapse;
               margin-top: 18px;
+            }
+
+            .invoice-table-wrap {
+              width: 100%;
+              overflow-x: auto;
+              -webkit-overflow-scrolling: touch;
             }
 
             th, td {
@@ -860,10 +891,14 @@ const BillingPage = () => {
 
             @media (max-width: 700px) {
               .invoice-shell {
-                width: min(100%, 100vw);
+                width: 100%;
                 margin: 0;
                 border-radius: 0;
                 box-shadow: none;
+              }
+
+              body {
+                padding: 8px;
               }
 
               .invoice-header-band {
@@ -895,9 +930,12 @@ const BillingPage = () => {
               }
 
               table {
-                display: block;
-                overflow-x: auto;
-                white-space: nowrap;
+                min-width: 680px;
+              }
+
+              .invoice-table-wrap {
+                margin-right: -14px;
+                padding-right: 14px;
               }
 
               th, td {
@@ -961,6 +999,14 @@ const BillingPage = () => {
                 display: none !important;
               }
 
+              .invoice-table-wrap {
+                overflow: visible;
+              }
+
+              .invoice-table-wrap table {
+                min-width: 0;
+              }
+
               .notes-wrap {
                 page-break-inside: avoid;
               }
@@ -992,23 +1038,25 @@ const BillingPage = () => {
                 <div><strong>Payment:</strong> ${invoiceData.paymentMethod}</div>
               </div>
 
-              <table>
-                <thead>
-                  <tr>
-                    <th>S.No</th>
-                    <th>Item</th>
-                    <th>HSN</th>
-                    <th>Qty</th>
-                    <th>Rate</th>
-                    <th>Amount</th>
-                    ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : '<th>GST%</th><th>GST</th>'}
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${invoiceRows}
-                </tbody>
-              </table>
+              <div class="invoice-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>S.No</th>
+                      <th>Item</th>
+                      <th>HSN</th>
+                      <th>Qty</th>
+                      <th>Rate</th>
+                      <th>Amount</th>
+                      ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : '<th>GST%</th><th>GST</th>'}
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${invoiceRows}
+                  </tbody>
+                </table>
+              </div>
 
               <div class="totals">
                 <div class="totals-row"><span>Total Qty</span><span>${invoiceData.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</span></div>
@@ -1172,6 +1220,12 @@ const BillingPage = () => {
     }
   };
 
+  const clearPaymentScreenshot = () => {
+    setPaymentScreenshot(null);
+    setPaymentScreenshotError('');
+    if (paymentScreenshotInputRef.current) paymentScreenshotInputRef.current.value = '';
+  };
+
   const generateInvoice = () => {
     if (!isBillingWritable) {
       alert('Your role has read-only billing access.');
@@ -1183,11 +1237,13 @@ const BillingPage = () => {
       return;
     }
 
+    clearPaymentScreenshot();
     setPaymentDialog({ open: true, step: 'payment-check' });
   };
 
   const handlePaymentDialogChoice = (paymentCollected) => {
     if (paymentCollected) {
+      clearPaymentScreenshot();
       setPartialPaymentAmount('');
       setShowPartialInvoiceAction(false);
       setPaymentDialog({ open: false, step: 'payment-check' });
@@ -1202,6 +1258,7 @@ const BillingPage = () => {
 
   const handlePendingInvoiceDecision = (decision) => {
     if (decision === 'cancel') {
+      clearPaymentScreenshot();
       setPartialPaymentAmount('');
       setShowPartialInvoiceAction(false);
       setPaymentDialog({ open: false, step: 'payment-check' });
@@ -1232,6 +1289,7 @@ const BillingPage = () => {
         alert(`Partial payment cannot exceed the invoice total of ₹${grandTotal.toLocaleString()}.`);
         return;
       }
+      clearPaymentScreenshot();
       setPartialPaymentAmount('');
       setShowPartialInvoiceAction(false);
       setPaymentDialog({ open: false, step: 'payment-check' });
@@ -1239,6 +1297,7 @@ const BillingPage = () => {
       return;
     }
 
+    clearPaymentScreenshot();
     setPartialPaymentAmount('');
     setShowPartialInvoiceAction(false);
     setPaymentDialog({ open: false, step: 'payment-check' });
@@ -1342,6 +1401,48 @@ const BillingPage = () => {
                 </div>
               </>
             )}
+            <div className="payment-screenshot-field">
+              <label className="payment-screenshot-button" htmlFor="invoice-payment-screenshot">
+                Upload payment screenshot
+              </label>
+              <input
+                ref={paymentScreenshotInputRef}
+                id="invoice-payment-screenshot"
+                className="payment-screenshot-input"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                aria-describedby="invoice-payment-screenshot-note"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] || null;
+                  if (file && (!PAYMENT_SCREENSHOT_TYPES.includes(file.type)
+                    || file.size === 0
+                    || file.size > MAX_PAYMENT_SCREENSHOT_SIZE)) {
+                    setPaymentScreenshot(null);
+                    event.target.value = '';
+                    setPaymentScreenshotError('Choose a PNG, JPEG, or WebP image up to 5 MB.');
+                    return;
+                  }
+                  setPaymentScreenshotError('');
+                  setPaymentScreenshot(file);
+                }}
+              />
+              <span id="invoice-payment-screenshot-note" className="payment-screenshot-note">
+                {paymentScreenshot
+                  ? `${paymentScreenshot.name} selected. Screenshot is not saved yet.`
+                  : 'Optional · PNG, JPEG, or WebP · up to 5 MB'}
+              </span>
+              {paymentScreenshotError && (
+                <span className="payment-screenshot-error" role="alert">{paymentScreenshotError}</span>
+              )}
+              {paymentScreenshotPreview && (
+                <div className="payment-screenshot-preview">
+                  <img src={paymentScreenshotPreview} alt="Selected payment screenshot" />
+                  <button type="button" className="payment-screenshot-remove" onClick={clearPaymentScreenshot}>
+                    Remove screenshot
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
