@@ -131,6 +131,17 @@ Reject invoice creation if:
 - invoice total cannot be calculated
 - tenant/user mismatch detected
 
+## Checkout payment-ledger integration
+
+The Billing checkout records an invoice first, then records any amount actually received through the invoice payment endpoint:
+
+- GST: `POST /api/invoices/{invoiceId}/payments`
+- Non-GST: `POST /api/non-gst-invoices/{invoiceId}/payments`
+
+For this flow, invoice creation starts with `paymentStatus: "pending"`, `paidAmount: 0`, and the full invoice amount outstanding. If the user confirmed full or partial payment, the frontend then posts `{ "amount": number, "method": "CASH|UPI|CARD|WALLET|OTHER", "referenceNo": null, "idempotencyKey": "..." }` to the appropriate endpoint. The payment endpoint must atomically create the payment ledger record and update the invoice's `paidAmount`, `outstandingAmount`, `paymentStatus`, and `status`.
+
+The payment report reads those payment ledger records, not invoice status or the invoice's `paidAmount` field. Do not create a second payment record in the invoice-creation handler for this checkout flow; doing so would double count a payment posted to the invoice payment endpoint. If payment recording fails after invoice creation, leave the invoice pending and allow the user to record the payment later without creating another invoice.
+
 ---
 
 ## Required response payload

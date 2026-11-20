@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Dashboard from './Dashboard/DashboardEntry.jsx';
-import LedgerReportPage from './Dashboard/LedgerReportPage.jsx';
 import ProfilePage from './Profile/ProfilePage.jsx';
 import Login from './Login/Login.jsx';
 import PasswordReset from './Login/PasswordReset.jsx';
@@ -10,6 +9,8 @@ import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
 import SignupPage from './Login/SignupPage.jsx';
 import SellPage from './sell/SellPage.jsx';
+const PaymentCollectionPage = lazy(() => import('./Payments/PaymentCollectionPage.jsx'));
+const LedgerReportPage = lazy(() => import('./Dashboard/LedgerReportPage.jsx'));
 import MfaScreen from './auth/mfa/MfaScreen.jsx';
 import AccessDenied from './Security/AccessDenied.jsx';
 import UsersRolesPage from './Security/UsersRolesPage.jsx';
@@ -24,7 +25,7 @@ import AdminSignupApprovalsPage from './Admin/AdminSignupApprovalsPage.jsx';
 import AdminUsersPage from './Admin/AdminUsersPage.jsx';
 import AdminAuditLogsPage from './Admin/AdminAuditLogsPage.jsx';
 import { API_ENDPOINTS, refreshAccessToken, setAccessToken, getAccessToken, setUnauthorizedHandler, logoutRequest, clearAuthState, emitAuthLogout, emitAuthToast, getCurrentUserProfile, advanceAuthSessionRevision } from './Config/api.js';
-import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canAccessAdminPanel, canManageUsers, canAccessAudit } from './Security/storeRoles.js';
+import { normalizeStoreRole, canAccessBilling, canAccessInventory, canAccessSellOrders, canAccessAdminPanel, canManageUsers, canAccessAudit, canAccessCashCollectionTickets, isCashCollectionSeller } from './Security/storeRoles.js';
 
 const clearAuthStorage = () => {
   clearAuthState();
@@ -340,6 +341,8 @@ const AppRoutes = () => {
 
   const role = normalizeStoreRole(user?.role);
   const canOpenBilling = canAccessBilling(role);
+  const canOpenCashTickets = canAccessCashCollectionTickets(role);
+  const isCashSeller = isCashCollectionSeller(role);
   const canOpenInventory = canAccessInventory(role);
   const canOpenSellOrders = canAccessSellOrders(role);
   const canOpenAudit = canAccessAudit(role);
@@ -369,15 +372,16 @@ const AppRoutes = () => {
               : <Navigate to="/login" replace />}
       />
       <Route path="/" element={!isAuthenticated ? <App /> : (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/dashboard" replace />)} />
-      <Route path="/dashboard" element={isAuthenticated ? (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : <Dashboard username={user?.name || ''} onLogout={logoutUser} />) : <Navigate to="/login" replace />} />
+      <Route path="/dashboard" element={isAuthenticated ? (canAccessAdminPanel(role) ? <Navigate to="/admin/dashboard" replace /> : isCashSeller ? <Suspense fallback={<div className="loading-screen" role="status">Loading cash collections…</div>}><PaymentCollectionPage /></Suspense> : <Dashboard username={user?.name || ''} onLogout={logoutUser} />) : <Navigate to="/login" replace />} />
       <Route path="/profile" element={isAuthenticated ? <ProfilePage username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
       <Route path="/billing" element={isAuthenticated ? (canOpenBilling ? <BillingPage /> : <Navigate to="/access-denied" state={{ from: '/billing', role }} replace />) : <Navigate to="/login" replace />} />
-      <Route path="/ledger" element={isAuthenticated ? (canOpenBilling ? <LedgerReportPage /> : <Navigate to="/access-denied" state={{ from: '/ledger', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/ledger" element={isAuthenticated ? (canOpenBilling ? <Suspense fallback={<div className="loading-screen" role="status">Loading customer ledger…</div>}><LedgerReportPage /></Suspense> : <Navigate to="/access-denied" state={{ from: '/ledger', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/inventory" element={isAuthenticated ? (canOpenInventory ? <InventoryPage /> : <Navigate to="/access-denied" state={{ from: '/inventory', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/customer" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
       <Route path="/customers" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
       <Route path="/sell" element={isAuthenticated ? (canOpenSellOrders ? <SellPage /> : <Navigate to="/access-denied" state={{ from: '/sell', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/payments" element={isAuthenticated ? (canOpenSellOrders || canOpenCashTickets ? <Suspense fallback={<div className="loading-screen" role="status">Loading payment tools…</div>}><PaymentCollectionPage /></Suspense> : <Navigate to="/access-denied" state={{ from: '/payments', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/audit" element={isAuthenticated ? (canOpenAudit ? <AuditPage /> : <Navigate to="/access-denied" state={{ from: '/audit', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin" element={isAuthenticated ? (canViewAdminPanel ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/access-denied" state={{ from: '/admin', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/dashboard" element={isAuthenticated ? (canViewAdminPanel ? <AdminDashboardPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/dashboard', role }} replace />) : <Navigate to="/login" replace />} />

@@ -111,24 +111,26 @@ const AdminDashboardPage = ({ onLogout }) => {
           <div className="admin-panel-header">
             <h2>Recent signup requests</h2>
           </div>
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>Retailer</th>
-                <th>Owner</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentRequests.map((item) => (
-                <tr key={item.id || item.retailerId}>
-                  <td>{item.businessName || item.name}</td>
-                  <td>{item.ownerName || item.owner}</td>
-                  <td><StatusBadge status={item.status} /></td>
+          <div className="admin-table-scroll">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Retailer</th>
+                  <th>Owner</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {recentRequests.map((item) => (
+                  <tr key={item.id || item.retailerId}>
+                    <td>{item.businessName || item.name}</td>
+                    <td>{item.ownerName || item.owner}</td>
+                    <td><StatusBadge status={item.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="admin-panel">

@@ -318,7 +318,6 @@
     padding: 18px 14px 24px;
   }
 
-  .audit-page__header,
   .audit-page__stats,
   .audit-page__content {
     grid-template-columns: 1fr;
@@ -344,5 +343,21 @@
 
   .audit-pagination {
     justify-content: space-between;
+  }
+}
+
+@media (max-width: 600px) {
+  .audit-page {
+    gap: 16px;
+    padding: 14px 10px 20px;
+  }
+
+  .audit-panel {
+    padding: 14px;
+  }
+
+  .audit-table__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
   }
 }

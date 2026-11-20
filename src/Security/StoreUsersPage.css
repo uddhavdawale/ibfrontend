@@ -245,8 +245,33 @@
     gap: 8px;
   }
 
+  .store-users-row:not(.header) [role='cell'] {
+    display: grid;
+    grid-template-columns: minmax(88px, 0.35fr) minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    overflow-wrap: anywhere;
+  }
+
+  .store-users-row:not(.header) [role='cell']::before {
+    content: attr(data-label);
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
   .store-users-row.header {
     display: none;
+  }
+
+  .store-users-row input,
+  .store-users-row select {
+    min-width: 0;
+  }
+
+  .row-actions {
+    justify-content: flex-start;
   }
 
   .users-pagination {

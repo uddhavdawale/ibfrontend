@@ -13,6 +13,8 @@ const normalizeUser = (user = {}) => ({
   lastLogin: user.lastLogin || user.lastSeen || user.updatedAt || 'N/A',
 });
 
+const isUserActive = (status) => String(status || '').trim().toUpperCase() === 'ACTIVE';
+
 const extractUsersList = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.data)) return payload.data;
@@ -94,38 +96,40 @@ const AdminUsersPage = ({ onLogout }) => {
       </div>
 
       <section className="admin-panel">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Role</th>
-              <th>Retailer</th>
-              <th>Status</th>
-              <th>Last login</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredUsers.map((user) => (
-              <tr key={user.id}>
-                <td>
-                  <strong>{user.name}</strong>
-                  <div className="muted-text">{user.email}</div>
-                </td>
-                <td>{user.role}</td>
-                <td>{user.retailer}</td>
-                <td><StatusBadge status={user.status} /></td>
-                <td>{user.lastLogin}</td>
-                <td>
-                  <div className="admin-row-actions">
-                    <button className="admin-row-button" onClick={() => updateUserStatus(user.id, user.status === 'Active' ? 'Disabled' : 'Active')}>{user.status === 'Active' ? 'Disable' : 'Enable'}</button>
-                    <button className="admin-row-button">Edit</button>
-                  </div>
-                </td>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Retailer</th>
+                <th>Status</th>
+                <th>Last login</th>
+                <th>Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredUsers.map((user) => (
+                <tr key={user.id}>
+                  <td>
+                    <strong>{user.name}</strong>
+                    <div className="muted-text">{user.email}</div>
+                  </td>
+                  <td>{user.role}</td>
+                  <td>{user.retailer}</td>
+                  <td><StatusBadge status={user.status} /></td>
+                  <td>{user.lastLogin}</td>
+                  <td>
+                    <div className="admin-row-actions">
+                      <button className="admin-row-button" onClick={() => updateUserStatus(user.id, isUserActive(user.status) ? 'DISABLED' : 'ACTIVE')}>{isUserActive(user.status) ? 'Disable' : 'Enable'}</button>
+                      <button className="admin-row-button">Edit</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </AdminLayout>
   );

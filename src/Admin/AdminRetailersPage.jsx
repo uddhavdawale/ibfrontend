@@ -19,6 +19,23 @@ const normalizeRetailer = (retailer = {}) => ({
   approvedAt: retailer.approvedAt || retailer.approved_at || null,
 });
 
+const normalizedRetailerStatus = (status) => String(status || '').trim().toUpperCase();
+const getRetailerToggleAction = (status) => {
+  const normalizedStatus = normalizedRetailerStatus(status);
+  if (normalizedStatus === 'DISABLED') return 'enable';
+  if (normalizedStatus === 'APPROVED' || normalizedStatus === 'ACTIVE') return 'disable';
+  return null;
+};
+
+const statusByAction = {
+  approve: 'APPROVED',
+  reject: 'REJECTED',
+  'request-info': 'MORE_INFO_REQUIRED',
+  block: 'BLOCKED',
+  disable: 'DISABLED',
+  enable: 'APPROVED',
+};
+
 const extractRetailersList = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.data)) return payload.data;
@@ -72,9 +89,10 @@ const AdminRetailersPage = ({ onLogout }) => {
         throw new Error('Action failed');
       }
 
+      const payload = await response.json().catch(() => ({}));
       setRetailers((current) => current.map((retailer) => {
         if (retailer.id !== retailerId) return retailer;
-        const nextStatus = action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : action === 'request-info' ? 'More Info Required' : action === 'block' ? 'Blocked' : retailer.status;
+        const nextStatus = payload.status || statusByAction[action] || retailer.status;
         return { ...retailer, status: nextStatus };
       }));
     } catch {
@@ -113,38 +131,48 @@ const AdminRetailersPage = ({ onLogout }) => {
           <h2>Retailer list</h2>
         </div>
 
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>Retailer</th>
-              <th>Owner</th>
-              <th>Location</th>
-              <th>Status</th>
-              <th>Assigned admin</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredRetailers.map((retailer) => (
-              <tr key={retailer.id}>
-                <td>
-                  <strong>{retailer.businessName}</strong>
-                  <div className="muted-text">{retailer.id}</div>
-                </td>
-                <td>{retailer.ownerName}</td>
-                <td>{retailer.city}, {retailer.state}</td>
-                <td><StatusBadge status={retailer.status} /></td>
-                <td>{retailer.assignedAdmin}</td>
-                <td>
-                  <div className="admin-row-actions">
-                    <button className="admin-row-button" onClick={() => handleAction(retailer.id, 'approve')}>Approve</button>
-                    <button className="admin-row-button" onClick={() => handleAction(retailer.id, 'request-info')}>Info</button>
-                  </div>
-                </td>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Retailer</th>
+                <th>Owner</th>
+                <th>Location</th>
+                <th>Status</th>
+                <th>Assigned admin</th>
+                <th>Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filteredRetailers.map((retailer) => (
+                <tr key={retailer.id}>
+                  <td>
+                    <strong>{retailer.businessName}</strong>
+                    <div className="muted-text">{retailer.id}</div>
+                  </td>
+                  <td>{retailer.ownerName}</td>
+                  <td>{retailer.city}, {retailer.state}</td>
+                  <td><StatusBadge status={retailer.status} /></td>
+                  <td>{retailer.assignedAdmin}</td>
+                  <td>
+                    <div className="admin-row-actions">
+                      {getRetailerToggleAction(retailer.status) && (
+                        <button
+                          className="admin-row-button"
+                          onClick={() => handleAction(retailer.id, getRetailerToggleAction(retailer.status))}
+                        >
+                          {getRetailerToggleAction(retailer.status) === 'enable' ? 'Enable' : 'Disable'}
+                        </button>
+                      )}
+                      <button className="admin-row-button" onClick={() => handleAction(retailer.id, 'approve')}>Approve</button>
+                      <button className="admin-row-button" onClick={() => handleAction(retailer.id, 'request-info')}>Info</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </AdminLayout>
   );

@@ -8,6 +8,7 @@ const MIN_PASSWORD_LENGTH = 12;
 
 const ROLE_OPTIONS = [
   { value: STORE_ROLES.STORE_MANAGER, label: 'Store Manager' },
+  { value: STORE_ROLES.SELLER, label: 'Seller' },
   { value: STORE_ROLES.BILLING_MANAGER, label: 'Billing Manager' },
   { value: STORE_ROLES.STORE_BILLING_VIEWER, label: 'Store Billing Viewer' },
   { value: STORE_ROLES.INVENTORY_MANAGER, label: 'Inventory Manager' },
@@ -20,6 +21,7 @@ const ROLE_OPTIONS = [
 const ROLE_LABEL_MAP = Object.freeze({
   [STORE_ROLES.STORE_ADMIN]: 'Store Admin',
   [STORE_ROLES.STORE_MANAGER]: 'Store Manager',
+  [STORE_ROLES.SELLER]: 'Seller',
   [STORE_ROLES.BILLING_MANAGER]: 'Billing Manager',
   [STORE_ROLES.STORE_BILLING_VIEWER]: 'Store Billing Viewer',
   [STORE_ROLES.INVENTORY_MANAGER]: 'Inventory Manager',
@@ -40,6 +42,10 @@ const FIELD_RULES = {
   [STORE_ROLES.STORE_BILLING_VIEWER]: {
     show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
     required: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
+  },
+  [STORE_ROLES.SELLER]: {
+    show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
+    required: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId'],
   },
   [STORE_ROLES.BILLING_MANAGER]: {
     show: ['name', 'username', 'email', 'phone', 'password', 'confirmPassword', 'employeeId', 'billingDeskId'],
@@ -75,6 +81,7 @@ const ROLE_ALIASES = Object.freeze({
   org_admin: STORE_ROLES.STORE_ADMIN,
   store_manager: STORE_ROLES.STORE_MANAGER,
   manager: STORE_ROLES.STORE_MANAGER,
+  seller: STORE_ROLES.SELLER,
   store_billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,
   store_billing_viwer: STORE_ROLES.STORE_BILLING_VIEWER,
   billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,

@@ -56,30 +56,32 @@ const AdminAuditLogsPage = ({ onLogout }) => {
     <AdminLayout title="Audit log viewer" subtitle="Immutable, append-only record of sensitive admin actions and operational changes." currentUser="System Admin" onLogout={onLogout} onRefresh={handleRefresh}>
       {loading && <p className="muted-text">Loading audit records…</p>}
       <section className="admin-panel">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>Audit ID</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Target</th>
-              <th>Time (UTC)</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((log) => (
-              <tr key={log.id}>
-                <td>{log.id}</td>
-                <td>{log.actor}</td>
-                <td>{log.action}</td>
-                <td>{log.target}</td>
-                <td>{log.time}</td>
-                <td><span className="admin-status admin-status-neutral">{log.status}</span></td>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Audit ID</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Time (UTC)</th>
+                <th>Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {logs.map((log) => (
+                <tr key={log.id}>
+                  <td>{log.id}</td>
+                  <td>{log.actor}</td>
+                  <td>{log.action}</td>
+                  <td>{log.target}</td>
+                  <td>{log.time}</td>
+                  <td><span className="admin-status admin-status-neutral">{log.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </AdminLayout>
   );

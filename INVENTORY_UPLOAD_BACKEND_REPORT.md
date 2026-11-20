@@ -31,7 +31,7 @@ curl -X POST "http://localhost:8080/api/inventory/upload" \
   -H "Authorization: Bearer <token>" \
   -F "file=@inventory.xlsx" \
   -F "source=inventory-upload" \
-  -F 'records=[{"product":"Rice","sku":"1001","qty":20,"minStock":5,"price":250,"category":"Groceries","set":1,"poNumber":"PO-1001","hsnSac":"1001","mrp":250,"pricePerQty":250}]'
+  -F 'records=[{"product":"Rice","sku":"1001","qty":20,"minStock":5,"price":220.50,"category":"Groceries","set":"Pack of 6","poNumber":"PO-1001","hsnSac":"1001","mrp":250.75,"pricePerQty":220.50}]'
 ```
 
 ### Accepted file columns
@@ -50,9 +50,9 @@ The frontend expects the following exact columns:
 ### Example CSV
 ```csv
 Item,HSN/SAC,MRP/ Item,QTY,Set,Price/QTY,PO Number,Min Stock,Category
-Rice,1001,250,20,1,250,PO-1001,5,Groceries
-Wheat,1002,180,35,1,180,PO-1002,10,Groceries
-Soap,1003,80,50,1,80,PO-1003,15,Personal Care
+Rice,1001,250.75,20,Pack of 6,220.50,PO-1001,5,Groceries
+Wheat,1002,180.25,35,Single,165.50,PO-1002,10,Groceries
+Soap,1003,80.50,50,Box,72.25,PO-1003,15,Personal Care
 ```
 
 ### Normalized row schema
@@ -64,13 +64,13 @@ The frontend normalizes each CSV row into:
   "sku": "1001",
   "qty": 20,
   "minStock": 5,
-  "price": 250,
+  "price": 220.50,
   "category": "Groceries",
-  "set": 1,
+  "set": "Pack of 6",
   "poNumber": "PO-1001",
   "hsnSac": "1001",
-  "mrp": 250,
-  "pricePerQty": 250
+  "mrp": 250.75,
+  "pricePerQty": 220.50
 }
 ```
 
@@ -79,11 +79,11 @@ The frontend normalizes each CSV row into:
 - HSN/SAC must be present.
 - QTY must be a valid non-negative number.
 - Min Stock must be a valid non-negative number.
-- MRP/ Item must be a valid positive number.
+- MRP/ Item must be a valid positive decimal number (use `BigDecimal` in Spring Boot).
 - Price/QTY must be a valid positive number if provided.
 - Category is optional; default to `General` if empty.
 - PO Number is optional but should be persisted if present.
-- Set is optional; default to `1` if missing.
+- Set is text, not an integer; preserve its text value and default to `"1"` if missing. The upload DTO and persisted column must accept text.
 - SKU/HSN/SAC should be unique per current inventory scope when applicable.
 
 ### Success response

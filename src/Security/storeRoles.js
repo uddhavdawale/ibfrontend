@@ -2,6 +2,7 @@ export const STORE_ROLES = Object.freeze({
   STORE_ADMIN: 'store_admin',
   STORE_MANAGER: 'store_manager',
   STORE_BILLING_VIEWER: 'store_billing_viewer',
+  SELLER: 'seller',
   STORE_INVENTORY_VIEWER: 'store_inventory_viewer',
   BILLING_MANAGER: 'billing_manager',
   INVENTORY_MANAGER: 'inventory_manager',
@@ -36,6 +37,8 @@ const ROLE_ALIASES = Object.freeze({
   store_billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,
   store_billing_viwer: STORE_ROLES.STORE_BILLING_VIEWER,
   billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,
+  seller: STORE_ROLES.SELLER,
+  biller: STORE_ROLES.BILLING_MANAGER,
   billing_manager: STORE_ROLES.BILLING_MANAGER,
 
   store_inventory_viewer: STORE_ROLES.STORE_INVENTORY_VIEWER,
@@ -84,6 +87,28 @@ export const canWriteBilling = (role) => {
     || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR
     || normalizedRole === STORE_ROLES.BILLING_MANAGER;
 };
+
+export const canAccessCashCollectionTickets = (role) => {
+  const normalizedRole = normalizeStoreRole(role);
+  return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.BILLING_MANAGER
+    || normalizedRole === STORE_ROLES.SELLER
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR;
+};
+
+export const canSubmitCashCollectionTicket = (role) => {
+  const normalizedRole = normalizeStoreRole(role);
+  return normalizedRole === STORE_ROLES.SELLER
+    || normalizedRole === STORE_ROLES.BILLING_MANAGER;
+};
+
+export const canReviewCashCollectionTicket = (role) => {
+  const normalizedRole = normalizeStoreRole(role);
+  return normalizedRole === STORE_ROLES.STORE_ADMIN
+    || normalizedRole === STORE_ROLES.SYSTEM_ADMINISTRATOR;
+};
+
+export const isCashCollectionSeller = (role) => normalizeStoreRole(role) === STORE_ROLES.SELLER;
 
 export const canAccessInventory = (role) => {
   const normalizedRole = normalizeStoreRole(role);

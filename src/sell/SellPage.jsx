@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
+import createSecureIdempotencyKey from "../utils/createSecureIdempotencyKey";
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
 import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
 
@@ -247,6 +248,7 @@ const resolvePaymentStatus = (invoice, grandTotal) => {
   if (["cancelled", "canceled", "void", "voided"].includes(rawPaymentStatus)) return "cancelled";
   if (["paid", "complete", "completed", "settled"].includes(rawPaymentStatus)) return "paid";
   if (paidAmount >= totalAmount) return "paid";
+  if (paidAmount > 0) return "partial";
   return "pending";
 };
 
@@ -330,7 +332,9 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
       ?? invoice.username
       ?? fallbackSoldBy,
     dueCollection,
+    paidAmount,
     status: resolvedStatus,
+    billType: invoice.billType || (invoice.isGstInvoice === false ? 'non-gst' : 'gst'),
     items: normalizedItems,
     notes: invoice.notes ?? "",
     dueInDays: invoice.dueInDays ?? 7,
@@ -364,7 +368,7 @@ const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User
   return invoiceSummary;
 };
 
-const SellPage = () => {
+const SellPage = ({ onOpenPaymentReport }) => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
   const [sellOrders, setSellOrders] = useState(fallbackSellOrders);
@@ -379,18 +383,96 @@ const SellPage = () => {
   const [lastExportAt, setLastExportAt] = useState(0);
   const [role, setRole] = useState(() => getCurrentUserRole());
   const [loggedInSeller, setLoggedInSeller] = useState(() => getLoggedInSellerName());
+  const [paymentTarget, setPaymentTarget] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('CASH');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentError, setPaymentError] = useState('');
+  const [paymentResult, setPaymentResult] = useState(null);
+  const [paymentSaving, setPaymentSaving] = useState(false);
   const pageSize = 5;
   const canManageSellOrders = canWriteBilling(role);
 
   const cycleStatusFilter = () => {
     setStatusFilter((current) => {
       if (current === 'all') return 'paid';
-      if (current === 'paid') return 'pending';
+      if (current === 'paid') return 'partial';
+      if (current === 'partial') return 'pending';
       if (current === 'pending') return 'cancelled';
       if (current === 'cancelled') return 'return';
       return 'all';
     });
     setCurrentPage(1);
+  };
+
+  const openPaymentCollection = (order) => {
+    setPaymentTarget(order);
+    setPaymentAmount(Number(order.dueCollection || 0).toFixed(2));
+    setPaymentMethod('CASH');
+    setPaymentReference('');
+    setPaymentError('');
+    setPaymentResult(null);
+  };
+
+  const submitCollectedPayment = async (event) => {
+    event.preventDefault();
+    if (!paymentTarget || paymentSaving || paymentResult) return;
+    const amount = Number(paymentAmount);
+    const balanceDue = Number(paymentTarget.dueCollection || 0);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > balanceDue || !Number.isInteger(amount * 100)) {
+      setPaymentError(`Enter an amount up to the balance due of ₹${balanceDue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}.`);
+      return;
+    }
+
+    setPaymentSaving(true);
+    setPaymentError('');
+    try {
+      const requestUrl = String(paymentTarget.billType).toLowerCase().includes('non')
+        ? API_ENDPOINTS.nonGstInvoicePaymentsById(paymentTarget.id)
+        : API_ENDPOINTS.invoicePaymentsById(paymentTarget.id);
+      const response = await apiFetch(requestUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount,
+          method: paymentMethod,
+          referenceNo: paymentReference.trim() || null,
+          idempotencyKey: createSecureIdempotencyKey(),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || payload.error || `Payment could not be recorded (${response.status}).`);
+      }
+
+      const updatedPaid = Number(paymentTarget.paidAmount || 0) + amount;
+      const updatedDue = Math.max(Number(paymentTarget.grandTotal || 0) - updatedPaid, 0);
+      const updatedOrder = {
+        ...paymentTarget,
+        paidAmount: updatedPaid,
+        dueCollection: updatedDue,
+        status: updatedDue === 0 ? 'paid' : 'partial',
+        paymentMethod,
+      };
+      setSellOrders((orders) => orders.map((order) => (
+        String(order.id) === String(updatedOrder.id)
+          && order.billType === updatedOrder.billType
+          ? updatedOrder
+          : order
+      )));
+      setActiveOrder((current) => (
+        current && String(current.id) === String(updatedOrder.id)
+          && current.billType === updatedOrder.billType
+          ? updatedOrder
+          : current
+      ));
+      setPaymentTarget(updatedOrder);
+      setPaymentResult(payload);
+    } catch (submitError) {
+      setPaymentError(submitError.message || 'Payment could not be recorded. Please retry.');
+    } finally {
+      setPaymentSaving(false);
+    }
   };
 
   const handleThreeDotMenuAction = async (order, action) => {
@@ -493,7 +575,6 @@ const SellPage = () => {
         if (normalizedOrders.length > 0) {
           normalizedOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
           setSellOrders(normalizedOrders);
-          setActiveOrder((current) => current ?? normalizedOrders[0]);
         } else {
           setSellOrders(fallbackSellOrders);
         }
@@ -509,7 +590,7 @@ const SellPage = () => {
     fetchSellOrders();
   }, [loggedInSeller]);
 
-const OrderDetail = ({ order }) => {
+const OrderDetail = ({ order, onCollectPayment }) => {
   const totalQty = Array.isArray(order?.items)
     ? order.items.reduce((sum, i) => sum + Number(i.qty || 0), 0)
     : 0;
@@ -547,6 +628,8 @@ const OrderDetail = ({ order }) => {
           <div>
             <strong>Payment Method:</strong> {order.paymentMethod}
           </div>
+          <div><strong>Paid:</strong> ₹{Number(order.paidAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+          <div><strong>Balance due:</strong> ₹{Number(order.dueCollection || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
           <div>
             <strong>Status:</strong>{" "}
             <span className={`status-badge ${order.status}`}>
@@ -635,6 +718,15 @@ const OrderDetail = ({ order }) => {
 
       {/* Action buttons – unchanged */}
       <div className="action-buttons">
+        {canManageSellOrders && order.dueCollection > 0 && !['cancelled', 'return'].includes(order.status) && (
+          <button
+            type="button"
+            className="btn-collect-payment"
+            onClick={() => onCollectPayment(order)}
+          >
+            Record payment
+          </button>
+        )}
         <button
           className="btn-share-whatsapp"
           onClick={() => activeOrder && sendWhatsAppPDF(activeOrder, shopProfile)}
@@ -668,7 +760,7 @@ const OrderDetail = ({ order }) => {
     (totals, order) => {
       totals.revenue += Number(order.grandTotal || 0);
       totals.paid += order.status === "paid" ? 1 : 0;
-      totals.pending += order.status === "pending" ? 1 : 0;
+      totals.pending += ['pending', 'partial'].includes(order.status) ? 1 : 0;
       return totals;
     },
     { revenue: 0, paid: 0, pending: 0 }
@@ -884,6 +976,12 @@ const OrderDetail = ({ order }) => {
         {loading && <p className="loading-text">🔄 Loading live sell orders...</p>}
         {!canManageSellOrders && <p className="error-text">Read-only mode: billing viewer access.</p>}
         <div className="sell-page-actions">
+          <button type="button" className="btn-payment-report" onClick={() => {
+            if (onOpenPaymentReport) onOpenPaymentReport();
+            else navigate('/payments');
+          }}>
+            Payment report
+          </button>
           <div className="export-controls">
             <select
               className="export-select"
@@ -946,14 +1044,16 @@ const OrderDetail = ({ order }) => {
                   ? 'Show all bills'
                   : statusFilter === 'paid'
                     ? 'Show paid bills only'
-                    : statusFilter === 'pending'
-                      ? 'Show pending bills only'
+                    : statusFilter === 'partial'
+                      ? 'Show partially paid bills only'
+                      : statusFilter === 'pending'
+                        ? 'Show pending bills only'
                       : statusFilter === 'cancelled'
                         ? 'Show cancelled bills only'
                         : 'Show returned bills only'
               }
             >
-              {statusFilter === 'all' ? '≣' : statusFilter === 'paid' ? '✓' : statusFilter === 'pending' ? '≠' : '⨯'}
+              {statusFilter === 'all' ? '≣' : statusFilter === 'paid' ? '✓' : statusFilter === 'partial' ? '½' : statusFilter === 'pending' ? '≠' : '⨯'}
             </button>
           </span>
           <span>Actions</span>
@@ -1070,7 +1170,71 @@ const OrderDetail = ({ order }) => {
           >
             ← Back to List
           </button>
-          <OrderDetail order={activeOrder} />
+          <OrderDetail order={activeOrder} onCollectPayment={openPaymentCollection} />
+        </div>
+      )}
+
+      {paymentTarget && (
+        <div className="payment-dialog-backdrop" role="presentation" onClick={() => !paymentSaving && setPaymentTarget(null)}>
+          <section
+            className="payment-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="collect-payment-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="payment-dialog-close" onClick={() => !paymentSaving && setPaymentTarget(null)} aria-label="Close payment dialog">×</button>
+            <h2 id="collect-payment-title">{paymentResult ? 'Payment recorded' : 'Collect payment'}</h2>
+            <p><strong>{paymentTarget.invoiceNo}</strong> · {paymentTarget.customer.name}</p>
+            <p>Balance due: ₹{Number(paymentTarget.dueCollection || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            {paymentResult ? (
+              <div className="payment-result" role="status">
+                <strong>Receipt: {paymentResult.receiptNo}</strong>
+                <span>Collected: ₹{Number(paymentResult.amount || paymentAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} by {paymentResult.collectorName || loggedInSeller}</span>
+                <button type="button" className="btn-collect-payment" onClick={() => {
+                  setPaymentTarget(null);
+                  if (onOpenPaymentReport) onOpenPaymentReport();
+                  else navigate('/payments');
+                }}>
+                  View collection report
+                </button>
+                <button type="button" className="payment-dialog-cancel" onClick={() => setPaymentTarget(null)}>Done</button>
+              </div>
+            ) : (
+              <form className="payment-dialog-form" onSubmit={submitCollectedPayment}>
+                <label>Amount received (₹)
+                  <input
+                    type="number"
+                    min="0.01"
+                    max={paymentTarget.dueCollection}
+                    step="0.01"
+                    required
+                    value={paymentAmount}
+                    onChange={(event) => setPaymentAmount(event.target.value)}
+                  />
+                </label>
+                <label>Payment method
+                  <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                    <option value="CASH">Cash</option>
+                    <option value="UPI">UPI</option>
+                    <option value="CARD">Card</option>
+                    <option value="BANK">Bank transfer</option>
+                    <option value="WALLET">Wallet</option>
+                  </select>
+                </label>
+                <label>Reference (optional)
+                  <input maxLength="255" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} />
+                </label>
+                {paymentError && <p className="payment-dialog-error" role="alert">{paymentError}</p>}
+                <div className="payment-dialog-actions">
+                  <button type="button" className="payment-dialog-cancel" onClick={() => setPaymentTarget(null)} disabled={paymentSaving}>Cancel</button>
+                  <button type="submit" className="btn-collect-payment" disabled={paymentSaving}>
+                    {paymentSaving ? 'Recording…' : 'Record payment'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
         </div>
       )}
     </div>

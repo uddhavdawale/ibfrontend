@@ -107,6 +107,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .sell-dashboard .export-controls {
@@ -367,6 +368,11 @@
   color: var(--sell-warning);
 }
 
+.sell-dashboard .status-badge.partial {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--sell-primary);
+}
+
 .sell-dashboard .status-badge.cancelled {
   background: rgba(239, 68, 68, 0.12);
   color: var(--sell-danger);
@@ -565,6 +571,15 @@
     width: 100%;
   }
 
+  .sell-dashboard .sell-page-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .sell-dashboard .btn-payment-report {
+    width: 100%;
+  }
+
   .sell-dashboard .list-header {
     display: none;
   }
@@ -737,6 +752,69 @@
   transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
+.sell-dashboard .btn-collect-payment,
+.sell-dashboard .btn-payment-report {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  color: #fff;
+  background: linear-gradient(135deg, #2563eb, #0f766e);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sell-dashboard .btn-collect-payment:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.payment-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, .58);
+}
+
+.payment-dialog {
+  position: relative;
+  width: min(100%, 480px);
+  padding: 26px;
+  border: 1px solid #dbe3ee;
+  border-radius: 18px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+}
+
+.payment-dialog h2 { margin: 0 32px 10px 0; }
+.payment-dialog > p { color: #475569; }
+.payment-dialog-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dbe3ee;
+  border-radius: 9px;
+  background: #fff;
+  color: #334155;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+.payment-dialog-form { display: grid; gap: 14px; margin-top: 20px; }
+.payment-dialog-form label { display: grid; gap: 6px; color: #475569; font-size: .9rem; font-weight: 650; }
+.payment-dialog-form input,
+.payment-dialog-form select { min-height: 42px; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 9px; color: #0f172a; background: #fff; }
+.payment-dialog-actions,
+.payment-result { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.payment-result { align-items: flex-start; flex-direction: column; }
+.payment-result span { color: #475569; }
+.payment-dialog-cancel { min-height: 40px; padding: 9px 14px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; color: #334155; font-weight: 700; cursor: pointer; }
+.payment-dialog-error { margin: 0; color: #b91c1c; }
+
 .sell-dashboard .btn-share-whatsapp:hover,
 .sell-dashboard .btn-share-email:hover,
 .sell-dashboard .btn-print:hover {
@@ -806,12 +884,29 @@
 
   .sell-dashboard .action-buttons {
     justify-content: stretch;
+    flex-wrap: wrap;
   }
 
   .sell-dashboard .btn-share-whatsapp,
   .sell-dashboard .btn-share-email,
   .sell-dashboard .btn-print {
     flex: 1 1 160px;
+  }
+}
+
+@media (max-width: 480px) {
+  .sell-dashboard .orders-list {
+    border-radius: 12px;
+  }
+
+  .sell-dashboard .detail-container,
+  .sell-dashboard .invoice-card {
+    max-width: 100%;
+  }
+
+  .sell-dashboard .order-row > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }
 
