@@ -404,6 +404,11 @@
 }
 
 @media (max-width: 760px) {
+  .customer-page {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
   .customer-toolbar,
   .customer-search-form {
     flex-direction: column;
@@ -429,6 +434,21 @@
     flex-direction: column;
   }
 
+  .customer-follow-up-actions select,
+  .customer-follow-up-actions button {
+    width: 100%;
+  }
+
+  .customer-identity-card {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .customer-identity-card h2 {
+    font-size: 1.35rem;
+    overflow-wrap: anywhere;
+  }
+
   .detail-row {
     flex-direction: column;
     align-items: flex-start;
@@ -437,5 +457,35 @@
 
   .detail-row span {
     text-align: left;
+  }
+
+  .customer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .customer-page {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .summary-card {
+    padding: 14px 12px;
+  }
+
+  .customer-list-item {
+    gap: 8px;
+    padding: 10px 8px;
+  }
+
+  .customer-due-pill {
+    white-space: normal;
+    text-align: center;
   }
 }

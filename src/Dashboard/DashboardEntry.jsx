@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
@@ -9,6 +9,8 @@ import InventoryPage from '../Inventory/Inventory';
 import BillingPage from '../Billing/BillingPage';
 import { useConfig } from '../hooks/useConfig';
 import SellPage from '../sell/SellPage';
+const PaymentCollectionPage = lazy(() => import('../Payments/PaymentCollectionPage.jsx'));
+const LedgerReportPage = lazy(() => import('./LedgerReportPage.jsx'));
 import AuditPage from '../Audit/AuditPage';
 import PendingPaymentsCard from './PendingPaymentsCard';
 import LowStockCard from './LowStockCard';
@@ -300,6 +302,7 @@ function Dashboard({ username, onLogout }) {
   const canShowInventoryTab = canOpenInventory && !hasBillingOnlyScope;
   const canShowBillingTab = canOpenBilling && !hasInventoryOnlyScope;
   const canShowSellTab = canOpenSellOrders && !hasInventoryOnlyScope;
+  const canShowPaymentReportTab = canOpenBilling && !hasInventoryOnlyScope;
   const canShowAuditTab = canOpenAudit && !hasBillingOnlyScope && !hasInventoryOnlyScope;
 
   // ALL YOUR EXISTING EFFECTS & FUNCTIONS (UNCHANGED - just removed duplicate useEffect)
@@ -313,7 +316,7 @@ function Dashboard({ username, onLogout }) {
   }, []);
 
   useEffect(() => {
-    if (hasBillingOnlyScope && !['billing', 'sell'].includes(activeTab)) {
+    if (hasBillingOnlyScope && !['billing', 'sell', 'payments', 'ledger'].includes(activeTab)) {
       setActiveTab('billing');
       return;
     }
@@ -326,6 +329,8 @@ function Dashboard({ username, onLogout }) {
     if (activeTab === 'inventory' && !canShowInventoryTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
     if (activeTab === 'billing' && !canShowBillingTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'inventory');
     if (activeTab === 'sell' && !canShowSellTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
+    if (activeTab === 'payments' && !canShowPaymentReportTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
+    if (activeTab === 'ledger' && !canShowBillingTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
     if (activeTab === 'audit' && !canShowAuditTab) setActiveTab(canShowDashboardTab ? 'dashboard' : 'billing');
     if (activeTab === 'GSTFilling' && !canShowGstTab) setActiveTab(canShowDashboardTab ? 'dashboard' : (hasInventoryOnlyScope ? 'inventory' : 'billing'));
     if (activeTab === 'dashboard' && !canShowDashboardTab) setActiveTab(hasInventoryOnlyScope ? 'inventory' : 'billing');
@@ -334,6 +339,7 @@ function Dashboard({ username, onLogout }) {
     canShowInventoryTab,
     canShowBillingTab,
     canShowSellTab,
+    canShowPaymentReportTab,
     canShowAuditTab,
     canShowDashboardTab,
     canShowGstTab,
@@ -847,7 +853,21 @@ function Dashboard({ username, onLogout }) {
         return canShowBillingTab ? <BillingPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to billing.</div></div>;
 
       case 'sell':
-        return canShowSellTab ? <SellPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to sell orders.</div></div>;
+        return canShowSellTab
+          ? <SellPage onOpenPaymentReport={() => setActiveTab('payments')} />
+          : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to sell orders.</div></div>;
+      case 'payments':
+        return canShowPaymentReportTab
+          ? <Suspense fallback={<div className="loading-screen" role="status">Loading payment tools…</div>}>
+              <PaymentCollectionPage onNavigateToSell={() => setActiveTab('sell')} />
+            </Suspense>
+          : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to payment reports.</div></div>;
+      case 'ledger':
+        return canShowBillingTab
+          ? <Suspense fallback={<div className="loading-screen" role="status">Loading customer ledger…</div>}>
+              <LedgerReportPage onBackToDashboard={() => setActiveTab('dashboard')} />
+            </Suspense>
+          : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to the customer ledger.</div></div>;
       case 'audit':
         return canShowAuditTab ? <AuditPage /> : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to audit.</div></div>;
 
@@ -1033,9 +1053,16 @@ function Dashboard({ username, onLogout }) {
             )}
 
             {canShowBillingTab && (
-              <button className="nav-item" onClick={() => handleQuickMenuAction('/ledger')}>
+              <button className={`nav-item ${activeTab === 'ledger' ? 'active' : ''}`} onClick={() => setActiveTab('ledger')}>
                 <span className="nav-icon">📒</span>
-                <span>Ledger Report</span>
+                <span>Customer Ledger</span>
+              </button>
+            )}
+
+            {canShowPaymentReportTab && (
+              <button className={`nav-item ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}>
+                <span className="nav-icon">💳</span>
+                <span>Payment Report</span>
               </button>
             )}
 

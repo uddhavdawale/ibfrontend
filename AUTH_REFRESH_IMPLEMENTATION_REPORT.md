@@ -1,4 +1,4 @@
-# Frontend Auth and Refresh Flow Implementation Report
+y# Frontend Auth and Refresh Flow Implementation Report
 
 ## Summary
 
@@ -30,7 +30,9 @@ The login request uses the legacy Base64 password value, and signup sends both t
 
 ## Token storage behavior
 
-The access token is held in JavaScript memory and is not persisted across page reloads. Refresh and logout requests include cookies to support an HttpOnly refresh-token cookie. If the backend returns a refresh token in its JSON response, the frontend stores it in `sessionStorage` for the current browser session as a fallback.
+The access token is held in memory and `sessionStorage`; the refresh token is also kept in `sessionStorage` only when the backend returns it in JSON. Refresh and logout requests include cookies for the preferred HttpOnly refresh-token contract and send the session fallback token for compatible legacy backends. If startup refresh fails but the saved access token remains usable, the session is retained.
+
+The reported `500` is caused by the backend database rejecting the encrypted replacement refresh token because `replacement_token_ciphertext` exceeds the `refresh_tokens` column's 255-character limit. The backend schema must be widened (for example to a text column) to restore refresh-token rotation after the access token expires.
 
 ## Verification
 

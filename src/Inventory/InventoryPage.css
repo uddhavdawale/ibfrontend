@@ -498,13 +498,39 @@
     align-items: stretch;
   }
 
+  .inventory-page .inventory-actions {
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .inventory-page .inventory-actions > * {
+    min-width: 0;
+    flex: 1 1 140px;
+  }
+
+  .inventory-page .export-controls {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
   .inventory-page .search-input {
     max-width: none;
+  }
+
+  .inventory-page .modal-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .inventory-page .modal {
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
   }
 
   .inventory-page .modal form {
     grid-template-columns: 1fr;
   }
 }
-
 

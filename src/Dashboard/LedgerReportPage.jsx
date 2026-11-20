@@ -249,8 +249,12 @@ const csvValue = (value) => {
   return `"${safeValue.replaceAll('"', '""')}"`;
 };
 
-const LedgerReportPage = () => {
+const LedgerReportPage = ({ onBackToDashboard }) => {
   const navigate = useNavigate();
+  const backToDashboard = () => {
+    if (onBackToDashboard) onBackToDashboard();
+    else navigate('/dashboard');
+  };
   const [invoices, setInvoices] = useState([]);
   const [customerBalances, setCustomerBalances] = useState([]);
   const [search, setSearch] = useState('');
@@ -453,7 +457,7 @@ const LedgerReportPage = () => {
           <p>Review invoice charges, payments, and customer balances using this shop’s saved invoice and customer records.</p>
         </div>
         <div className="ledger-header-actions">
-          <button type="button" className="ledger-button secondary" onClick={() => navigate('/dashboard')}>Back to dashboard</button>
+          <button type="button" className="ledger-button secondary" onClick={backToDashboard}>Back to dashboard</button>
           <button type="button" className="ledger-button secondary" onClick={refreshLedger} disabled={loading}>Refresh</button>
           <button type="button" className="ledger-button primary" onClick={exportLedger} disabled={loading || !canExport || filteredInvoices.length === 0}>Export CSV</button>
         </div>

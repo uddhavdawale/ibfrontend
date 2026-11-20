@@ -9,6 +9,7 @@ const PAGE_SIZE = 10;
 const ROLE_OPTIONS = [
   STORE_ROLES.STORE_ADMIN,
   STORE_ROLES.STORE_MANAGER,
+  STORE_ROLES.SELLER,
   STORE_ROLES.BILLING_MANAGER,
   STORE_ROLES.STORE_BILLING_VIEWER,
   STORE_ROLES.INVENTORY_MANAGER,
@@ -19,6 +20,7 @@ const ROLE_OPTIONS = [
 const ROLE_LABELS = {
   [STORE_ROLES.STORE_ADMIN]: 'Store Admin',
   [STORE_ROLES.STORE_MANAGER]: 'Store Manager',
+  [STORE_ROLES.SELLER]: 'Seller',
   [STORE_ROLES.BILLING_MANAGER]: 'Billing Manager',
   [STORE_ROLES.STORE_BILLING_VIEWER]: 'Store Billing Viewer',
   [STORE_ROLES.INVENTORY_MANAGER]: 'Inventory Manager',
@@ -543,21 +545,21 @@ const StoreUsersPage = () => {
 
               return (
                 <div className="store-users-row" role="row" key={String(user.id)}>
-                  <div role="cell">
+                  <div role="cell" data-label="Name">
                     {isEditing ? (
                       <input value={editForm.name} onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))} />
                     ) : (
                       <strong>{user.name || '-'}</strong>
                     )}
                   </div>
-                  <div role="cell">
+                  <div role="cell" data-label="Username">
                     {isEditing ? (
                       <input value={editForm.username} onChange={(e) => setEditForm((prev) => ({ ...prev, username: e.target.value }))} />
                     ) : (
                       user.username || '-'
                     )}
                   </div>
-                  <div role="cell">
+                  <div role="cell" data-label="Role">
                     {isEditing ? (
                       <select value={editForm.role} onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value }))}>
                         {ROLE_OPTIONS.map((role) => (
@@ -568,19 +570,19 @@ const StoreUsersPage = () => {
                       toRoleLabel(user.role)
                     )}
                   </div>
-                  <div role="cell">
+                  <div role="cell" data-label="Email">
                     {isEditing ? (
                       <input value={editForm.email} onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))} />
                     ) : (
                       user.email || '-'
                     )}
                   </div>
-                  <div role="cell">
+                  <div role="cell" data-label="Status">
                     <span className={user.disabled ? 'status-chip disabled' : 'status-chip active'}>
                       {user.disabled ? 'Disabled' : 'Active'}
                     </span>
                   </div>
-                  <div role="cell" className="row-actions">
+                  <div role="cell" className="row-actions" data-label="Actions">
                     {isEditing ? (
                       <>
                         <button type="button" className="tiny-btn save" onClick={() => saveEdit(user.id)} disabled={rowBusy}>Save</button>

@@ -4,18 +4,28 @@ import './BillingPage.css';
 import logger from '../utils/logger';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
+import createSecureIdempotencyKey from '../utils/createSecureIdempotencyKey';
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
 import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
 
 const PAYMENT_SCREENSHOT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_PAYMENT_SCREENSHOT_SIZE = 5 * 1024 * 1024;
+const normalizePaymentMethod = (method) => {
+  const normalizedMethod = String(method || '').trim().toUpperCase();
+  if (normalizedMethod.startsWith('UPI')) return 'UPI';
+  if (normalizedMethod.includes('CARD')) return 'CARD';
+  if (normalizedMethod.includes('CASH')) return 'CASH';
+  if (normalizedMethod.includes('WALLET')) return 'WALLET';
+  return 'OTHER';
+};
 
 const BillingPage = () => {
   const navigate = useNavigate();
   
   // POS State
   const [cart, setCart] = useState([]);
+  const [quantityDrafts, setQuantityDrafts] = useState({});
   const [cartNotice, setCartNotice] = useState('');
   const [latestAddedProductId, setLatestAddedProductId] = useState(null);
   const cartItemsRef = useRef(null);
@@ -296,6 +306,19 @@ const BillingPage = () => {
     setCart(currentCart => currentCart.map(item =>
       item.id === id ? { ...item, qty } : item
     ));
+  };
+
+  const commitQuantity = (id, value) => {
+    setQuantityDrafts(currentDrafts => {
+      const nextDrafts = { ...currentDrafts };
+      delete nextDrafts[id];
+      return nextDrafts;
+    });
+
+    if (value.trim() === '') return;
+    const quantity = Number(value);
+    if (!Number.isInteger(quantity) || quantity < 0) return;
+    updateQty(id, quantity);
   };
   
   const removeFromCart = (id) => {
@@ -1114,23 +1137,23 @@ const BillingPage = () => {
       const paidAmount = Number(amountReceived) || 0;
       const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
       const previousBalance = await resolveCustomerPreviousBalance();
-      const { totalDueAmount } = resolveCustomerDueState(previousBalance, grandTotal, receivedAmount);
-      const balanceAmount = totalDueAmount;
-      const currentBalance = totalDueAmount;
-      setPaymentStatus(normalizedStatus);
+      const shouldRecordPayment = receivedAmount > 0;
+      const initialPaymentStatus = shouldRecordPayment ? 'pending' : normalizedStatus;
+      const initialPaidAmount = shouldRecordPayment ? 0 : receivedAmount;
+      const initialBalance = resolveCustomerDueState(previousBalance, grandTotal, initialPaidAmount).totalDueAmount;
 
       const payload = {
         customerName: customer.name || 'Walk-in Customer',
         customerPhone: customer.phone || '0000000000',
         paymentMethod,
-        paymentStatus: normalizedStatus,
-        status: normalizedStatus,
-        paidAmount: receivedAmount,
-        amountPaid: receivedAmount,
-        receivedAmount: receivedAmount,
+        paymentStatus: initialPaymentStatus,
+        status: initialPaymentStatus,
+        paidAmount: initialPaidAmount,
+        amountPaid: initialPaidAmount,
+        receivedAmount: initialPaidAmount,
         previousBalance,
-        balanceAmount,
-        currentBalance,
+        balanceAmount: initialBalance,
+        currentBalance: initialBalance,
         totalAmount: grandTotal,
         billType,
         isGstInvoice: billType === BILL_TYPES.GST,
@@ -1176,8 +1199,53 @@ const BillingPage = () => {
       const generatedInvoiceNo = result?.invoiceNo || invoiceNo;
       logger.info('Invoice generated and saved', result);
 
+      let paymentRecorded = !shouldRecordPayment;
+      let paymentWarning = '';
+      if (shouldRecordPayment) {
+        const invoiceId = result?.id ?? result?.invoiceId;
+        if (invoiceId == null) {
+          paymentWarning = 'The server did not return an invoice ID for recording the payment.';
+        } else {
+          const paymentEndpoint = billType === BILL_TYPES.NON_GST
+            ? API_ENDPOINTS.nonGstInvoicePaymentsById(invoiceId)
+            : API_ENDPOINTS.invoicePaymentsById(invoiceId);
+          try {
+            const paymentResponse = await apiFetch(paymentEndpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                amount: receivedAmount,
+                method: normalizePaymentMethod(paymentMethod),
+                referenceNo: null,
+                idempotencyKey: createSecureIdempotencyKey(),
+              }),
+            });
+            const paymentResult = await paymentResponse.json().catch(() => ({}));
+            if (!paymentResponse.ok) {
+              throw new Error(paymentResult.message || paymentResult.error
+                || `Payment could not be recorded (${paymentResponse.status}).`);
+            }
+            paymentRecorded = true;
+          } catch (paymentError) {
+            paymentWarning = paymentError.message || 'Payment recording could not be confirmed.';
+            logger.error('Invoice saved but payment recording failed', {
+              invoiceId,
+              invoiceNo: generatedInvoiceNo,
+              error: paymentWarning,
+            });
+          }
+        }
+      }
+
+      const recordedAmount = paymentRecorded ? receivedAmount : 0;
+      const recordedStatus = paymentRecorded
+        ? receivedAmount >= grandTotal ? 'paid' : normalizedStatus
+        : 'pending';
+      const recordedBalance = resolveCustomerDueState(previousBalance, grandTotal, recordedAmount).totalDueAmount;
+      setPaymentStatus(recordedStatus);
+
       try {
-        await syncCustomerProfileDueBalance(currentBalance);
+        await syncCustomerProfileDueBalance(recordedBalance);
       } catch (error) {
         logger.warn('Customer profile sync skipped after invoice save', error);
       }
@@ -1188,13 +1256,13 @@ const BillingPage = () => {
         customerPhone: customer.phone || '0000000000',
         customerEmail: customer.email || '',
         paymentMethod,
-        paymentStatus: normalizedStatus,
-        paidAmount: receivedAmount,
-        amountPaid: receivedAmount,
-        receivedAmount: receivedAmount,
+        paymentStatus: recordedStatus,
+        paidAmount: recordedAmount,
+        amountPaid: recordedAmount,
+        receivedAmount: recordedAmount,
         previousBalance,
-        balanceAmount,
-        currentBalance,
+        balanceAmount: recordedBalance,
+        currentBalance: recordedBalance,
         billType,
         subtotal: subtotal,
         gst: gstAmount,
@@ -1208,6 +1276,9 @@ const BillingPage = () => {
         }))
       };
 
+      if (paymentWarning) {
+        alert(`Invoice ${generatedInvoiceNo} was saved, but its payment could not be confirmed. Check the Payment report or Sales page before recording it again. ${paymentWarning}`);
+      }
       openInvoiceWindow(previewInvoice);
 
       await refreshProducts();
@@ -1608,7 +1679,24 @@ const BillingPage = () => {
                     <div className="cart-item-right">
                       <div className="qty-controls">
                         <button onClick={() => updateQty(item.id, item.qty - 1)} disabled={!isBillingWritable}>-</button>
-                        <span>{item.qty}</span>
+                        <input
+                          className="quantity-input"
+                          type="number"
+                          min="0"
+                          max={item.stock}
+                          step="1"
+                          value={quantityDrafts[item.id] ?? String(item.qty)}
+                          onChange={(event) => setQuantityDrafts(currentDrafts => ({
+                            ...currentDrafts,
+                            [item.id]: event.target.value,
+                          }))}
+                          onBlur={(event) => commitQuantity(item.id, event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') event.currentTarget.blur();
+                          }}
+                          aria-label={`Quantity of ${item.name}`}
+                          disabled={!isBillingWritable}
+                        />
                         <button onClick={() => updateQty(item.id, item.qty + 1)} disabled={!isBillingWritable}>+</button>
                         <button className="remove" onClick={() => removeFromCart(item.id)} disabled={!isBillingWritable}>✕</button>
                       </div>

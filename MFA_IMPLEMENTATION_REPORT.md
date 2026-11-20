@@ -1,68 +1,34 @@
-# MFA Implementation Report
+# Email MFA Implementation Report
 
-## Overview
-This report documents the multi-factor authentication (MFA) flow implemented in the frontend application and the way it is designed to integrate with backend config flags.
+## Status
 
-## Objectives
-- Add a second-factor verification step after login when the backend enables MFA.
-- Keep MFA logic modular rather than embedding verification logic directly into the login flow.
-- Make the MFA flow compatible with common backend naming variations used in config-driven systems.
-- Support a clean redirect flow back to the dashboard after successful verification.
+The frontend email-MFA flow is implemented. Backend enforcement, challenge storage, and email delivery are not present in this frontend repository and must be completed using the contract in [PASSWORD_RECOVERY_MFA_BACKEND_IMPLEMENTATION_REPORT.md](./PASSWORD_RECOVERY_MFA_BACKEND_IMPLEMENTATION_REPORT.md).
 
-## Architecture
-The MFA implementation was structured as a dedicated auth module instead of being jammed into the login screen.
+## Frontend flow
 
-### Key files
-- `src/auth/mfa/mfaService.js`
-- `src/auth/mfa/MfaScreen.jsx`
-- `src/Login/Login.jsx`
-- `src/AppRouter.jsx`
-- `src/Config/api.js`
+1. The user submits the existing login credentials.
+2. If MFA is required, the backend returns a `mfaChallenge` with a non-empty `challengeId` and establishes a short-lived, `HttpOnly` pre-authentication cookie. The frontend accepts common response field naming variations but never substitutes a username for the challenge ID.
+3. The user explicitly requests a code sent to the registered email address. The UI shows only the backend-provided masked destination.
+4. The user enters the six-digit code. Verification returns the authenticated session; the frontend normalizes common top-level and nested (`data`, `session`, `auth`, or `tokens`) response shapes before installing tokens and navigating to the app.
+5. Canceling or reloading the pending challenge does not resume a session. The user must sign in again.
 
-### Design approach
-- The login screen handles credential submission and decides whether MFA is required.
-- MFA evaluation is delegated to a dedicated service layer that normalizes backend flags.
-- The MFA screen handles OTP entry and verification separately from login state.
-- The app router controls the redirect flow to `/mfa` and then back to `/dashboard` once verified.
+## Security properties
 
-## Backend config compatibility
-The implementation supports multiple flag variants commonly returned by backend systems. This avoids hard-coding only one property name and makes the frontend safer when the backend config uses different naming conventions.
+- MFA challenge state remains in React memory; it is not written to local or session storage.
+- No authenticated access or refresh token is installed or persisted before MFA verification. The challenge cookie binds the send and verify requests.
+- Starting MFA clears any stale authenticated tokens/session metadata. On successful verification, the username is saved for refresh requests, returned tokens are installed before navigation, and the automatic session check is deferred to avoid racing the backend session transition.
+- MFA is email-only; the previous Firebase phone/reCAPTCHA runtime and SMS fallback have been removed from the MFA service.
+- The backend must bind challenge IDs to the pre-authentication cookie, expire and atomically consume codes, limit sends and attempts, and invalidate pending sessions after successful verification or cancellation.
+- MFA delivery and code validity are backend responsibilities; frontend checks are for user experience and are not security controls.
+- Verification access/refresh tokens and user profile data are normalized from the supported response wrappers before protected-route session checks run.
 
-Typical handled patterns include:
-- `mfaEnabled`
-- `requireMfa`
-- `mfa_required`
-- nested config fields such as `security.mfaEnabled`
-- other config styles wrapped inside backend metadata
+## MFA API contract
 
-The service layer normalizes these values into a single internal decision before MFA is triggered.
-
-## Flow
-1. User submits login credentials.
-2. Frontend checks the backend config returned with the user or authentication response.
-3. MFA is evaluated via the centralized service.
-4. If MFA is required, the app stores the pending user in local storage and redirects to `/mfa`.
-5. The MFA screen sends an OTP request automatically or on demand depending on the app flow.
-6. The user enters a 6-digit verification code.
-7. The app verifies the code and only then marks the session as authenticated.
-8. The router navigates the user to `/dashboard`.
-
-## MFA service responsibilities
-The dedicated MFA service is responsible for:
-- normalizing config flags
-- detecting whether MFA context is enabled
-- preparing OTP request payloads
-- verifying submitted OTP codes
-- masking user contact details when showing confirmations or UI states
-
-## Security and UX notes
-- MFA is only triggered when backend config indicates it is required.
-- Pending MFA users are kept separate from the fully authenticated session.
-- Auth state is cleared when MFA is canceled or when the session expires.
-- Protected routes continue to block access until authentication is complete.
+- Send/verify requests use `{ challengeId }` and `{ challengeId, otp }`, respectively, matching the backend's required `MfaChallengeRequest.challengeId`.
+- Canceling an active challenge calls `POST /api/mfa/cancel` with `{ challengeId }`.
+- If login does not return a challenge ID, the frontend stops with a clear error rather than sending an invalid username-based request or bypassing verification.
+- Verification returns the authenticated session tokens/profile; authentication is activated only after successful verification.
 
 ## Validation
-The application was validated by running the production build successfully after integration.
 
-## Notes
-This implementation was intentionally kept modular and reusable, so the MFA logic can be extended without embedding conditionals directly inside the login screen or router.
+Run `npm run build` and `npm run lint` after changes. End-to-end security validation requires a backend implementation and tests for challenge replay, expiry, attempt throttling, session fixation, cookie attributes, and account enumeration.

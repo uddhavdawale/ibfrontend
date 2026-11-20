@@ -326,6 +326,16 @@
 .qty-controls button { 
   width: 32px; height: 32px; border: 1px solid var(--billing-border); border-radius: 6px; background: var(--billing-input-bg); color: var(--billing-text); cursor: pointer;
 }
+.qty-controls .quantity-input {
+  width: 52px;
+  height: 32px;
+  padding: 4px;
+  border: 1px solid var(--billing-border);
+  border-radius: 6px;
+  background: var(--billing-input-bg);
+  color: var(--billing-text);
+  text-align: center;
+}
 .remove { color: #dc2626; font-weight: bold; }
 .totals { margin: 20px 0; }
 .total-row { display: flex; justify-content: space-between; padding: 8px 0; }
@@ -708,6 +718,34 @@
   .pay-btn {
     width: 100%;
     min-height: 48px;
+  }
+
+  .billing-header-copy {
+    min-width: 0;
+    width: 100%;
+    margin-left: 0;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .billing-header-copy h1 {
+    justify-content: flex-start;
+    overflow-wrap: anywhere;
+  }
+
+  .billing-header-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .customer-suggestion-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .customer-suggestion-meta {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 

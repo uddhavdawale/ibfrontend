@@ -228,7 +228,7 @@ const AdminReportsPage = ({ onLogout }) => {
 
       <section className="admin-panel">
         <div className="admin-panel-header"><h2>Retailer records ({filteredRetailers.length})</h2></div>
-        <div style={{ overflowX: 'auto' }}>
+        <div className="admin-table-scroll">
           <table className="admin-table">
             <thead>
               <tr>
