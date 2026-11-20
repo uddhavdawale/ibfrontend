@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
-import { openWhatsAppChat, sharePdfFile, supportsPdfSharing } from "../utils/whatsapp";
+import { openWhatsAppChat } from "../utils/whatsapp";
 import createSecureIdempotencyKey from "../utils/createSecureIdempotencyKey";
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
 import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
@@ -43,24 +43,10 @@ const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
   const message = `🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
   const filename = `invoice_${order.invoiceNo}.pdf`;
-  const useNativeShare = supportsPdfSharing();
-
-  if (!useNativeShare) openWhatsAppChat(order.customer.phone, message);
+  openWhatsAppChat(order.customer.phone, message);
 
   const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
-
-  if (useNativeShare) {
-    const pdfFile = new File([pdfBlob], filename, { type: "application/pdf" });
-    try {
-      await sharePdfFile(pdfFile, `Invoice ${order.invoiceNo}`, message);
-      return;
-    } catch (error) {
-      if (error?.name === "AbortError") return;
-      console.error("Native invoice sharing failed", error);
-      openWhatsAppChat(order.customer.phone, message);
-    }
-  }
 
   const url = URL.createObjectURL(pdfBlob);
   const downloadLink = document.createElement("a");

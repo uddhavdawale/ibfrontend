@@ -4,7 +4,7 @@ import './BillingPage.css';
 import logger from '../utils/logger';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
-import { openWhatsAppChat, sharePdfFile, supportsPdfSharing } from '../utils/whatsapp';
+import { openWhatsAppChat } from '../utils/whatsapp';
 import createSecureIdempotencyKey from '../utils/createSecureIdempotencyKey';
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
@@ -564,14 +564,7 @@ const BillingPage = () => {
     const whatsappMessage = `Hi ${customerName}! 😊\n\nThank you for shopping with ${invoiceShopName}. We truly appreciate your support and hope you enjoy your purchase.\n\nYour invoice ${invoiceData.invoiceNo} is ready. Total: ₹${invoiceData.grandTotal.toLocaleString('en-IN')}.\n\nIf you have any questions or need help, we're happy to assist. Have a wonderful day!\n\nWarm regards,\n${invoiceShopName}`;
     const whatsappPhone = invoiceData.customerPhone || '919999999999';
     const filename = `invoice_${invoiceData.invoiceNo}.pdf`;
-    let useNativeShare = false;
-    try {
-      useNativeShare = supportsPdfSharing(shareWindow);
-    } catch (error) {
-      logger.warn('Native file sharing is unavailable', error);
-    }
-
-    if (!useNativeShare) openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
+    openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
 
     let pdfBlob;
     try {
@@ -581,18 +574,6 @@ const BillingPage = () => {
       logger.error('Invoice PDF generation failed for WhatsApp sharing', error);
       alert('Unable to prepare the invoice PDF. Please try downloading it instead.');
       return;
-    }
-
-    if (useNativeShare) {
-      const pdfFile = new shareWindow.File([pdfBlob], filename, { type: 'application/pdf' });
-      try {
-        await sharePdfFile(pdfFile, `Invoice ${invoiceData.invoiceNo}`, whatsappMessage, shareWindow);
-        return;
-      } catch (error) {
-        if (error?.name === 'AbortError') return;
-        logger.warn('Native invoice sharing failed; falling back to WhatsApp chat', error);
-        openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
-      }
     }
 
     const url = URL.createObjectURL(pdfBlob);
