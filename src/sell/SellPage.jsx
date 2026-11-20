@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
+import { openWhatsAppChat, sharePdfFile, supportsPdfSharing } from "../utils/whatsapp";
 import createSecureIdempotencyKey from "../utils/createSecureIdempotencyKey";
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
 import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
@@ -40,20 +41,37 @@ const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
 };
 
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
+  const message = `🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
+  const filename = `invoice_${order.invoiceNo}.pdf`;
+  const useNativeShare = supportsPdfSharing();
+
+  if (!useNativeShare) openWhatsAppChat(order.customer.phone, message);
+
   const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
 
+  if (useNativeShare) {
+    const pdfFile = new File([pdfBlob], filename, { type: "application/pdf" });
+    try {
+      await sharePdfFile(pdfFile, `Invoice ${order.invoiceNo}`, message);
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      console.error("Native invoice sharing failed", error);
+      openWhatsAppChat(order.customer.phone, message);
+    }
+  }
+
   const url = URL.createObjectURL(pdfBlob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `invoice_${order.invoiceNo}.pdf`;
-  a.click();
+  const downloadLink = document.createElement("a");
+  downloadLink.href = url;
+  downloadLink.download = filename;
+  downloadLink.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
   alert(
-    `✅ PDF Downloaded!\n\n📱 Open WhatsApp → Attach → Select Downloads folder → Send!`
+    `✅ PDF Downloaded!\n\n📎 Attach the invoice from Downloads in the open WhatsApp chat to send it.`
   );
-  const whatsappUrl = `https://wa.me/${order.customer.phone}?text=🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
-  window.open(whatsappUrl, "_blank");
 };
 
 const sendEmailPDF = async (order, shopProfile = readStoredShopProfile()) => {
