@@ -4,6 +4,7 @@ import './BillingPage.css';
 import logger from '../utils/logger';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
+import { openWhatsAppChat, sharePdfFile, supportsPdfSharing } from '../utils/whatsapp';
 import createSecureIdempotencyKey from '../utils/createSecureIdempotencyKey';
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
@@ -556,21 +557,35 @@ const BillingPage = () => {
   };
 
   const shareInvoiceViaWhatsApp = async (invoiceData) => {
-    const customerPhone = String(invoiceData.customerPhone || '').replace(/\D/g, '');
-    const whatsappPhone = customerPhone.length === 10 ? `91${customerPhone}` : customerPhone;
     const customerName = invoiceData.customerName || 'there';
     const invoiceShopName = getShopDisplayName(invoiceData.shopProfile || shopProfile);
     const whatsappMessage = `Hi ${customerName}! 😊\n\nThank you for shopping with ${invoiceShopName}. We truly appreciate your support and hope you enjoy your purchase.\n\nYour invoice ${invoiceData.invoiceNo} is ready. Total: ₹${invoiceData.grandTotal.toLocaleString('en-IN')}.\n\nIf you have any questions or need help, we're happy to assist. Have a wonderful day!\n\nWarm regards,\n${invoiceShopName}`;
-    const whatsappUrl = `https://wa.me/${whatsappPhone || '919999999999'}?text=${encodeURIComponent(whatsappMessage)}`;
-    window.open(whatsappUrl, '_blank');
+    const whatsappPhone = invoiceData.customerPhone || '919999999999';
+    const filename = `invoice_${invoiceData.invoiceNo}.pdf`;
+    const useNativeShare = supportsPdfSharing();
+
+    if (!useNativeShare) openWhatsAppChat(whatsappPhone, whatsappMessage);
 
     const pdf = await generateInvoicePdf(invoiceData);
     const pdfBlob = pdf.output('blob');
+
+    if (useNativeShare) {
+      const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+      try {
+        await sharePdfFile(pdfFile, `Invoice ${invoiceData.invoiceNo}`, whatsappMessage);
+        return;
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        logger.warn('Native invoice sharing failed; falling back to WhatsApp chat', error);
+        openWhatsAppChat(whatsappPhone, whatsappMessage);
+      }
+    }
+
     const url = URL.createObjectURL(pdfBlob);
 
     const downloadLink = document.createElement('a');
     downloadLink.href = url;
-    downloadLink.download = `invoice_${invoiceData.invoiceNo}.pdf`;
+    downloadLink.download = filename;
     downloadLink.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
