@@ -401,11 +401,13 @@ const SellPage = ({ onOpenPaymentReport }) => {
     phone: '',
     requestText: '',
     recurring: false,
+    frequency: 'weekly',
+    nextPurchaseDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
   });
   const [whatsappOrderError, setWhatsappOrderError] = useState('');
   const [whatsappDrafts, setWhatsappDrafts] = useState(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem('ib-whatsapp-order-drafts') || '[]');
+      const stored = JSON.parse(sessionStorage.getItem('ib-whatsapp-order-drafts') || '[]');
       return Array.isArray(stored) ? stored.slice(0, 25) : [];
     } catch {
       return [];
@@ -441,12 +443,14 @@ const SellPage = ({ onOpenPaymentReport }) => {
       phone,
       requestText,
       recurring: whatsappOrderDraft.recurring,
+      frequency: whatsappOrderDraft.frequency,
+      nextPurchaseDate: whatsappOrderDraft.nextPurchaseDate,
       createdAt: new Date().toISOString(),
     };
     const nextDrafts = [draft, ...whatsappDrafts].slice(0, 25);
     setWhatsappDrafts(nextDrafts);
     try {
-      localStorage.setItem('ib-whatsapp-order-drafts', JSON.stringify(nextDrafts));
+      sessionStorage.setItem('ib-whatsapp-order-drafts', JSON.stringify(nextDrafts));
     } catch {
       setWhatsappOrderError('The order draft could not be stored in this browser.');
       return false;
@@ -494,6 +498,39 @@ const SellPage = ({ onOpenPaymentReport }) => {
         },
       },
     });
+  };
+
+  const getNextRecurringDate = (dateString, frequency) => {
+    const date = new Date(`${dateString}T12:00:00`);
+    if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+    if (frequency === 'monthly') date.setMonth(date.getMonth() + 1);
+    else if (frequency === 'quarterly') date.setMonth(date.getMonth() + 3);
+    else date.setDate(date.getDate() + 7);
+    return date.toISOString().slice(0, 10);
+  };
+
+  const createRecurringBillingDraft = (draft) => {
+    if (!draft) return;
+    navigate('/billing', {
+      state: {
+        whatsappOrder: {
+          customer: { name: draft.customerName, phone: draft.phone, email: '' },
+          requestText: draft.requestText,
+        },
+      },
+    });
+
+    if (draft.recurring) {
+      const updatedDrafts = whatsappDrafts.map((item) => item.id === draft.id
+        ? { ...item, nextPurchaseDate: getNextRecurringDate(item.nextPurchaseDate, item.frequency) }
+        : item);
+      setWhatsappDrafts(updatedDrafts);
+      try {
+        sessionStorage.setItem('ib-whatsapp-order-drafts', JSON.stringify(updatedDrafts));
+      } catch {
+        // Navigation can continue; the in-memory schedule remains available for this session.
+      }
+    }
   };
 
   const openPaymentCollection = (order) => {
@@ -1334,6 +1371,28 @@ const OrderDetail = ({ order, onCollectPayment }) => {
                 />
                 Save as recurring/repeat purchase
               </label>
+              {whatsappOrderDraft.recurring && (
+                <div className="whatsapp-recurring-fields">
+                  <label>Frequency
+                    <select
+                      value={whatsappOrderDraft.frequency}
+                      onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, frequency: event.target.value }))}
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                    </select>
+                  </label>
+                  <label>Next purchase date
+                    <input
+                      type="date"
+                      min={new Date().toISOString().slice(0, 10)}
+                      value={whatsappOrderDraft.nextPurchaseDate}
+                      onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, nextPurchaseDate: event.target.value }))}
+                    />
+                  </label>
+                </div>
+              )}
               {whatsappOrderError && <p className="payment-dialog-error" role="alert">{whatsappOrderError}</p>}
               <div className="payment-dialog-actions">
                 <button type="button" className="payment-dialog-cancel" onClick={() => setWhatsappOrderOpen(false)}>Cancel</button>
@@ -1354,6 +1413,8 @@ const OrderDetail = ({ order, onCollectPayment }) => {
                       phone: draft.phone,
                       requestText: draft.requestText,
                       recurring: Boolean(draft.recurring),
+                      frequency: draft.frequency || 'weekly',
+                      nextPurchaseDate: draft.nextPurchaseDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
                     })}
                   >
                     <strong>{draft.customerName}</strong>
@@ -1361,6 +1422,27 @@ const OrderDetail = ({ order, onCollectPayment }) => {
                     {draft.recurring && <em>Recurring</em>}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {whatsappDrafts.some((draft) => draft.recurring) && (
+              <div className="whatsapp-draft-list whatsapp-recurring-list">
+                <h3>Recurring purchases</h3>
+                {whatsappDrafts.filter((draft) => draft.recurring).slice(0, 5).map((draft) => {
+                  const due = draft.nextPurchaseDate && draft.nextPurchaseDate <= new Date().toISOString().slice(0, 10);
+                  return (
+                    <div className="whatsapp-recurring-row" key={draft.id}>
+                      <div>
+                        <strong>{draft.customerName}</strong>
+                        <span>{draft.frequency} · {draft.nextPurchaseDate}</span>
+                      </div>
+                      {due && <em>Due today</em>}
+                      <button type="button" onClick={() => createRecurringBillingDraft(draft)}>
+                        Create order
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
