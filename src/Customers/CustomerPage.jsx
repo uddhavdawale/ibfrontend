@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import './CustomerPage.css';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
+import { openWhatsAppChat } from '../utils/whatsapp';
+import { buildPaymentReminderMessage } from '../utils/whatsappCommerce';
 
 const EMPTY_CUSTOMER = {
   id: '',
@@ -85,6 +87,13 @@ const CustomerPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reminderChannel, setReminderChannel] = useState('whatsapp');
+  const [dailyRemindersEnabled, setDailyRemindersEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('ib-daily-payment-reminders') === 'enabled';
+    } catch {
+      return false;
+    }
+  });
 
   const customerPhone = searchParams.get('phone') || '';
   const customerId = searchParams.get('id') || '';
@@ -213,20 +222,59 @@ const CustomerPage = () => {
 
     const shopName = getShopDisplayName(readStoredShopProfile());
     const customerName = String(selectedCustomer.customerName || 'there').trim();
-    const message = `Hello ${customerName}, this is a friendly reminder from ${shopName}. Our records currently show an outstanding balance of ${formatMoney(dueBalance)}. If you have already paid, please disregard this message or contact us so we can update our records. Thank you.`;
+    const message = buildPaymentReminderMessage({
+      customerName,
+      shopName,
+      dueBalance,
+      invoiceNo: selectedCustomer.lastOrderNo,
+    });
     if (reminderChannel === 'sms') {
       window.location.href = `sms:${phone}?body=${encodeURIComponent(message)}`;
       return;
     }
 
-    const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+    openWhatsAppChat(phone, message);
   };
 
   const selectedCustomerDue = Number.isFinite(selectedCustomer.dueBalance)
     ? Math.max(selectedCustomer.dueBalance, 0)
     : 0;
   const reminderPhoneAvailable = Boolean(normalizePhoneNumber(selectedCustomer.phone));
+  const dueCustomers = useMemo(
+    () => customers.filter((customer) => Number(customer.dueBalance || 0) > 0),
+    [customers]
+  );
+
+  const handleDailyReminderToggle = async (enabled) => {
+    setDailyRemindersEnabled(enabled);
+    try {
+      localStorage.setItem('ib-daily-payment-reminders', enabled ? 'enabled' : 'disabled');
+    } catch {
+      // Reminder preference is optional; customer reminder actions remain available.
+    }
+
+    if (enabled && 'Notification' in window && Notification.permission === 'default') {
+      await Notification.requestPermission().catch(() => 'denied');
+    }
+  };
+
+  useEffect(() => {
+    if (!dailyRemindersEnabled || dueCustomers.length === 0) return undefined;
+    if (!('Notification' in window) || Notification.permission !== 'granted') return undefined;
+
+    const dueKey = `ib-daily-reminder-notified:${new Date().toLocaleDateString('en-CA')}`;
+    if (localStorage.getItem(dueKey)) return undefined;
+
+    const timer = window.setTimeout(() => {
+      new Notification('Customer payment reminders ready', {
+        body: `${dueCustomers.length} customer${dueCustomers.length === 1 ? '' : 's'} have outstanding balances.`,
+        tag: 'ib-daily-payment-reminders',
+      });
+      localStorage.setItem(dueKey, '1');
+    }, 3000);
+
+    return () => window.clearTimeout(timer);
+  }, [dailyRemindersEnabled, dueCustomers.length]);
 
   return (
     <div className="customer-page">
@@ -321,6 +369,17 @@ const CustomerPage = () => {
                 >
                   {reminderPhoneAvailable ? `Prepare ${reminderChannel === 'sms' ? 'SMS' : 'WhatsApp'} reminder` : 'Customer phone required'}
                 </button>
+                <label className="daily-reminder-toggle">
+                  <input
+                    type="checkbox"
+                    checked={dailyRemindersEnabled}
+                    onChange={(event) => handleDailyReminderToggle(event.target.checked)}
+                  />
+                  Daily reminder notification
+                </label>
+                {dueCustomers.length > 0 && (
+                  <span className="daily-reminder-count">{dueCustomers.length} customer{dueCustomers.length === 1 ? '' : 's'} in the due queue</span>
+                )}
               </div>
             </section>
 

@@ -16,6 +16,8 @@ import PendingPaymentsCard from './PendingPaymentsCard';
 import LowStockCard from './LowStockCard';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { getCurrentShopProfile, readStoredShopProfile, getShopDisplayName, getShopLogoUrl } from '../modules/shopProfile/shopProfileService';
+import { openWhatsAppChat } from '../utils/whatsapp';
+import { buildDailySalesSummaryMessage, normalizeWhatsAppPhone } from '../utils/whatsappCommerce';
 import {
   getCurrentUserRole,
   normalizeStoreRole,
@@ -211,7 +213,6 @@ function Dashboard({ username, onLogout }) {
   // ALL YOUR EXISTING STATE (UNCHANGED)
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showManageStoreMenu, setShowManageStoreMenu] = useState(false);
-  const [language, setLanguage] = useState('EN');
   const [theme, setTheme] = useState(() => localStorage.getItem('ib-theme') || 'light');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
@@ -667,6 +668,11 @@ function Dashboard({ username, onLogout }) {
                 >
                   ↻
                 </button>
+                {canShowDashboardTab && (
+                  <button type="button" className="btn secondary" onClick={handleShareDailySalesSummary}>
+                    📱 Share Daily Summary
+                  </button>
+                )}
                 {isInventoryWritable && (
                   <button className="btn secondary" onClick={() => setShowAddModal(true)}>➕ Add Product</button>
                 )}
@@ -885,6 +891,28 @@ function Dashboard({ username, onLogout }) {
     navigate(path);
   };
 
+  const handleShareDailySalesSummary = () => {
+    const ownerPhone = normalizeWhatsAppPhone(
+      shopProfile?.ownerPhone
+      || shopProfile?.phone
+      || shopProfile?.contactNumber
+      || shopProfile?.mobile
+    );
+    if (!ownerPhone) {
+      alert('Add the owner phone number in Shop Profile before sharing the daily summary.');
+      navigate('/profile');
+      return;
+    }
+
+    openWhatsAppChat(ownerPhone, buildDailySalesSummaryMessage({
+      shopName: getShopDisplayName(shopProfile),
+      salesToday: metrics.salesToday,
+      pendingPayments: metrics.pendingPayments,
+      ordersToday: metrics.ordersToday,
+      lowStockCount: lowStockCount,
+    }));
+  };
+
   return (
     <div className={`dashboard theme-${theme}`}>
       <div className="top-bar">
@@ -920,21 +948,14 @@ function Dashboard({ username, onLogout }) {
           {canManageUsers && (
             <select
               className="language-btn"
-              value={language}
+              value=""
               onChange={(e) => {
                 const selected = e.target.value;
-                if (selected === 'EN' || selected === 'MR' || selected === 'HI') {
-                  setLanguage(selected);
-                  return;
-                }
-
-                setLanguage('EN');
-                navigate(selected);
+                if (selected) navigate(selected);
               }}
+              aria-label="Quick actions"
             >
-              <option value="EN">EN</option>
-              <option value="MR">MR</option>
-              <option value="HI">HI</option>
+              <option value="" disabled>Quick Actions</option>
               <option value="/customers">Customer List</option>
               <option value="/inventory">Replenish Orders</option>
               <option value="/customers">Dealers</option>
