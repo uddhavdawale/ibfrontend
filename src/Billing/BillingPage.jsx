@@ -451,9 +451,11 @@ const BillingPage = () => {
     return { subtotal, gst, grandTotal };
   };
 
-  const generateInvoicePdf = async (invoiceData) => {
-    const currentShopProfile = await getCurrentShopProfile(true);
-    setShopProfile(currentShopProfile);
+  const generateInvoicePdf = async (invoiceData, refreshShopProfile = true) => {
+    const currentShopProfile = refreshShopProfile
+      ? await getCurrentShopProfile(true)
+      : invoiceData.shopProfile || shopProfile || readStoredShopProfile();
+    if (refreshShopProfile) setShopProfile(currentShopProfile);
     return buildInvoicePdf({ ...invoiceData, shopProfile: currentShopProfile });
   };
 
@@ -556,28 +558,40 @@ const BillingPage = () => {
     }
   };
 
-  const shareInvoiceViaWhatsApp = async (invoiceData) => {
+  const shareInvoiceViaWhatsApp = async (invoiceData, shareWindow = window) => {
     const customerName = invoiceData.customerName || 'there';
     const invoiceShopName = getShopDisplayName(invoiceData.shopProfile || shopProfile);
     const whatsappMessage = `Hi ${customerName}! 😊\n\nThank you for shopping with ${invoiceShopName}. We truly appreciate your support and hope you enjoy your purchase.\n\nYour invoice ${invoiceData.invoiceNo} is ready. Total: ₹${invoiceData.grandTotal.toLocaleString('en-IN')}.\n\nIf you have any questions or need help, we're happy to assist. Have a wonderful day!\n\nWarm regards,\n${invoiceShopName}`;
     const whatsappPhone = invoiceData.customerPhone || '919999999999';
     const filename = `invoice_${invoiceData.invoiceNo}.pdf`;
-    const useNativeShare = supportsPdfSharing();
+    let useNativeShare = false;
+    try {
+      useNativeShare = supportsPdfSharing(shareWindow);
+    } catch (error) {
+      logger.warn('Native file sharing is unavailable', error);
+    }
 
-    if (!useNativeShare) openWhatsAppChat(whatsappPhone, whatsappMessage);
+    if (!useNativeShare) openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
 
-    const pdf = await generateInvoicePdf(invoiceData);
-    const pdfBlob = pdf.output('blob');
+    let pdfBlob;
+    try {
+      const pdf = await generateInvoicePdf(invoiceData, false);
+      pdfBlob = pdf.output('blob');
+    } catch (error) {
+      logger.error('Invoice PDF generation failed for WhatsApp sharing', error);
+      alert('Unable to prepare the invoice PDF. Please try downloading it instead.');
+      return;
+    }
 
     if (useNativeShare) {
-      const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+      const pdfFile = new shareWindow.File([pdfBlob], filename, { type: 'application/pdf' });
       try {
-        await sharePdfFile(pdfFile, `Invoice ${invoiceData.invoiceNo}`, whatsappMessage);
+        await sharePdfFile(pdfFile, `Invoice ${invoiceData.invoiceNo}`, whatsappMessage, shareWindow);
         return;
       } catch (error) {
         if (error?.name === 'AbortError') return;
         logger.warn('Native invoice sharing failed; falling back to WhatsApp chat', error);
-        openWhatsAppChat(whatsappPhone, whatsappMessage);
+        openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
       }
     }
 
@@ -653,7 +667,7 @@ const BillingPage = () => {
       `;
     }).join('');
 
-    previewWindow.shareInvoiceViaWhatsApp = async () => shareInvoiceViaWhatsApp(invoiceData);
+    previewWindow.shareInvoiceViaWhatsApp = async () => shareInvoiceViaWhatsApp(invoiceData, previewWindow);
     previewWindow.shareInvoiceViaEmail = async () => shareInvoiceViaEmail(invoiceData);
     previewWindow.downloadInvoicePdf = async () => downloadInvoicePdf(invoiceData);
 
@@ -926,6 +940,42 @@ const BillingPage = () => {
             .email { background: linear-gradient(135deg, #3b82f6, #2563eb); }
             .download { background: linear-gradient(135deg, #64748b, #475569); }
             .close { background: linear-gradient(135deg, #ef4444, #dc2626); }
+
+            @media (max-width: 900px) and (min-width: 701px) {
+              body {
+                padding: 16px;
+              }
+
+              .invoice-header-band {
+                padding: 18px 20px 14px;
+              }
+
+              .invoice-header-grid {
+                grid-template-columns: minmax(0, 1fr) minmax(220px, 0.75fr);
+                gap: 14px;
+              }
+
+              .brand-meta {
+                overflow-wrap: anywhere;
+              }
+
+              .invoice-body {
+                padding: 20px 20px 10px;
+              }
+
+              .invoice-table-wrap table {
+                min-width: 760px;
+              }
+
+              .toolbar {
+                padding: 0 20px 20px;
+                gap: 8px;
+              }
+
+              .share-btn {
+                min-width: 140px;
+              }
+            }
 
             @media (max-width: 700px) {
               .invoice-shell {
@@ -1279,6 +1329,7 @@ const BillingPage = () => {
         balanceAmount: recordedBalance,
         currentBalance: recordedBalance,
         billType,
+        shopProfile,
         subtotal: subtotal,
         gst: gstAmount,
         grandTotal: grandTotal,
