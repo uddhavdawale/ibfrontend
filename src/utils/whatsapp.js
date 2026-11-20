@@ -36,23 +36,3 @@ export const openWhatsAppChat = (phone, message, targetWindow = window) => {
     if (!targetWindow.document.hidden) fallbackWindow.location.href = webUrl;
   }, 1500);
 };
-
-export const supportsPdfSharing = (targetWindow = window) => {
-  const targetNavigator = targetWindow.navigator;
-  if (
-    typeof targetNavigator.share !== 'function'
-    || typeof targetNavigator.canShare !== 'function'
-    || typeof targetWindow.File === 'undefined'
-  ) {
-    return false;
-  }
-
-  const testFile = new targetWindow.File([''], 'invoice.pdf', { type: 'application/pdf' });
-  return targetNavigator.canShare({ files: [testFile] });
-};
-
-export const sharePdfFile = (file, title, text, targetWindow = window) => targetWindow.navigator.share({
-  files: [file],
-  title,
-  text,
-});

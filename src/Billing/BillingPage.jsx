@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import './BillingPage.css';
 import logger from '../utils/logger';
 import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
-import { openWhatsAppChat, sharePdfFile, supportsPdfSharing } from '../utils/whatsapp';
+import { openWhatsAppChat } from '../utils/whatsapp';
 import createSecureIdempotencyKey from '../utils/createSecureIdempotencyKey';
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
 import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
@@ -21,8 +21,41 @@ const normalizePaymentMethod = (method) => {
   return 'OTHER';
 };
 
+const parseWhatsAppRequestedItems = (requestText, products) => {
+  const segments = String(requestText || '')
+    .split(/[\n,;]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return segments.flatMap((segment) => {
+    const requestedText = segment.toLowerCase();
+    const product = [...products]
+      .filter((item) => item?.name)
+      .sort((a, b) => b.name.length - a.name.length)
+      .find((item) => requestedText.includes(String(item.name).toLowerCase()) || (
+        item.sku && requestedText.includes(String(item.sku).toLowerCase())
+      ));
+    if (!product) return [];
+
+    const leadingQuantity = segment.match(/^\s*(\d+(?:\.\d+)?)\s*(?:x\b|\*\s*|kg\b|ltr\b|litre\b|pcs\b|piece\b|pack\b)?/i);
+    const trailingQuantity = segment.match(/(?:x|\*)\s*(\d+(?:\.\d+)?)\s*$/i);
+    const quantity = Math.max(1, Math.min(
+      Number(leadingQuantity?.[1] || trailingQuantity?.[1] || 1),
+      Number(product.stock || 1) || 1,
+    ));
+    return [{ ...product, qty: quantity }];
+  }).reduce((cart, item) => {
+    const existing = cart.find((entry) => String(entry.id) === String(item.id));
+    if (existing) existing.qty = Math.min(existing.qty + item.qty, Number(item.stock || existing.qty) || existing.qty);
+    else cart.push(item);
+    return cart;
+  }, []);
+};
+
 const BillingPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const consumedOrderDraftRef = useRef('');
   
   // POS State
   const [cart, setCart] = useState([]);
@@ -291,6 +324,36 @@ const BillingPage = () => {
     setCartNotice(`${product.name} added to cart`);
     setLatestAddedProductId(product.id);
   };
+
+  useEffect(() => {
+    const orderDraft = location.state?.whatsappOrder || location.state?.repeatedOrder;
+    if (!orderDraft || products.length === 0 || !isBillingWritable) return;
+
+    const draftKey = JSON.stringify(orderDraft);
+    if (consumedOrderDraftRef.current === draftKey) return;
+    consumedOrderDraftRef.current = draftKey;
+
+    setCustomer(orderDraft.customer || { name: '', phone: '', email: '' });
+
+    let matchedItems = [];
+    if (location.state?.repeatedOrder) {
+      matchedItems = (orderDraft.items || []).flatMap((requested) => {
+        const matched = products.find((product) => (
+          (requested.sku && String(product.sku).toLowerCase() === String(requested.sku).toLowerCase())
+          || String(product.name).toLowerCase() === String(requested.name).toLowerCase()
+        ));
+        if (!matched || Number(matched.stock || 0) <= 0) return [];
+        return [{ ...matched, qty: Math.min(Number(requested.qty || 1), Number(matched.stock || 1)) }];
+      });
+    } else {
+      matchedItems = parseWhatsAppRequestedItems(orderDraft.requestText, products);
+    }
+
+    setCart(matchedItems);
+    setCartNotice(matchedItems.length
+      ? `${matchedItems.length} WhatsApp/repeat order item${matchedItems.length === 1 ? '' : 's'} loaded`
+      : 'Order loaded; select matching products from the catalog');
+  }, [location.state, products, isBillingWritable]);
   
   // Update quantity
   const updateQty = (id, qty) => {
@@ -564,14 +627,7 @@ const BillingPage = () => {
     const whatsappMessage = `Hi ${customerName}! 😊\n\nThank you for shopping with ${invoiceShopName}. We truly appreciate your support and hope you enjoy your purchase.\n\nYour invoice ${invoiceData.invoiceNo} is ready. Total: ₹${invoiceData.grandTotal.toLocaleString('en-IN')}.\n\nIf you have any questions or need help, we're happy to assist. Have a wonderful day!\n\nWarm regards,\n${invoiceShopName}`;
     const whatsappPhone = invoiceData.customerPhone || '919999999999';
     const filename = `invoice_${invoiceData.invoiceNo}.pdf`;
-    let useNativeShare = false;
-    try {
-      useNativeShare = supportsPdfSharing(shareWindow);
-    } catch (error) {
-      logger.warn('Native file sharing is unavailable', error);
-    }
-
-    if (!useNativeShare) openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
+    openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
 
     let pdfBlob;
     try {
@@ -581,18 +637,6 @@ const BillingPage = () => {
       logger.error('Invoice PDF generation failed for WhatsApp sharing', error);
       alert('Unable to prepare the invoice PDF. Please try downloading it instead.');
       return;
-    }
-
-    if (useNativeShare) {
-      const pdfFile = new shareWindow.File([pdfBlob], filename, { type: 'application/pdf' });
-      try {
-        await sharePdfFile(pdfFile, `Invoice ${invoiceData.invoiceNo}`, whatsappMessage, shareWindow);
-        return;
-      } catch (error) {
-        if (error?.name === 'AbortError') return;
-        logger.warn('Native invoice sharing failed; falling back to WhatsApp chat', error);
-        openWhatsAppChat(whatsappPhone, whatsappMessage, shareWindow);
-      }
     }
 
     const url = URL.createObjectURL(pdfBlob);

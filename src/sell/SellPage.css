@@ -928,3 +928,126 @@
     border-bottom: 2px solid #000 !important;
   }
 }
+
+.sell-dashboard .whatsapp-order-dialog {
+  max-width: 620px;
+}
+
+.sell-dashboard .whatsapp-order-dialog textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--sell-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--sell-text);
+  background: var(--sell-panel-strong);
+  font: inherit;
+}
+
+.sell-dashboard .whatsapp-recurring-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sell-dashboard .whatsapp-recurring-option input {
+  width: auto;
+  margin: 0;
+}
+
+.sell-dashboard .whatsapp-draft-list {
+  margin-top: 16px;
+  border-top: 1px solid var(--sell-border);
+  padding-top: 12px;
+}
+
+.sell-dashboard .whatsapp-draft-list h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.sell-dashboard .whatsapp-draft-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--sell-border);
+  background: transparent;
+  color: var(--sell-text);
+  text-align: left;
+  padding: 8px 4px;
+  cursor: pointer;
+}
+
+.sell-dashboard .whatsapp-draft-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sell-text-soft);
+}
+
+.sell-dashboard .whatsapp-draft-list button em {
+  color: var(--sell-primary);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.sell-dashboard .whatsapp-recurring-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sell-dashboard .whatsapp-recurring-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.sell-dashboard .whatsapp-recurring-fields select,
+.sell-dashboard .whatsapp-recurring-fields input {
+  min-height: 40px;
+  border: 1px solid var(--sell-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--sell-panel-strong);
+  color: var(--sell-text);
+  font: inherit;
+}
+
+.sell-dashboard .whatsapp-recurring-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--sell-border);
+}
+
+.sell-dashboard .whatsapp-recurring-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.sell-dashboard .whatsapp-recurring-row span {
+  color: var(--sell-text-soft);
+  font-size: 0.82rem;
+}
+
+.sell-dashboard .whatsapp-recurring-row em {
+  color: var(--sell-warning);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.sell-dashboard .whatsapp-recurring-row button {
+  width: auto;
+  border: 1px solid var(--sell-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--sell-panel-strong);
+  color: var(--sell-primary);
+  cursor: pointer;
+}

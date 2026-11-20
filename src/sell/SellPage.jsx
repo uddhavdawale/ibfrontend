@@ -4,10 +4,11 @@ import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
 import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
-import { openWhatsAppChat, sharePdfFile, supportsPdfSharing } from "../utils/whatsapp";
+import { openWhatsAppChat } from "../utils/whatsapp";
 import createSecureIdempotencyKey from "../utils/createSecureIdempotencyKey";
 import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
 import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
+import { normalizeWhatsAppPhone } from "../utils/whatsappCommerce";
 
 const exportSellOrdersData = (orders, format = "csv") => {
   const rows = orders.map((order) => ({
@@ -43,24 +44,10 @@ const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
   const message = `🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
   const filename = `invoice_${order.invoiceNo}.pdf`;
-  const useNativeShare = supportsPdfSharing();
-
-  if (!useNativeShare) openWhatsAppChat(order.customer.phone, message);
+  openWhatsAppChat(order.customer.phone, message);
 
   const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
-
-  if (useNativeShare) {
-    const pdfFile = new File([pdfBlob], filename, { type: "application/pdf" });
-    try {
-      await sharePdfFile(pdfFile, `Invoice ${order.invoiceNo}`, message);
-      return;
-    } catch (error) {
-      if (error?.name === "AbortError") return;
-      console.error("Native invoice sharing failed", error);
-      openWhatsAppChat(order.customer.phone, message);
-    }
-  }
 
   const url = URL.createObjectURL(pdfBlob);
   const downloadLink = document.createElement("a");
@@ -408,6 +395,24 @@ const SellPage = ({ onOpenPaymentReport }) => {
   const [paymentError, setPaymentError] = useState('');
   const [paymentResult, setPaymentResult] = useState(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
+  const [whatsappOrderOpen, setWhatsappOrderOpen] = useState(false);
+  const [whatsappOrderDraft, setWhatsappOrderDraft] = useState({
+    customerName: '',
+    phone: '',
+    requestText: '',
+    recurring: false,
+    frequency: 'weekly',
+    nextPurchaseDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+  });
+  const [whatsappOrderError, setWhatsappOrderError] = useState('');
+  const [whatsappDrafts, setWhatsappDrafts] = useState(() => {
+    try {
+      const stored = JSON.parse(sessionStorage.getItem('ib-whatsapp-order-drafts') || '[]');
+      return Array.isArray(stored) ? stored.slice(0, 25) : [];
+    } catch {
+      return [];
+    }
+  });
   const pageSize = 5;
   const canManageSellOrders = canWriteBilling(role);
 
@@ -421,6 +426,111 @@ const SellPage = ({ onOpenPaymentReport }) => {
       return 'all';
     });
     setCurrentPage(1);
+  };
+
+  const saveWhatsappOrderDraft = () => {
+    const customerName = whatsappOrderDraft.customerName.trim();
+    const phone = normalizeWhatsAppPhone(whatsappOrderDraft.phone);
+    const requestText = whatsappOrderDraft.requestText.trim();
+    if (!customerName || !phone || !requestText) {
+      setWhatsappOrderError('Enter customer name, a valid phone number, and the requested products.');
+      return;
+    }
+
+    const draft = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      customerName,
+      phone,
+      requestText,
+      recurring: whatsappOrderDraft.recurring,
+      frequency: whatsappOrderDraft.frequency,
+      nextPurchaseDate: whatsappOrderDraft.nextPurchaseDate,
+      createdAt: new Date().toISOString(),
+    };
+    const nextDrafts = [draft, ...whatsappDrafts].slice(0, 25);
+    setWhatsappDrafts(nextDrafts);
+    try {
+      sessionStorage.setItem('ib-whatsapp-order-drafts', JSON.stringify(nextDrafts));
+    } catch {
+      setWhatsappOrderError('The order draft could not be stored in this browser.');
+      return false;
+    }
+    setWhatsappOrderError('');
+    return true;
+  };
+
+  const createBillingDraftFromWhatsapp = () => {
+    const customerName = whatsappOrderDraft.customerName.trim();
+    const phone = normalizeWhatsAppPhone(whatsappOrderDraft.phone);
+    const requestText = whatsappOrderDraft.requestText.trim();
+    if (!customerName || !phone || !requestText) {
+      setWhatsappOrderError('Enter customer name, a valid phone number, and the requested products.');
+      return;
+    }
+
+    if (!saveWhatsappOrderDraft()) return;
+    navigate('/billing', {
+      state: {
+        whatsappOrder: {
+          customer: { name: customerName, phone, email: '' },
+          requestText,
+        },
+      },
+    });
+  };
+
+  const repeatOrderInBilling = (order) => {
+    if (!order) return;
+    setOpenActionMenuFor(null);
+    navigate('/billing', {
+      state: {
+        repeatedOrder: {
+          customer: {
+            name: order.customer?.name || '',
+            phone: order.customer?.phone || '',
+            email: order.customer?.email || '',
+          },
+          items: (Array.isArray(order.items) ? order.items : []).map((item) => ({
+            name: item.item || item.name || item.productName || '',
+            qty: Number(item.qty || item.quantity || 1) || 1,
+            sku: item.sku || item.code || '',
+          })),
+        },
+      },
+    });
+  };
+
+  const getNextRecurringDate = (dateString, frequency) => {
+    const date = new Date(`${dateString}T12:00:00`);
+    if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+    if (frequency === 'monthly') date.setMonth(date.getMonth() + 1);
+    else if (frequency === 'quarterly') date.setMonth(date.getMonth() + 3);
+    else date.setDate(date.getDate() + 7);
+    return date.toISOString().slice(0, 10);
+  };
+
+  const createRecurringBillingDraft = (draft) => {
+    if (!draft) return;
+    navigate('/billing', {
+      state: {
+        whatsappOrder: {
+          customer: { name: draft.customerName, phone: draft.phone, email: '' },
+          requestText: draft.requestText,
+        },
+      },
+    });
+
+    if (draft.recurring) {
+      const updatedDrafts = whatsappDrafts.map((item) => item.id === draft.id
+        ? { ...item, nextPurchaseDate: getNextRecurringDate(item.nextPurchaseDate, item.frequency) }
+        : item);
+      setWhatsappDrafts(updatedDrafts);
+      try {
+        sessionStorage.setItem('ib-whatsapp-order-drafts', JSON.stringify(updatedDrafts));
+      } catch {
+        // Navigation can continue; the in-memory schedule remains available for this session.
+      }
+    }
   };
 
   const openPaymentCollection = (order) => {
@@ -496,6 +606,11 @@ const SellPage = ({ onOpenPaymentReport }) => {
   const handleThreeDotMenuAction = async (order, action) => {
     if (!order || cancellingOrderId) return;
     setOpenActionMenuFor(null);
+
+    if (action === 'repeat') {
+      repeatOrderInBilling(order);
+      return;
+    }
 
     if (action === 'sell') {
       setCancellingOrderId(order.id);
@@ -994,6 +1109,14 @@ const OrderDetail = ({ order, onCollectPayment }) => {
         {loading && <p className="loading-text">🔄 Loading live sell orders...</p>}
         {!canManageSellOrders && <p className="error-text">Read-only mode: billing viewer access.</p>}
         <div className="sell-page-actions">
+          <button
+            type="button"
+            className="btn-payment-report"
+            disabled={!canManageSellOrders}
+            onClick={() => setWhatsappOrderOpen(true)}
+          >
+            📱 WhatsApp Order
+          </button>
           <button type="button" className="btn-payment-report" onClick={() => {
             if (onOpenPaymentReport) onOpenPaymentReport();
             else navigate('/payments');
@@ -1123,6 +1246,14 @@ const OrderDetail = ({ order, onCollectPayment }) => {
                   <button
                     type="button"
                     className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction(order, 'repeat')}
+                    disabled={isRowActionBusy}
+                  >
+                    Repeat Order
+                  </button>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
                     onClick={() => handleThreeDotMenuAction(order, 'sell')}
                     disabled={isRowActionBusy}
                   >
@@ -1189,6 +1320,132 @@ const OrderDetail = ({ order, onCollectPayment }) => {
             ← Back to List
           </button>
           <OrderDetail order={activeOrder} onCollectPayment={openPaymentCollection} />
+        </div>
+      )}
+
+      {whatsappOrderOpen && (
+        <div className="payment-dialog-backdrop" role="presentation" onClick={() => setWhatsappOrderOpen(false)}>
+          <section
+            className="payment-dialog whatsapp-order-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="whatsapp-order-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="payment-dialog-close" onClick={() => setWhatsappOrderOpen(false)} aria-label="Close WhatsApp order">×</button>
+            <h2 id="whatsapp-order-title">Create WhatsApp order</h2>
+            <p>Convert a customer's WhatsApp request into a bill draft. No WhatsApp API or cloud messaging cost is required.</p>
+            <form className="payment-dialog-form" onSubmit={(event) => { event.preventDefault(); createBillingDraftFromWhatsapp(); }}>
+              <label>Customer name
+                <input
+                  required
+                  maxLength="100"
+                  value={whatsappOrderDraft.customerName}
+                  onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, customerName: event.target.value }))}
+                />
+              </label>
+              <label>WhatsApp phone
+                <input
+                  required
+                  inputMode="tel"
+                  maxLength="20"
+                  value={whatsappOrderDraft.phone}
+                  onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, phone: event.target.value }))}
+                />
+              </label>
+              <label>Products requested
+                <textarea
+                  required
+                  maxLength="1000"
+                  rows="4"
+                  placeholder="Example: 2 kg sugar, 1 litre oil"
+                  value={whatsappOrderDraft.requestText}
+                  onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, requestText: event.target.value }))}
+                />
+              </label>
+              <label className="whatsapp-recurring-option">
+                <input
+                  type="checkbox"
+                  checked={whatsappOrderDraft.recurring}
+                  onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, recurring: event.target.checked }))}
+                />
+                Save as recurring/repeat purchase
+              </label>
+              {whatsappOrderDraft.recurring && (
+                <div className="whatsapp-recurring-fields">
+                  <label>Frequency
+                    <select
+                      value={whatsappOrderDraft.frequency}
+                      onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, frequency: event.target.value }))}
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                    </select>
+                  </label>
+                  <label>Next purchase date
+                    <input
+                      type="date"
+                      min={new Date().toISOString().slice(0, 10)}
+                      value={whatsappOrderDraft.nextPurchaseDate}
+                      onChange={(event) => setWhatsappOrderDraft((current) => ({ ...current, nextPurchaseDate: event.target.value }))}
+                    />
+                  </label>
+                </div>
+              )}
+              {whatsappOrderError && <p className="payment-dialog-error" role="alert">{whatsappOrderError}</p>}
+              <div className="payment-dialog-actions">
+                <button type="button" className="payment-dialog-cancel" onClick={() => setWhatsappOrderOpen(false)}>Cancel</button>
+                <button type="button" className="payment-dialog-cancel" onClick={saveWhatsappOrderDraft}>Save Draft</button>
+                <button type="submit" className="btn-collect-payment">Create Billing Draft</button>
+              </div>
+            </form>
+
+            {whatsappDrafts.length > 0 && (
+              <div className="whatsapp-draft-list">
+                <h3>Recent WhatsApp drafts</h3>
+                {whatsappDrafts.slice(0, 5).map((draft) => (
+                  <button
+                    type="button"
+                    key={draft.id}
+                    onClick={() => setWhatsappOrderDraft({
+                      customerName: draft.customerName,
+                      phone: draft.phone,
+                      requestText: draft.requestText,
+                      recurring: Boolean(draft.recurring),
+                      frequency: draft.frequency || 'weekly',
+                      nextPurchaseDate: draft.nextPurchaseDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+                    })}
+                  >
+                    <strong>{draft.customerName}</strong>
+                    <span>{draft.requestText}</span>
+                    {draft.recurring && <em>Recurring</em>}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {whatsappDrafts.some((draft) => draft.recurring) && (
+              <div className="whatsapp-draft-list whatsapp-recurring-list">
+                <h3>Recurring purchases</h3>
+                {whatsappDrafts.filter((draft) => draft.recurring).slice(0, 5).map((draft) => {
+                  const due = draft.nextPurchaseDate && draft.nextPurchaseDate <= new Date().toISOString().slice(0, 10);
+                  return (
+                    <div className="whatsapp-recurring-row" key={draft.id}>
+                      <div>
+                        <strong>{draft.customerName}</strong>
+                        <span>{draft.frequency} · {draft.nextPurchaseDate}</span>
+                      </div>
+                      {due && <em>Due today</em>}
+                      <button type="button" onClick={() => createRecurringBillingDraft(draft)}>
+                        Create order
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </div>
       )}
 

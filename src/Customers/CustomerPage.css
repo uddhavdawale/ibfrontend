@@ -286,6 +286,27 @@
   transform: none;
 }
 
+.customer-follow-up-actions .daily-reminder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.customer-follow-up-actions .daily-reminder-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.daily-reminder-count {
+  color: #64748b;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr));
