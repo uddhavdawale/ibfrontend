@@ -1,57 +1,57 @@
-const isMobileDevice = () => (
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+const isMobileDevice = (targetWindow) => (
+  /Android|iPhone|iPad|iPod/i.test(targetWindow.navigator.userAgent)
+  || (targetWindow.navigator.platform === 'MacIntel' && targetWindow.navigator.maxTouchPoints > 1)
 );
 
-export const openWhatsAppChat = (phone, message) => {
+export const openWhatsAppChat = (phone, message, targetWindow = window) => {
   const digits = String(phone || '').replace(/\D/g, '');
   const whatsappPhone = digits.length === 10 ? `91${digits}` : digits;
   const encodedMessage = encodeURIComponent(message);
   const webUrl = `https://wa.me/${whatsappPhone}?text=${encodedMessage}`;
 
-  if (!isMobileDevice()) {
-    window.open(webUrl, '_blank', 'noopener,noreferrer');
+  if (!isMobileDevice(targetWindow)) {
+    const chatWindow = targetWindow.open(webUrl, '_blank');
+    if (chatWindow) chatWindow.opener = null;
+    else targetWindow.location.href = webUrl;
     return;
   }
 
   const appUrl = `whatsapp://send?phone=${whatsappPhone}&text=${encodedMessage}`;
-  const appWindow = window.open(appUrl, '_blank');
+  const appWindow = targetWindow.open(appUrl, '_blank');
+  const fallbackWindow = appWindow || targetWindow;
 
-  if (!appWindow) {
-    window.open(webUrl, '_blank', 'noopener,noreferrer');
-    return;
-  }
+  if (!appWindow) targetWindow.location.href = appUrl;
 
   let fallbackTimer;
   const handleVisibilityChange = () => {
-    if (document.hidden) {
-      window.clearTimeout(fallbackTimer);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (targetWindow.document.hidden) {
+      targetWindow.clearTimeout(fallbackTimer);
+      targetWindow.document.removeEventListener('visibilitychange', handleVisibilityChange);
     }
   };
 
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-  fallbackTimer = window.setTimeout(() => {
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
-    if (!document.hidden) appWindow.location.href = webUrl;
+  targetWindow.document.addEventListener('visibilitychange', handleVisibilityChange);
+  fallbackTimer = targetWindow.setTimeout(() => {
+    targetWindow.document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (!targetWindow.document.hidden) fallbackWindow.location.href = webUrl;
   }, 1500);
 };
 
-export const supportsPdfSharing = () => {
+export const supportsPdfSharing = (targetWindow = window) => {
+  const targetNavigator = targetWindow.navigator;
   if (
-    !isMobileDevice()
-    || typeof navigator.share !== 'function'
-    || typeof navigator.canShare !== 'function'
-    || typeof File === 'undefined'
+    typeof targetNavigator.share !== 'function'
+    || typeof targetNavigator.canShare !== 'function'
+    || typeof targetWindow.File === 'undefined'
   ) {
     return false;
   }
 
-  const testFile = new File([''], 'invoice.pdf', { type: 'application/pdf' });
-  return navigator.canShare({ files: [testFile] });
+  const testFile = new targetWindow.File([''], 'invoice.pdf', { type: 'application/pdf' });
+  return targetNavigator.canShare({ files: [testFile] });
 };
 
-export const sharePdfFile = (file, title, text) => navigator.share({
+export const sharePdfFile = (file, title, text, targetWindow = window) => targetWindow.navigator.share({
   files: [file],
   title,
   text,
