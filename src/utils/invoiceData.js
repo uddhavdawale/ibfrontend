@@ -25,24 +25,9 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
 
   const grandTotal = Number(invoiceData.grandTotal ?? subtotal + gstTotal);
   const totalQty = items.reduce((sum, item) => sum + Number(item.qty ?? 0), 0);
-  const reportedReceivedAmount = invoiceData.receivedAmount
-    ?? invoiceData.paidAmount
-    ?? invoiceData.amountPaid
-    ?? invoiceData.amountReceived;
-  const reportedInvoiceDue = invoiceData.outstandingAmount
-    ?? invoiceData.invoiceDueAmount
-    ?? invoiceData.dueCollection
-    ?? invoiceData.dueAmount
-    ?? invoiceData.balanceDue;
-  const receivedAmount = Number(
-    reportedReceivedAmount
-      ?? (reportedInvoiceDue != null ? Math.max(grandTotal - Number(reportedInvoiceDue), 0) : 0)
-  );
+  const receivedAmount = Number(invoiceData.receivedAmount ?? invoiceData.paidAmount ?? invoiceData.amountPaid ?? invoiceData.amountReceived ?? 0);
   const previousBalance = Number(invoiceData.previousBalance ?? 0);
-  const invoiceDueAmount = Math.max(
-    Number(reportedInvoiceDue ?? grandTotal - receivedAmount),
-    0
-  );
+  const invoiceDueAmount = Math.max(grandTotal - receivedAmount, 0);
   const balanceAmount = Number(invoiceData.balanceAmount ?? previousBalance + invoiceDueAmount);
   const currentBalance = Number(invoiceData.currentBalance ?? balanceAmount);
 
