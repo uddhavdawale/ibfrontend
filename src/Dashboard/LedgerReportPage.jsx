@@ -4,6 +4,9 @@ import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import './LedgerReportPage.css';
 
 const PAGE_SIZE = 200;
+const PAYMENT_PAGE_SIZE = 100;
+const PAYMENT_RANGE_DAYS = 365;
+const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
 
 const extractInvoices = (payload) => {
   if (Array.isArray(payload)) return payload;
@@ -90,18 +93,6 @@ const getCustomerKey = (source = {}) => {
   return `name:${name || 'walk-in-customer'}`;
 };
 
-const getCustomerMatchKeys = (source = {}) => {
-  const keys = [];
-  const customerId = source.customerId ?? source.customer?.id;
-  const phone = normalizePhone(source.customerPhone ?? source.phone ?? source.customer?.phone);
-  const name = String(source.customerName ?? source.customer?.name ?? source.customer ?? '').trim().toLowerCase();
-  if (customerId !== undefined && customerId !== null && String(customerId).trim()) keys.push(`id:${String(customerId).trim()}`);
-  if (phone) keys.push(`phone:${phone}`);
-  if (name) keys.push(`name:${name}`);
-  if (!keys.length) keys.push('name:walk-in-customer');
-  return keys;
-};
-
 const readAmount = (...values) => {
   const value = values.find((candidate) => candidate !== undefined && candidate !== null && candidate !== '');
   if (value === undefined) return null;
@@ -109,8 +100,132 @@ const readAmount = (...values) => {
   return Number.isFinite(amount) ? amount : null;
 };
 
+const roundMoney = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+const getRetailDate = (date) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(date);
+
+const getPaymentDateRanges = (invoices) => {
+  const invoiceDates = invoices
+    .map((invoice) => invoice.date ? new Date(invoice.date).getTime() : Number.NaN)
+    .filter(Number.isFinite);
+  if (invoices.length && invoiceDates.length === 0) {
+    throw new Error('Invoice dates are unavailable, so payment history cannot be reconciled.');
+  }
+
+  const today = getRetailDate(new Date());
+  const firstInvoiceDate = invoiceDates.length
+    ? getRetailDate(new Date(Math.min(...invoiceDates)))
+    : today;
+  const start = new Date(`${firstInvoiceDate}T00:00:00.000Z`);
+  const end = new Date(`${today}T00:00:00.000Z`);
+  if (start > end) return [{ from: today, to: today }];
+
+  const ranges = [];
+  while (start <= end) {
+    const rangeEnd = new Date(Math.min(
+      start.getTime() + PAYMENT_RANGE_DAYS * DAY_IN_MILLISECONDS,
+      end.getTime()
+    ));
+    ranges.push({ from: getRetailDate(start), to: getRetailDate(rangeEnd) });
+    start.setTime(rangeEnd.getTime() + DAY_IN_MILLISECONDS);
+  }
+  return ranges;
+};
+
+const extractPayments = (payload) => {
+  if (Array.isArray(payload?.payments)) return payload.payments;
+  if (Array.isArray(payload)) return payload;
+  if (payload?.data !== undefined) return extractPayments(payload.data);
+  return null;
+};
+
+const fetchPaymentRange = async ({ from, to }) => {
+  const fetchPage = async (page) => {
+    const params = new URLSearchParams({
+      from,
+      to,
+      method: 'ALL',
+      page: String(page),
+      size: String(PAYMENT_PAGE_SIZE),
+    });
+    const response = await apiFetch(`${API_ENDPOINTS.payments}?${params.toString()}`);
+    if (!response.ok) throw new Error(`Payment history request failed (${response.status}).`);
+    const payload = await response.json();
+    const payments = extractPayments(payload);
+    if (!payments) throw new Error('Payment history API returned an unsupported response format.');
+    return { payload, payments };
+  };
+
+  const firstPage = await fetchPage(0);
+  const pageInfo = [
+    firstPage.payload?.page,
+    firstPage.payload?.pagination,
+    firstPage.payload?.meta,
+    firstPage.payload?.data?.page,
+    firstPage.payload?.data?.pagination,
+    firstPage.payload?.data?.meta,
+    firstPage.payload?.data,
+    firstPage.payload,
+  ].find((candidate) => candidate && (
+    candidate.totalPages !== undefined || candidate.totalElements !== undefined
+  ));
+  const outstandingAmount = readAmount(firstPage.payload?.summary?.outstandingAmount);
+  const totalCollected = readAmount(firstPage.payload?.summary?.totalCollected);
+  if (outstandingAmount === null || totalCollected === null) {
+    throw new Error('Payment history API did not return valid collection and outstanding totals.');
+  }
+  const pageNumber = readAmount(pageInfo?.page);
+  const pageSize = readAmount(pageInfo?.size);
+  const totalPages = readAmount(pageInfo?.totalPages);
+  const totalElements = readAmount(pageInfo?.totalElements);
+  if (pageNumber !== 0 || pageSize === null || totalPages === null || totalElements === null
+    || totalPages < 0 || totalPages > 100) {
+    throw new Error('Payment history API returned invalid pagination details.');
+  }
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: Math.max(totalPages - 1, 0) }, (_, index) => fetchPage(index + 1))
+  );
+  const payments = [
+    ...firstPage.payments,
+    ...remainingPages.flatMap((page) => page.payments),
+  ];
+  const listedCollectionTotal = roundMoney(payments.reduce((total, payment) => {
+    const record = payment?.payment && typeof payment.payment === 'object'
+      ? { ...payment, ...payment.payment }
+      : payment;
+    const amount = readAmount(
+      record?.amount,
+      record?.paymentAmount,
+      record?.collectedAmount,
+      record?.amountReceived
+    );
+    if (amount === null) throw new Error('Payment history contains a record without a valid amount.');
+    return total + amount;
+  }, 0));
+  if (Math.round(listedCollectionTotal * 100) !== Math.round(totalCollected * 100)) {
+    throw new Error('Payment history rows do not reconcile with the payment report total.');
+  }
+  return { payments, outstandingAmount, totalCollected };
+};
+
+const fetchPaymentHistory = async (invoices) => {
+  const ranges = getPaymentDateRanges(invoices);
+  const pages = await Promise.all(ranges.map(fetchPaymentRange));
+  return {
+    payments: pages.flatMap((page) => page.payments),
+    outstandingAmount: pages[pages.length - 1].outstandingAmount,
+    totalCollected: roundMoney(pages.reduce((total, page) => total + page.totalCollected, 0)),
+  };
+};
+
 const normalizeInvoice = (invoice, index, billType) => {
-  const total = readAmount(
+  const rawTotal = readAmount(
     invoice.grandTotal,
     invoice.totalAmount,
     invoice.total,
@@ -119,6 +234,7 @@ const normalizeInvoice = (invoice, index, billType) => {
   ) ?? (
     (readAmount(invoice.subtotal) || 0) + (readAmount(invoice.gstAmount, invoice.taxAmount) || 0)
   );
+  const total = Math.max(roundMoney(rawTotal), 0);
   const status = String(invoice.paymentStatus || invoice.payment_status || invoice.status || 'unknown').trim();
   const normalizedStatus = status.toLowerCase();
   const isVoided = ['cancelled', 'canceled', 'void', 'returned', 'return'].includes(normalizedStatus);
@@ -131,29 +247,23 @@ const normalizeInvoice = (invoice, index, billType) => {
     invoice.totalReceived,
     invoice.totalPaidAmount
   );
-  const paid = isVoided ? 0 : paidValue === null
-    ? (normalizedStatus === 'paid' ? total : 0)
-    : paidValue;
-  const invoiceDue = isVoided
-    ? 0
-    : Math.max(readAmount(
-      invoice.outstandingAmount,
-      invoice.invoiceDueAmount,
-      invoice.dueAmount,
-      invoice.dueCollection,
-      invoice.balanceDue,
-      invoice.pendingAmount,
-      invoice.pendingBalance
-    ) ?? (total - paid), 0);
-  const savedPreviousBalance = readAmount(invoice.previousBalance, invoice.openingBalance);
-  const savedBalance = readAmount(
-    invoice.currentBalance,
-    invoice.balanceAmount,
-    invoice.totalDueAmount,
-    invoice.dueBalance,
-    invoice.outstandingBalance,
-    invoice.customerDue
+  const dueValue = readAmount(
+    invoice.outstandingAmount,
+    invoice.invoiceDueAmount,
+    invoice.dueAmount,
+    invoice.dueCollection,
+    invoice.balanceDue,
+    invoice.pendingAmount,
+    invoice.pendingBalance
   );
+  const boundedDue = dueValue === null ? null : Math.min(Math.max(roundMoney(dueValue), 0), total);
+  const paid = isVoided ? 0 : paidValue !== null
+    ? Math.min(Math.max(roundMoney(paidValue), 0), total)
+    : boundedDue !== null
+      ? roundMoney(total - boundedDue)
+      : normalizedStatus === 'paid' ? total : 0;
+  const invoiceDue = isVoided ? 0 : roundMoney(total - paid);
+  const savedPreviousBalance = readAmount(invoice.previousBalance, invoice.openingBalance);
   const invoiceNo = invoice.invoiceNo || invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id ?? index + 1}`;
   const customerName = invoice.customerName || invoice.customer?.name || invoice.customer || 'Walk-in Customer';
   const customerPhone = invoice.customerPhone || invoice.customer?.phone || invoice.phone || '';
@@ -166,14 +276,12 @@ const normalizeInvoice = (invoice, index, billType) => {
     customerName: String(customerName),
     customerPhone: String(customerPhone),
     customerKey: getCustomerKey(invoice),
-    customerMatchKeys: getCustomerMatchKeys(invoice),
     date: rawDate,
     timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
-    total: isVoided ? 0 : Math.max(total, 0),
-    paid: Math.min(Math.max(paid, 0), Math.max(total, 0)),
-    previousBalance: savedPreviousBalance === null ? null : Math.max(savedPreviousBalance, 0),
+    total: isVoided ? 0 : total,
+    paid,
+    previousBalance: savedPreviousBalance === null ? null : Math.max(roundMoney(savedPreviousBalance), 0),
     invoiceDue,
-    savedBalance: savedBalance === null ? null : Math.max(savedBalance, 0),
     paymentMethod: invoice.paymentMethod || invoice.payment_method || '—',
     paymentStatus: status,
     isVoided,
@@ -181,54 +289,82 @@ const normalizeInvoice = (invoice, index, billType) => {
   };
 };
 
-const extractCustomers = (payload) => {
-  if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== 'object') return null;
-  for (const key of ['customers', 'content', 'items', 'results', 'records']) {
-    if (Array.isArray(payload[key])) return payload[key];
-  }
-  if (payload.data !== undefined) return extractCustomers(payload.data);
-  return null;
-};
+const reconcileInvoicePayments = (invoices, payments) => {
+  const invoicesByNumber = new Map();
+  const invoicesById = new Map();
+  invoices.forEach((invoice) => {
+    const addReference = (map, reference) => {
+      if (!reference) return;
+      const key = String(reference).trim().toLowerCase();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(invoice);
+    };
+    addReference(invoicesByNumber, invoice.invoiceNo);
+    addReference(invoicesById, invoice.id);
+  });
 
-const fetchCustomerBalances = async () => {
-  let lastError;
-  for (const endpoint of [API_ENDPOINTS.customerProfiles, API_ENDPOINTS.customers]) {
-    try {
-      const response = await apiFetch(endpoint);
-      if (!response.ok) {
-        lastError = new Error(`Customer balance request failed (${response.status}).`);
-        continue;
-      }
-      const records = extractCustomers(await response.json());
-      if (!records) throw new Error('Customer API returned an unsupported response format.');
-      return records.map((customer) => ({
-        customerKey: getCustomerKey(customer),
-        customerMatchKeys: [
-          ...getCustomerMatchKeys(customer),
-          ...(customer.id !== undefined && customer.id !== null ? [`id:${String(customer.id)}`] : []),
-        ],
-        customerName: customer.customerName || customer.name || customer.customer || 'Customer',
-        customerPhone: customer.phone || customer.mobile || customer.contactNumber || '',
-        currentBalance: Math.max(readAmount(
-          customer.dueBalance,
-          customer.outstandingBalance,
-          customer.balanceDue,
-          customer.pendingAmount,
-          customer.pendingBalance,
-          customer.amountDue,
-          customer.totalDue,
-          customer.customerDue,
-          customer.balance,
-          customer.receivable,
-          customer.outstanding
-        ) || 0, 0),
-      }));
-    } catch (error) {
-      lastError = error;
+  const paymentsByInvoice = new Map();
+  let unmatchedPayments = 0;
+  payments.forEach((payment) => {
+    const record = payment?.payment && typeof payment.payment === 'object'
+      ? { ...payment, ...payment.payment }
+      : payment;
+    const amount = readAmount(
+      record?.amount,
+      record?.paymentAmount,
+      record?.collectedAmount,
+      record?.amountReceived
+    );
+    if (amount === null) {
+      throw new Error('Payment history contains a record without a valid amount.');
     }
-  }
-  throw lastError || new Error('Customer balances are unavailable.');
+
+    const invoiceNo = record.invoiceNo
+      ?? record.invoiceNumber
+      ?? record.invoice?.invoiceNo
+      ?? record.invoice?.invoiceNumber;
+    const invoiceId = record.invoiceId ?? record.invoice?.id;
+    const numberCandidates = invoiceNo
+      ? invoicesByNumber.get(String(invoiceNo).trim().toLowerCase())
+      : undefined;
+    const idCandidates = invoiceId
+      ? invoicesById.get(String(invoiceId).trim().toLowerCase())
+        || invoicesByNumber.get(String(invoiceId).trim().toLowerCase())
+      : undefined;
+    const invoiceType = String(record.invoiceType ?? record.billType ?? '').toLowerCase();
+    const candidates = numberCandidates?.length === 1
+      ? numberCandidates
+      : idCandidates?.length === 1
+        ? idCandidates
+        : numberCandidates || idCandidates;
+    const typedCandidates = invoiceType
+      ? candidates?.filter((candidate) => (
+        invoiceType.includes('non') ? candidate.billType === 'Non-GST' : candidate.billType === 'GST'
+      ))
+      : candidates;
+    const invoice = typedCandidates?.length === 1 ? typedCandidates[0] : null;
+    if (!invoice) {
+      unmatchedPayments += 1;
+      return;
+    }
+
+    const key = `${invoice.billType}:${invoice.id}`;
+    paymentsByInvoice.set(key, roundMoney((paymentsByInvoice.get(key) || 0) + amount));
+  });
+
+  return {
+    invoices: invoices.map((invoice) => {
+      const paymentKey = `${invoice.billType}:${invoice.id}`;
+      if (invoice.isVoided) return invoice;
+      if (!paymentsByInvoice.has(paymentKey)) return invoice;
+
+      const paid = Math.min(Math.max(paymentsByInvoice.get(paymentKey) || 0, 0), invoice.total);
+      const invoiceDue = roundMoney(invoice.total - paid);
+      const paymentStatus = invoiceDue === 0 ? 'PAID' : paid > 0 ? 'PARTIAL' : 'PENDING';
+      return { ...invoice, paid, invoiceDue, paymentStatus };
+    }),
+    unmatchedPayments,
+  };
 };
 
 const formatMoney = (value) => new Intl.NumberFormat('en-IN', {
@@ -273,7 +409,8 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
     else navigate('/dashboard');
   };
   const [invoices, setInvoices] = useState([]);
-  const [customerBalances, setCustomerBalances] = useState([]);
+  const [paymentReportOutstanding, setPaymentReportOutstanding] = useState(null);
+  const [paymentReportCollected, setPaymentReportCollected] = useState(null);
   const [search, setSearch] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState('all');
   const [startDate, setStartDate] = useState('');
@@ -290,6 +427,8 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
       setLoading(true);
       setError('');
       setCanExport(false);
+      setPaymentReportOutstanding(null);
+      setPaymentReportCollected(null);
       try {
         const results = await Promise.allSettled([
           fetchInvoiceSource(
@@ -297,40 +436,62 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
             (page) => API_ENDPOINTS.invoiceLegacyPage(page, PAGE_SIZE)
           ),
           fetchInvoicePages((page) => API_ENDPOINTS.nonGstInvoicesPage(page, PAGE_SIZE)),
-          fetchCustomerBalances(),
         ]);
 
         const invoiceResult = results[0];
         const nonGstResult = results[1];
-        const customerResult = results[2];
         if (!active) return;
 
         if (invoiceResult.status === 'rejected' && nonGstResult.status === 'rejected') {
           setInvoices([]);
-          setCustomerBalances(customerResult.status === 'fulfilled' ? customerResult.value : []);
           setError(`${invoiceResult.reason.message} ${nonGstResult.reason.message}`);
         } else {
-          setCanExport(invoiceResult.status === 'fulfilled' && nonGstResult.status === 'fulfilled');
           const gstInvoices = invoiceResult.status === 'fulfilled'
             ? invoiceResult.value.map((invoice, index) => normalizeInvoice(invoice, index, 'GST'))
             : [];
           const nonGstInvoices = nonGstResult.status === 'fulfilled'
             ? nonGstResult.value.map((invoice, index) => normalizeInvoice(invoice, index, 'Non-GST'))
             : [];
-          setInvoices([...gstInvoices, ...nonGstInvoices]);
-          setCustomerBalances(customerResult.status === 'fulfilled' ? customerResult.value : []);
+          const normalizedInvoices = [...gstInvoices, ...nonGstInvoices];
+          let paymentHistory;
+          try {
+            paymentHistory = await fetchPaymentHistory(normalizedInvoices);
+          } catch (paymentError) {
+            if (!active) return;
+            setInvoices(normalizedInvoices);
+            const reason = paymentError instanceof Error
+              ? paymentError.message
+              : 'Unexpected payment-history response.';
+            setError(`Payment history could not be reconciled. Showing saved invoice balances instead. ${reason}`);
+            return;
+          }
+          if (!active) return;
+          const reconciled = reconcileInvoicePayments(normalizedInvoices, paymentHistory.payments);
+          setInvoices(reconciled.invoices);
+          setPaymentReportOutstanding(roundMoney(paymentHistory.outstandingAmount));
+          setPaymentReportCollected(normalizedInvoices.length
+            ? roundMoney(paymentHistory.totalCollected)
+            : null);
+          setCanExport(
+            invoiceResult.status === 'fulfilled'
+            && nonGstResult.status === 'fulfilled'
+            && reconciled.unmatchedPayments === 0
+          );
           if (invoiceResult.status === 'rejected' || nonGstResult.status === 'rejected') {
             setError('Some invoice records could not be loaded. Totals may be incomplete; refresh to try again.');
-          } else if (customerResult.status === 'rejected') {
-            setError('Invoice activity loaded, but current customer balances are unavailable. Showing invoice balance snapshots instead.');
+          } else if (reconciled.unmatchedPayments > 0) {
+            setError(`${reconciled.unmatchedPayments} payment record(s) could not be matched to an invoice. Ledger totals may be incomplete.`);
           }
         }
       } catch (loadError) {
         if (active) {
           setInvoices([]);
-          setCustomerBalances([]);
+          setPaymentReportOutstanding(null);
+          setPaymentReportCollected(null);
           setCanExport(false);
-          setError(loadError instanceof Error ? loadError.message : 'Unable to load ledger records.');
+          setError(loadError instanceof Error
+            ? `Unable to reconcile ledger payments: ${loadError.message}`
+            : 'Unable to reconcile ledger payments.');
         }
       } finally {
         if (active) setLoading(false);
@@ -357,7 +518,7 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
         const openingBalance = invoice.previousBalance ?? runningBalance;
         const closingBalance = invoice.isVoided
           ? openingBalance
-          : invoice.savedBalance ?? Math.max(openingBalance + invoice.invoiceDue, 0);
+          : roundMoney(Math.max(openingBalance + invoice.invoiceDue, 0));
         runningBalance = closingBalance;
         return { ...invoice, openingBalance, closingBalance };
       });
@@ -399,7 +560,7 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
     const visibleAccounts = new Map();
     filteredInvoices.forEach((invoice) => {
       if (!visibleAccounts.has(invoice.customerKey)) {
-        visibleAccounts.set(invoice.customerKey, invoice.customerMatchKeys);
+        visibleAccounts.set(invoice.customerKey, true);
       }
     });
     const latestBalances = new Map();
@@ -413,30 +574,41 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
       }
     });
 
-    const liveBalances = new Map();
-    customerBalances.forEach((customer) => {
-      customer.customerMatchKeys.forEach((key) => liveBalances.set(key, customer.currentBalance));
-    });
-    const customerDue = [...visibleAccounts.entries()].reduce((total, [customerKey, matchKeys]) => (
-      total + (
-        matchKeys.map((key) => liveBalances.get(key))
-          .find((balance) => balance !== undefined)
-        ?? latestBalances.get(customerKey)?.balance
-        ?? 0
-      )
-    ), 0);
+    const reconstructedCustomerDue = roundMoney([...visibleAccounts.keys()].reduce((total, customerKey) => (
+      total + (latestBalances.get(customerKey)?.balance ?? 0)
+    ), 0));
+    const hasCustomerFilters = selectedCustomer !== 'all'
+      || Boolean(search.trim())
+      || Boolean(startDate)
+      || Boolean(endDate);
+    const customerDue = !hasCustomerFilters && paymentReportOutstanding !== null
+      ? paymentReportOutstanding
+      : reconstructedCustomerDue;
 
     const invoiceTotals = filteredInvoices.reduce((totals, invoice) => ({
-      billed: totals.billed + invoice.total,
-      received: totals.received + invoice.paid,
+      billed: roundMoney(totals.billed + invoice.total),
+      received: roundMoney(totals.received + invoice.paid),
     }), { billed: 0, received: 0 });
+    const received = !hasCustomerFilters && paymentReportCollected !== null
+      ? paymentReportCollected
+      : invoiceTotals.received;
 
     return {
       ...invoiceTotals,
+      received,
       customerDue,
       customerCount: visibleAccounts.size,
     };
-  }, [customerBalances, filteredInvoices, ledgerInvoices]);
+  }, [
+    endDate,
+    filteredInvoices,
+    ledgerInvoices,
+    paymentReportCollected,
+    paymentReportOutstanding,
+    search,
+    selectedCustomer,
+    startDate,
+  ]);
 
   const refreshLedger = () => setRefreshKey((key) => key + 1);
 
@@ -471,7 +643,7 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
         <div>
           <p className="ledger-eyebrow">Smart business reports</p>
           <h1>Customer ledger</h1>
-          <p>Review invoice charges, payments, and customer balances using this shop’s saved invoice and customer records.</p>
+          <p>Review invoice charges, payments, and customer balances using this shop’s invoice and payment records.</p>
         </div>
         <div className="ledger-header-actions">
           <button type="button" className="ledger-button secondary" onClick={backToDashboard}>Back to dashboard</button>
@@ -481,17 +653,23 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
       </header>
 
       {error && <div className="ledger-message" role="alert">{error}</div>}
-      {loading && <div className="ledger-message" role="status">Loading saved invoice activity…</div>}
+      {loading && <div className="ledger-message" role="status">Loading invoices and payment history…</div>}
 
       <section className="ledger-summary" aria-label="Ledger summary">
         <article className="ledger-summary-card">
           <span>Billed</span><strong>{formatMoney(summary.billed)}</strong><small>{filteredInvoices.length} invoices</small>
         </article>
         <article className="ledger-summary-card">
-          <span>Payments received</span><strong>{formatMoney(summary.received)}</strong><small>Recorded against invoices</small>
+          <span>Payments received</span><strong>{formatMoney(summary.received)}</strong>
+          <small>{selectedCustomer === 'all' && !search.trim() && !startDate && !endDate
+            ? 'All-time net total from payment report'
+            : 'Net payments for matching invoices'}</small>
         </article>
         <article className="ledger-summary-card due">
-          <span>Current customer due</span><strong>{formatMoney(summary.customerDue)}</strong><small>{summary.customerCount} customer accounts</small>
+          <span>Current customer due</span><strong>{formatMoney(summary.customerDue)}</strong>
+          <small>{selectedCustomer === 'all' && !search.trim() && !startDate && !endDate
+            ? 'Shop total from payment report'
+            : `${summary.customerCount} matching customer accounts`}</small>
         </article>
       </section>
 
@@ -560,7 +738,7 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
           </table>
         </div>
       </section>
-      <p className="ledger-footnote">Opening balance and invoice balance are read from saved invoice records. Current customer due uses the latest customer profile balance when available; otherwise it uses the latest saved invoice balance. Payments not recorded by the backend are not included.</p>
+      <p className="ledger-footnote">Invoice payments include recorded refunds. The unfiltered shop totals come from the payment report; filtered customer balances are reconstructed from that account’s invoice history.</p>
     </div>
   );
 };

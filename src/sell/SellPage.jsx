@@ -47,6 +47,81 @@ const parseExchangeRecords = (payload) => {
   return [];
 };
 
+const SELL_ORDER_PAGE_SIZE = 200;
+
+const extractInvoiceRecords = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== 'object') return null;
+  if (payload.id !== undefined || payload.invoiceId !== undefined || payload.invoiceNo || payload.invoiceNumber) {
+    return [payload];
+  }
+  for (const key of ['content', 'items', 'invoices', 'results', 'records']) {
+    if (Array.isArray(payload[key])) return payload[key];
+  }
+  if (payload.data !== undefined) return extractInvoiceRecords(payload.data);
+  return null;
+};
+
+const fetchInvoicePages = async (endpointForPage) => {
+  const fetchPage = async (page) => {
+    const response = await apiFetch(endpointForPage(page));
+    if (!response.ok) throw new Error(`Invoice request failed (${response.status}).`);
+    const payload = await response.json();
+    const records = extractInvoiceRecords(payload);
+    if (!records) throw new Error('Invoice API returned an unsupported response format.');
+    return { payload, records };
+  };
+
+  const firstPage = await fetchPage(0);
+  const pageInfo = [
+    firstPage.payload?.page,
+    firstPage.payload?.pageable,
+    firstPage.payload?.pagination,
+    firstPage.payload?.meta,
+    firstPage.payload?.data?.page,
+    firstPage.payload?.data?.pageable,
+    firstPage.payload?.data?.pagination,
+    firstPage.payload?.data?.meta,
+    firstPage.payload?.data,
+    firstPage.payload,
+  ].find((candidate) => candidate && (
+    candidate.totalPages !== undefined
+    || candidate.totalElements !== undefined
+    || candidate.last !== undefined
+  ));
+  const pageSize = Number(pageInfo?.size || SELL_ORDER_PAGE_SIZE);
+  const totalPages = Number(
+    pageInfo?.totalPages
+      ?? (pageInfo?.totalElements !== undefined
+        ? Math.ceil(Number(pageInfo.totalElements) / pageSize)
+        : undefined)
+      ?? 1
+  );
+  if (!Number.isFinite(totalPages) || totalPages < 0 || totalPages > 100) {
+    throw new Error('Invoice API returned invalid pagination details.');
+  }
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: Math.max(totalPages - 1, 0) }, (_, index) => fetchPage(index + 1))
+  );
+  return [
+    ...firstPage.records,
+    ...remainingPages.flatMap((page) => page.records),
+  ];
+};
+
+const fetchGstInvoices = async () => {
+  try {
+    return await fetchInvoicePages((page) => API_ENDPOINTS.invoicesPage(page, SELL_ORDER_PAGE_SIZE));
+  } catch (primaryError) {
+    try {
+      return await fetchInvoicePages((page) => API_ENDPOINTS.invoiceLegacyPage(page, SELL_ORDER_PAGE_SIZE));
+    } catch (legacyError) {
+      throw new Error(`Unable to load GST invoices: ${legacyError.message || primaryError.message}`);
+    }
+  }
+};
+
 const formatExchangeAmount = (value) => {
   const amount = Number(value);
   return Number.isFinite(amount)
@@ -153,120 +228,6 @@ const printReceipt = async (order, shopProfile = readStoredShopProfile()) => {
   }
 };
 
-const fallbackSellOrders = [
-  {
-    id: 1,
-    invoiceNo: "INV-2026/001",
-    date: "07-Apr-2026",
-    customer: {
-      name: "Uddhav Dawale",
-      phone: "+919595934249",
-      email: "uddhavdawale2@gmail.com",
-    },
-    paymentMethod: "UPI (PhonePe)",
-    subtotal: 2597.0,
-    totalGst: 73.5,
-    grandTotal: 2670.5,
-    status: "paid",
-    soldBy: "Store Admin",
-    dueCollection: 0,
-    items: [
-      {
-        sn: 1,
-        item: "Basmati Rice 5KG",
-        hsn: "1006",
-        qty: 4,
-        rate: 250.0,
-        gst: 5,
-        total: 1050.0,
-      },
-      {
-        sn: 2,
-        item: "Aashirvaad Atta 10KG",
-        hsn: "1101",
-        qty: 2,
-        rate: 450.0,
-        gst: 5,
-        total: 945.0,
-      },
-      {
-        sn: 3,
-        item: "Fortune Soya Oil 5L",
-        hsn: "1512",
-        qty: 3,
-        rate: 220.0,
-        gst: 18,
-        total: 602.0,
-      },
-    ],
-  },
-  {
-    id: 2,
-    invoiceNo: "INV-2026/002",
-    date: "06-Apr-2026",
-    customer: {
-      name: "Rajesh Patil",
-      phone: "+919595934249",
-      email: "uddhavdawale2@gmail.com",
-    },
-    paymentMethod: "Cash",
-    subtotal: 1845.0,
-    totalGst: 55.35,
-    grandTotal: 1900.35,
-    status: "paid",
-    soldBy: "Store Admin",
-    dueCollection: 0,
-    items: [
-      {
-        sn: 1,
-        item: "Maida 5KG",
-        hsn: "1101",
-        qty: 3,
-        rate: 180.0,
-        gst: 5,
-        total: 567.0,
-      },
-      {
-        sn: 2,
-        item: "Sugar 10KG",
-        hsn: "1701",
-        qty: 2,
-        rate: 640.0,
-        gst: 5,
-        total: 1344.0,
-      },
-    ],
-  },
-  {
-    id: 3,
-    invoiceNo: "INV-2026/003",
-    date: "05-Apr-2026",
-    customer: {
-      name: "Priya Sharma",
-      phone: "+911234567890",
-      email: "priya@sharma.com",
-    },
-    paymentMethod: "Card",
-    subtotal: 1250.0,
-    totalGst: 112.5,
-    grandTotal: 1362.5,
-    status: "pending",
-    soldBy: "Store Admin",
-    dueCollection: 1362.5,
-    items: [
-      {
-        sn: 1,
-        item: "Detergent 1KG",
-        hsn: "3402",
-        qty: 5,
-        rate: 250.0,
-        gst: 18,
-        total: 1250.0,
-      },
-    ],
-  },
-];
-
 const getLoggedInSellerName = () => {
   if (typeof window === "undefined") return "Current User";
 
@@ -287,8 +248,9 @@ const resolvePaymentStatus = (invoice, grandTotal) => {
   ).trim().toLowerCase();
 
   const totalAmount = Number(
-    invoice.totalAmount ??
     invoice.grandTotal ??
+    invoice.invoiceTotal ??
+    invoice.totalAmount ??
     invoice.total ??
     grandTotal ??
     0
@@ -354,48 +316,62 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
     };
   });
 
-  const subtotal = Number(
-    invoice.subtotal ??
-    invoice.totalAmount ??
-    invoice.amount ??
-    normalizedItems.reduce((sum, item) => sum + item.rate * item.qty, 0)
-  );
-  const totalGst = Number(
+  const reportedGst = Number(
     invoice.totalGst ??
     invoice.gstAmount ??
-    invoice.tax ??
-    normalizedItems.reduce((sum, item) => sum + (item.rate * item.qty * item.gst) / 100, 0)
+    invoice.tax
   );
-  const grandTotal = Number(
+  const totalGst = Number.isFinite(reportedGst)
+    ? Math.max(reportedGst, 0)
+    : normalizedItems.reduce((sum, item) => sum + (item.rate * item.qty * item.gst) / 100, 0);
+  const reportedGrandTotal = Number(
     invoice.grandTotal ??
+    invoice.invoiceTotal ??
+    invoice.totalAmount ??
     invoice.total ??
     invoice.amount ??
-    subtotal + totalGst
+    Number.NaN
   );
+  const itemSubtotal = normalizedItems.reduce((sum, item) => sum + item.rate * item.qty, 0);
+  const subtotal = Number(invoice.subtotal ?? invoice.subTotal ?? (
+    Number.isFinite(reportedGrandTotal)
+      ? Math.max(reportedGrandTotal - totalGst, 0)
+      : itemSubtotal
+  ));
+  const rawGrandTotal = Number.isFinite(reportedGrandTotal)
+    ? Math.max(reportedGrandTotal, 0)
+    : subtotal + totalGst;
+  const grandTotalCents = Math.max(toCurrencyCents(rawGrandTotal) ?? 0, 0);
+  const grandTotal = grandTotalCents / 100;
 
   const reportedPaidAmount =
     invoice.paidAmount ??
     invoice.amountPaid ??
     invoice.totalPaid ??
     invoice.receivedAmount ??
-    invoice.amountReceived;
+    invoice.amountReceived ??
+    invoice.totalReceived ??
+    invoice.totalPaidAmount;
   const reportedDueAmount =
     invoice.outstandingAmount ??
     invoice.invoiceDueAmount ??
     invoice.dueCollection ??
     invoice.dueAmount ??
     invoice.balanceDue ??
-    invoice.pendingAmount;
-  const paidAmount = Math.max(Number(
-    reportedPaidAmount ?? (
-      reportedDueAmount != null
-        ? grandTotal - Number(reportedDueAmount)
-        : 0
-    )
-  ), 0);
-  const dueCollection = Math.max(Number(
-    reportedDueAmount ?? grandTotal - paidAmount
-  ), 0);
+    invoice.pendingAmount ??
+    invoice.pendingBalance;
+  const paidValue = Number(reportedPaidAmount);
+  const dueValue = Number(reportedDueAmount);
+  const rawPaidAmount = Number.isFinite(paidValue)
+    ? paidValue
+    : Number.isFinite(dueValue)
+      ? grandTotal - dueValue
+      : String(invoice.paymentStatus || invoice.status || '').toLowerCase() === 'paid'
+        ? grandTotal
+        : 0;
+  const paidAmountCents = Math.min(Math.max(toCurrencyCents(rawPaidAmount) ?? 0, 0), grandTotalCents);
+  const paidAmount = paidAmountCents / 100;
+  const dueCollection = (grandTotalCents - paidAmountCents) / 100;
   const resolvedStatus = resolvePaymentStatus({ ...invoice, paidAmount }, grandTotal);
   const previousBalance = Number(invoice.previousBalance ?? 0);
   const balanceAmount = Number(invoice.balanceAmount ?? invoice.currentBalance ?? previousBalance + dueCollection);
@@ -568,10 +544,12 @@ const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User
 const SellPage = ({ onOpenPaymentReport }) => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
-  const [sellOrders, setSellOrders] = useState(fallbackSellOrders);
+  const [sellOrders, setSellOrders] = useState([]);
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sellOrdersRefreshKey, setSellOrdersRefreshKey] = useState(0);
+  const [isSellOrdersRefreshing, setIsSellOrdersRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [exportFormat, setExportFormat] = useState('csv');
@@ -1159,71 +1137,88 @@ const SellPage = ({ onOpenPaymentReport }) => {
     }
 
     if (Array.isArray(order.items) && order.items.length > 0) {
-      setActiveOrder((current) => (current && current.id === order.id ? null : order));
+      setActiveOrder((current) => (
+        current && current.id === order.id && current.billType === order.billType ? null : order
+      ));
       return;
     }
 
     const refreshedOrder = await fetchInvoiceDetail(order, loggedInSeller);
-    setActiveOrder((current) => (current && current.id === order.id ? null : refreshedOrder));
+    setActiveOrder((current) => (
+      current && current.id === order.id && current.billType === order.billType ? null : refreshedOrder
+    ));
   };
 
   useEffect(() => {
+    let active = true;
+
     const fetchSellOrders = async () => {
+      setLoading(true);
+      setError("");
       try {
-        const orderEndpoints = [
-          API_ENDPOINTS.invoicesPage(0, 200),
-          API_ENDPOINTS.nonGstInvoicesPage(0, 200)
+        const results = await Promise.allSettled([
+          fetchGstInvoices(),
+          fetchInvoicePages((page) => API_ENDPOINTS.nonGstInvoicesPage(page, SELL_ORDER_PAGE_SIZE)),
+        ]);
+        const sources = [
+          { billType: 'gst', label: 'GST', result: results[0] },
+          { billType: 'non-gst', label: 'non-GST', result: results[1] },
         ];
+        const failedSources = sources.filter(({ result }) => result.status === 'rejected');
+        if (failedSources.length === sources.length) {
+          throw new Error(failedSources
+            .map(({ label, result }) => `${label}: ${result.reason.message}`)
+            .join(' '));
+        }
 
-        const allInvoiceResponses = await Promise.all(
-          orderEndpoints.map(async (url) => {
-            try {
-              const response = await apiFetch(url);
-              if (!response.ok) return [];
-              const data = await response.json();
-              return Array.isArray(data)
-                ? data
-                : data.content || data.invoices || data.data || [];
-            } catch {
-              return [];
+        const invoicesByKey = new Map();
+        sources.forEach(({ billType, result }) => {
+          if (result.status !== 'fulfilled') return;
+          result.value.forEach((invoice) => {
+            const invoiceId = invoice?.id
+              ?? invoice?.invoiceId
+              ?? invoice?.invoiceNo
+              ?? invoice?.invoiceNumber
+              ?? invoice?.invoice_number
+              ?? JSON.stringify(invoice);
+            const key = `${billType}:${invoiceId}`;
+            if (!invoicesByKey.has(key)) {
+              invoicesByKey.set(key, { ...invoice, billType });
             }
-          })
-        );
+          });
+        });
 
-        const mergedInvoices = allInvoiceResponses
-          .flat()
-          .reduce((unique, invoice) => {
-            const key = invoice?.id ?? invoice?.invoiceId ?? invoice?.invoiceNo ?? invoice?.invoice_number ?? JSON.stringify(invoice);
-            if (!unique.has(key)) unique.set(key, invoice);
-            return unique;
-          }, new Map());
+        const normalizedOrders = Array.from(invoicesByKey.values()).map((invoice, index) => (
+          normalizeInvoiceToOrder(invoice, index, loggedInSeller)
+        ));
 
-        let normalizedOrders = Array.from(mergedInvoices.values()).map((invoice, index) => normalizeInvoiceToOrder(invoice, index, loggedInSeller));
-
-        normalizedOrders = await Promise.all(
-          normalizedOrders.map(async (order) => {
-            if (Array.isArray(order.items) && order.items.length > 0) return order;
-            return fetchInvoiceDetail(order, loggedInSeller);
-          })
-        );
-
-        if (normalizedOrders.length > 0) {
-          normalizedOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
-          setSellOrders(normalizedOrders);
-        } else {
-          setSellOrders(fallbackSellOrders);
+        if (!active) return;
+        normalizedOrders.sort((a, b) => {
+          const dateA = new Date(a.date).getTime();
+          const dateB = new Date(b.date).getTime();
+          return (Number.isFinite(dateB) ? dateB : 0) - (Number.isFinite(dateA) ? dateA : 0);
+        });
+        setSellOrders(normalizedOrders);
+        if (failedSources.length) {
+          setError(`Some orders could not be loaded (${failedSources
+            .map(({ label, result }) => `${label}: ${result.reason.message}`)
+            .join(' ')}).`);
         }
       } catch (fetchError) {
+        if (!active) return;
         console.error("Sell orders fetch failed:", fetchError);
-        setError("Unable to load live orders. Showing saved fallback data.");
-        setSellOrders(fallbackSellOrders);
+        setError(`Unable to load sell orders: ${fetchError.message || 'Please try again.'}`);
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+          setIsSellOrdersRefreshing(false);
+        }
       }
     };
 
     fetchSellOrders();
-  }, [loggedInSeller]);
+    return () => { active = false; };
+  }, [loggedInSeller, sellOrdersRefreshKey]);
 
 const OrderDetail = ({
   order,
@@ -1643,6 +1638,19 @@ const OrderDetail = ({
         <div className="sell-page-actions">
           <button
             type="button"
+            className={`tiny-refresh-btn ${isSellOrdersRefreshing ? 'is-loading' : ''}`}
+            onClick={() => {
+              setIsSellOrdersRefreshing(true);
+              setSellOrdersRefreshKey((key) => key + 1);
+            }}
+            disabled={loading}
+            aria-label="Refresh sell orders"
+            title="Refresh sell orders"
+          >
+            ↻
+          </button>
+          <button
+            type="button"
             className="btn-payment-report"
             disabled={!canManageSellOrders}
             onClick={() => setWhatsappOrderOpen(true)}
@@ -1734,10 +1742,11 @@ const OrderDetail = ({
 
         {visibleOrders.map((order) => (
           (() => {
+            const orderKey = `${order.billType}:${order.id}`;
             const isRowActionBusy = String(cancellingOrderId) === String(order.id);
             return (
           <div
-            key={order.id}
+            key={orderKey}
             className="order-row"
             onClick={() => selectOrder(order)}
           >
@@ -1766,14 +1775,14 @@ const OrderDetail = ({
               <button
                 type="button"
                 className="order-action-btn order-action-menu-btn"
-                onClick={() => setOpenActionMenuFor((current) => current === order.id ? null : order.id)}
+                onClick={() => setOpenActionMenuFor((current) => current === orderKey ? null : orderKey)}
                 disabled={isRowActionBusy}
                 aria-label={`Open actions for ${order.invoiceNo}`}
                 title="More actions"
               >
                 ⋮
               </button>
-              {openActionMenuFor === order.id && (
+              {openActionMenuFor === orderKey && (
                 <div className="order-action-menu" onClick={(event) => event.stopPropagation()}>
                   <button
                     type="button"
@@ -1822,6 +1831,11 @@ const OrderDetail = ({
             );
           })()
         ))}
+        {!loading && visibleOrders.length === 0 && (
+          <div className="sell-empty-orders" role="status">
+            {error ? 'Orders could not be loaded.' : 'No sell orders found.'}
+          </div>
+        )}
       </div>
 
       <div className="sell-pagination">

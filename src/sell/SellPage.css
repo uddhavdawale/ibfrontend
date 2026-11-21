@@ -110,6 +110,46 @@
   flex-wrap: wrap;
 }
 
+.sell-dashboard .tiny-refresh-btn {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 1px solid var(--sell-border);
+  border-radius: 10px;
+  background: var(--sell-panel-strong);
+  color: var(--sell-text-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.sell-dashboard .tiny-refresh-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.4);
+  color: var(--sell-primary);
+}
+
+.sell-dashboard .tiny-refresh-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.sell-dashboard .tiny-refresh-btn.is-loading {
+  animation: sell-refresh-spin 0.7s linear infinite;
+}
+
+@keyframes sell-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .sell-dashboard .export-controls {
   display: inline-flex;
   align-items: center;
@@ -335,6 +375,13 @@
   font-size: 0.96rem;
   align-items: center;
   transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.sell-dashboard .sell-empty-orders {
+  grid-column: 1 / -1;
+  padding: 24px;
+  color: var(--sell-text-soft);
+  text-align: center;
 }
 
 .sell-dashboard .order-row:hover {
