@@ -33,7 +33,9 @@ const toRoleLabel = (role) => ROLE_LABELS[String(role || '').trim().toLowerCase(
 const parseUsersPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.users)) return payload.users;
+  if (Array.isArray(payload?.items)) return payload.items;
   if (Array.isArray(payload?.data?.users)) return payload.data.users;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
   if (Array.isArray(payload?.data?.content)) return payload.data.content;
   if (Array.isArray(payload?.content)) return payload.content;
   if (Array.isArray(payload?.data)) return payload.data;
@@ -159,7 +161,7 @@ const StoreUsersPage = () => {
     setError('');
 
     try {
-      const response = await apiFetch(API_ENDPOINTS.users, {
+      const response = await apiFetch(API_ENDPOINTS.existingUsers, {
         method: 'GET',
         headers: { Accept: 'application/json' },
       });
