@@ -49,6 +49,7 @@ export const API_ENDPOINTS = {
   exchangeByInvoice: (invoiceId) => `${API_BASE_URL}/api/exchanges/invoice/${encodeURIComponent(invoiceId)}`,
   nonGstInvoices: `${API_BASE_URL}/api/non-gst-invoices`,
   nonGstInvoicesPage: (page = 0, size = 200) => `${API_BASE_URL}/api/non-gst-invoices?page=${page}&size=${size}`,
+  nonGstInvoiceById: (id) => `${API_BASE_URL}/api/non-gst-invoices/${id}`,
   nonGstInvoicePaymentsById: (id) => `${API_BASE_URL}/api/non-gst-invoices/${id}/payments`,
   payments: `${API_BASE_URL}/api/payments`,
   paymentRefundsById: (id) => `${API_BASE_URL}/api/payments/${id}/refunds`,

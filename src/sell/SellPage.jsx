@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
@@ -66,20 +66,21 @@ const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
 };
 
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
-  const message = `🧾 Invoice ${order.invoiceNo} - Receipt Downloaded! 💰 ₹${order.grandTotal.toLocaleString()}`;
-  const filename = `invoice_${order.invoiceNo}.pdf`;
-  openWhatsAppChat(order.customer.phone, message);
-
+  const paidAmount = Number(order.paidAmount ?? order.receivedAmount ?? 0);
+  const dueAmount = Number(order.dueCollection ?? order.outstandingAmount ?? Math.max(Number(order.grandTotal || 0) - paidAmount, 0));
+  const message = `Invoice ${order.invoiceNo}\nTotal: ₹${Number(order.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\nPaid: ₹${paidAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}\nBalance: ₹${dueAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+  const safeInvoiceNo = String(order.invoiceNo || order.id || 'invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
   const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
 
   const url = URL.createObjectURL(pdfBlob);
   const downloadLink = document.createElement("a");
   downloadLink.href = url;
-  downloadLink.download = filename;
+  downloadLink.download = `invoice_${safeInvoiceNo}.pdf`;
   downloadLink.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
+  openWhatsAppChat(order.customer.phone, message);
   alert(
     `✅ PDF Downloaded!\n\n📎 Attach the invoice from Downloads in the open WhatsApp chat to send it.`
   );
@@ -88,23 +89,30 @@ const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => 
 const sendEmailPDF = async (order, shopProfile = readStoredShopProfile()) => {
   const pdf = await generatePDF(order, shopProfile);
   const pdfBlob = pdf.output("blob");
+  const safeInvoiceNo = String(order.invoiceNo || order.id || 'invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
 
   const subject = `Invoice ${order.invoiceNo} - Receipt`;
   const body = `Dear ${order.customer.name},
 
-Receipt for Invoice ${order.invoiceNo} attached.
+Invoice ${order.invoiceNo}.
 
 Grand Total: ₹${order.grandTotal.toLocaleString()}
-Date: ${order.date}`;
+Paid: ₹${Number(order.paidAmount ?? order.receivedAmount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+Balance: ₹${Number(order.dueCollection ?? order.outstandingAmount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+Date: ${order.date}
+
+The invoice PDF has been downloaded. Please attach it to this email.`;
 
   const emailUrl = `mailto:${order.customer.email}?subject=${encodeURIComponent(
     subject
   )}&body=${encodeURIComponent(body)}`;
 
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(pdfBlob);
-  link.download = `invoice_${order.invoiceNo}.pdf`;
+  const url = URL.createObjectURL(pdfBlob);
+  link.href = url;
+  link.download = `invoice_${safeInvoiceNo}.pdf`;
   link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
   window.location.href = emailUrl;
 };
@@ -258,20 +266,32 @@ const resolvePaymentStatus = (invoice, grandTotal) => {
     "pending"
   ).trim().toLowerCase();
 
-  const paidAmount = Number(
-    invoice.paidAmount ??
-    invoice.amountPaid ??
-    invoice.totalPaid ??
-    invoice.receivedAmount ??
-    0
-  );
-
   const totalAmount = Number(
     invoice.totalAmount ??
     invoice.grandTotal ??
     invoice.total ??
     grandTotal ??
     0
+  );
+  const reportedPaidAmount =
+    invoice.paidAmount ??
+    invoice.amountPaid ??
+    invoice.totalPaid ??
+    invoice.receivedAmount ??
+    invoice.amountReceived;
+  const reportedDueAmount =
+    invoice.outstandingAmount ??
+    invoice.invoiceDueAmount ??
+    invoice.dueCollection ??
+    invoice.dueAmount ??
+    invoice.balanceDue ??
+    invoice.pendingAmount;
+  const paidAmount = Number(
+    reportedPaidAmount ?? (
+      reportedDueAmount != null
+        ? Math.max(totalAmount - Number(reportedDueAmount), 0)
+        : 0
+    )
   );
 
   if (["cancelled", "canceled", "void", "voided"].includes(rawPaymentStatus)) return "cancelled";
@@ -333,15 +353,33 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
     subtotal + totalGst
   );
 
-  const resolvedStatus = resolvePaymentStatus(invoice, grandTotal);
-  const paidAmount = Number(
+  const reportedPaidAmount =
     invoice.paidAmount ??
     invoice.amountPaid ??
     invoice.totalPaid ??
     invoice.receivedAmount ??
-    0
-  );
-  const dueCollection = Math.max(grandTotal - paidAmount, 0);
+    invoice.amountReceived;
+  const reportedDueAmount =
+    invoice.outstandingAmount ??
+    invoice.invoiceDueAmount ??
+    invoice.dueCollection ??
+    invoice.dueAmount ??
+    invoice.balanceDue ??
+    invoice.pendingAmount;
+  const paidAmount = Math.max(Number(
+    reportedPaidAmount ?? (
+      reportedDueAmount != null
+        ? grandTotal - Number(reportedDueAmount)
+        : 0
+    )
+  ), 0);
+  const dueCollection = Math.max(Number(
+    reportedDueAmount ?? grandTotal - paidAmount
+  ), 0);
+  const resolvedStatus = resolvePaymentStatus({ ...invoice, paidAmount }, grandTotal);
+  const previousBalance = Number(invoice.previousBalance ?? 0);
+  const balanceAmount = Number(invoice.balanceAmount ?? invoice.currentBalance ?? previousBalance + dueCollection);
+  const currentBalance = Number(invoice.currentBalance ?? balanceAmount);
 
   return {
     id: invoice.id ?? invoice.invoiceId ?? `${invoice.invoiceNo ?? "INV"}-${index}`,
@@ -356,6 +394,9 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
     subtotal,
     totalGst,
     grandTotal,
+    previousBalance,
+    balanceAmount,
+    currentBalance,
     soldBy: invoice.soldBy
       ?? invoice.soldByName
       ?? invoice.createdByName
@@ -365,12 +406,71 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
       ?? fallbackSoldBy,
     dueCollection,
     paidAmount,
+    receivedAmount: paidAmount,
+    outstandingAmount: dueCollection,
+    paymentStatus: resolvedStatus,
     status: resolvedStatus,
     billType: invoice.billType || (invoice.isGstInvoice === false ? 'non-gst' : 'gst'),
     items: normalizedItems,
     notes: invoice.notes ?? "",
     dueInDays: invoice.dueInDays ?? 7,
   };
+};
+
+const hasInvoicePaymentSnapshot = (invoice) => {
+  const fields = [
+    'paidAmount',
+    'amountPaid',
+    'totalPaid',
+    'receivedAmount',
+    'amountReceived',
+    'outstandingAmount',
+    'invoiceDueAmount',
+    'dueCollection',
+    'dueAmount',
+    'balanceDue',
+    'pendingAmount',
+  ];
+  return fields.some((field) => invoice?.[field] != null && Number.isFinite(Number(invoice[field])));
+};
+
+const fetchLatestInvoicePaymentState = async (order, fallbackSoldBy) => {
+  const isNonGst = String(order.billType || '').toLowerCase().includes('non');
+  const candidateUrls = [
+    ...(isNonGst ? [API_ENDPOINTS.nonGstInvoiceById(order.id)] : [API_ENDPOINTS.invoiceById(order.id)]),
+    API_ENDPOINTS.invoiceDetailsById(order.id),
+    API_ENDPOINTS.invoiceItemsById(order.id),
+    API_ENDPOINTS.invoiceLegacyById(order.id),
+    API_ENDPOINTS.invoiceLegacyDetailById(order.id),
+  ];
+  let lastError = null;
+
+  for (const url of candidateUrls) {
+    try {
+      const response = await apiFetch(url);
+      if (response.status === 401) {
+        const authError = new Error('Your session expired. Sign in again to refresh the invoice.');
+        authError.status = 401;
+        throw authError;
+      }
+      if (!response.ok) continue;
+
+      const payload = await response.json();
+      const invoice = payload?.invoice ?? payload?.data?.invoice ?? payload?.data ?? payload;
+      if (!hasInvoicePaymentSnapshot(invoice)) continue;
+
+      return normalizeInvoiceToOrder({ ...order, ...invoice }, 0, fallbackSoldBy);
+    } catch (error) {
+      if (error.status === 401) throw error;
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    lastError?.message
+      ? `Payment was recorded, but the latest invoice balance could not be confirmed: ${lastError.message}`
+      : 'Payment was recorded, but the latest invoice balance could not be confirmed. Refresh the invoice before sharing it.'
+  );
 };
 
 const getExchangeableItems = (order) => {
@@ -478,6 +578,13 @@ const SellPage = ({ onOpenPaymentReport }) => {
   const [paymentError, setPaymentError] = useState('');
   const [paymentResult, setPaymentResult] = useState(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentInvoiceRefreshing, setPaymentInvoiceRefreshing] = useState(false);
+  const [paymentInvoiceRefreshError, setPaymentInvoiceRefreshError] = useState('');
+  const [paymentInvoiceAction, setPaymentInvoiceAction] = useState('');
+  const [paymentInvoiceActionError, setPaymentInvoiceActionError] = useState('');
+  const [paymentRefreshRequired, setPaymentRefreshRequired] = useState([]);
+  const paymentSubmissionRef = useRef(false);
+  const paymentAttemptRef = useRef(null);
   const [whatsappOrderOpen, setWhatsappOrderOpen] = useState(false);
   const [whatsappOrderDraft, setWhatsappOrderDraft] = useState({
     customerName: '',
@@ -498,6 +605,13 @@ const SellPage = ({ onOpenPaymentReport }) => {
   });
   const pageSize = 5;
   const canManageSellOrders = canWriteBilling(role);
+  const paymentReceiptIdentifier = paymentResult?.receiptNo
+    || paymentResult?.receiptNumber
+    || paymentResult?.receipt_no
+    || paymentResult?.receipt_number
+    || paymentResult?.paymentId
+    || paymentResult?.payment_id
+    || paymentResult?.id;
 
   const loadExchangeHistory = useCallback(async (silent = false) => {
     if (silent) setExchangeHistoryRefreshing(true);
@@ -767,72 +881,192 @@ const SellPage = ({ onOpenPaymentReport }) => {
   };
 
   const openPaymentCollection = (order) => {
+    const previousAttempt = paymentAttemptRef.current;
+    const sameInvoice = previousAttempt
+      && String(previousAttempt.invoiceId) === String(order.id)
+      && previousAttempt.billType === order.billType;
     setPaymentTarget(order);
-    setPaymentAmount(Number(order.dueCollection || 0).toFixed(2));
-    setPaymentMethod('CASH');
-    setPaymentReference('');
+    setPaymentAmount(sameInvoice ? (previousAttempt.amountCents / 100).toFixed(2) : Number(order.dueCollection || 0).toFixed(2));
+    setPaymentMethod(sameInvoice ? previousAttempt.method : 'CASH');
+    setPaymentReference(sameInvoice ? previousAttempt.referenceNo : '');
     setPaymentError('');
     setPaymentResult(null);
+    setPaymentInvoiceRefreshing(false);
+    setPaymentInvoiceRefreshError('');
+    setPaymentInvoiceAction('');
+    setPaymentInvoiceActionError('');
+    if (!sameInvoice) paymentAttemptRef.current = null;
+  };
+
+  const updatePaymentOrder = (updatedOrder) => {
+    setSellOrders((orders) => orders.map((order) => (
+      String(order.id) === String(updatedOrder.id)
+        && order.billType === updatedOrder.billType
+        ? updatedOrder
+        : order
+    )));
+    setActiveOrder((current) => (
+      current && String(current.id) === String(updatedOrder.id)
+        && current.billType === updatedOrder.billType
+        ? updatedOrder
+        : current
+    ));
+    setPaymentTarget((current) => (
+      current && String(current.id) === String(updatedOrder.id)
+        && current.billType === updatedOrder.billType
+        ? updatedOrder
+        : current
+    ));
+  };
+
+  const refreshPaymentInvoice = async (order = paymentTarget) => {
+    if (!order || paymentInvoiceRefreshing) return;
+    setPaymentInvoiceRefreshing(true);
+    setPaymentInvoiceRefreshError('');
+    try {
+      const updatedOrder = await fetchLatestInvoicePaymentState(order, loggedInSeller);
+      updatePaymentOrder(updatedOrder);
+      const invoiceKey = `${updatedOrder.billType}:${updatedOrder.id}`;
+      setPaymentRefreshRequired((keys) => keys.filter((key) => key !== invoiceKey));
+    } catch (refreshError) {
+      if (refreshError.status === 401) navigate('/login');
+      setPaymentInvoiceRefreshError(refreshError.message || 'The latest invoice balance could not be confirmed.');
+    } finally {
+      setPaymentInvoiceRefreshing(false);
+    }
+  };
+
+  const handlePaymentInvoiceAction = async (action) => {
+    if (!paymentTarget || paymentInvoiceRefreshing || paymentInvoiceRefreshError || paymentInvoiceAction) return;
+    setPaymentInvoiceAction(action);
+    setPaymentInvoiceActionError('');
+    try {
+      if (action === 'download') {
+        const pdf = await generatePDF(paymentTarget, shopProfile);
+        const safeInvoiceNo = String(paymentTarget.invoiceNo || paymentTarget.id || 'invoice')
+          .replace(/[^a-zA-Z0-9_-]/g, '_');
+        pdf.save(`invoice_${safeInvoiceNo}.pdf`);
+      } else if (action === 'whatsapp') {
+        await sendWhatsAppPDF(paymentTarget, shopProfile);
+      } else if (action === 'email') {
+        await sendEmailPDF(paymentTarget, shopProfile);
+      }
+    } catch (actionError) {
+      setPaymentInvoiceActionError(actionError.message || 'The updated invoice could not be prepared.');
+    } finally {
+      setPaymentInvoiceAction('');
+    }
   };
 
   const submitCollectedPayment = async (event) => {
     event.preventDefault();
-    if (!paymentTarget || paymentSaving || paymentResult) return;
+    if (!paymentTarget || paymentSaving || paymentSubmissionRef.current || paymentResult) return;
     const amount = Number(paymentAmount);
     const balanceDue = Number(paymentTarget.dueCollection || 0);
-    if (!Number.isFinite(amount) || amount <= 0 || amount > balanceDue || !Number.isInteger(amount * 100)) {
+    const amountCents = Math.round(amount * 100);
+    const balanceCents = Math.round(balanceDue * 100);
+    if (!Number.isFinite(amount) || amountCents <= 0
+      || Math.abs(amount - amountCents / 100) > 0.000001
+      || amountCents > balanceCents) {
       setPaymentError(`Enter an amount up to the balance due of ₹${balanceDue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}.`);
       return;
     }
 
+    const referenceNo = paymentReference.trim();
+    const previousAttempt = paymentAttemptRef.current;
+    const sameInvoice = previousAttempt
+      && String(previousAttempt.invoiceId) === String(paymentTarget.id)
+      && previousAttempt.billType === paymentTarget.billType;
+    const sameAttempt = sameInvoice
+      && previousAttempt.amountCents === amountCents
+      && previousAttempt.method === paymentMethod
+      && previousAttempt.referenceNo === referenceNo;
+    if (sameInvoice && previousAttempt.uncertain && !sameAttempt) {
+      setPaymentError('A previous payment attempt may have reached the server. Retry it with the same details or verify its status in the collection report before changing the payment.');
+      return;
+    }
+
+    let idempotencyKey;
+    try {
+      idempotencyKey = sameAttempt
+        ? previousAttempt.idempotencyKey
+        : createSecureIdempotencyKey();
+    } catch (keyError) {
+      setPaymentError(keyError.message || 'A secure payment reference could not be created.');
+      return;
+    }
+    paymentAttemptRef.current = {
+      invoiceId: paymentTarget.id,
+      billType: paymentTarget.billType,
+      amountCents,
+      method: paymentMethod,
+      referenceNo,
+      idempotencyKey,
+      uncertain: false,
+    };
+    paymentSubmissionRef.current = true;
     setPaymentSaving(true);
     setPaymentError('');
     try {
       const requestUrl = String(paymentTarget.billType).toLowerCase().includes('non')
         ? API_ENDPOINTS.nonGstInvoicePaymentsById(paymentTarget.id)
         : API_ENDPOINTS.invoicePaymentsById(paymentTarget.id);
+      paymentAttemptRef.current.uncertain = true;
       const response = await apiFetch(requestUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          amount,
+          amount: amountCents / 100,
           method: paymentMethod,
-          referenceNo: paymentReference.trim() || null,
-          idempotencyKey: createSecureIdempotencyKey(),
+          referenceNo: referenceNo || null,
+          idempotencyKey,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
+        paymentAttemptRef.current.uncertain = response.status >= 500;
+        if (response.status === 401) navigate('/login');
         throw new Error(payload.message || payload.error || `Payment could not be recorded (${response.status}).`);
       }
 
-      const updatedPaid = Number(paymentTarget.paidAmount || 0) + amount;
+      const paymentRecord = payload?.payment ?? payload?.data?.payment ?? payload;
+      paymentAttemptRef.current = null;
+      const updatedPaid = Number(paymentTarget.paidAmount || 0) + amountCents / 100;
       const updatedDue = Math.max(Number(paymentTarget.grandTotal || 0) - updatedPaid, 0);
-      const updatedOrder = {
+      const invoiceKey = `${paymentTarget.billType}:${paymentTarget.id}`;
+      const estimatedOrder = normalizeInvoiceToOrder({
         ...paymentTarget,
         paidAmount: updatedPaid,
+        receivedAmount: updatedPaid,
         dueCollection: updatedDue,
-        status: updatedDue === 0 ? 'paid' : 'partial',
+        outstandingAmount: updatedDue,
         paymentMethod,
-      };
-      setSellOrders((orders) => orders.map((order) => (
-        String(order.id) === String(updatedOrder.id)
-          && order.billType === updatedOrder.billType
-          ? updatedOrder
-          : order
-      )));
-      setActiveOrder((current) => (
-        current && String(current.id) === String(updatedOrder.id)
-          && current.billType === updatedOrder.billType
-          ? updatedOrder
-          : current
-      ));
-      setPaymentTarget(updatedOrder);
-      setPaymentResult(payload);
+        status: updatedDue === 0 ? 'paid' : 'partial',
+      }, 0, loggedInSeller);
+      updatePaymentOrder(estimatedOrder);
+      setPaymentRefreshRequired((keys) => (keys.includes(invoiceKey) ? keys : [...keys, invoiceKey]));
+      setPaymentResult(paymentRecord);
+      setPaymentInvoiceRefreshing(true);
+      setPaymentInvoiceRefreshError('');
+      setPaymentInvoiceActionError('');
+      setPaymentSaving(false);
+      try {
+        const updatedOrder = await fetchLatestInvoicePaymentState(paymentTarget, loggedInSeller);
+        updatePaymentOrder(updatedOrder);
+        setPaymentRefreshRequired((keys) => keys.filter((key) => key !== invoiceKey));
+      } catch (refreshError) {
+        if (refreshError.status === 401) navigate('/login');
+        setPaymentInvoiceRefreshError(refreshError.message || 'Payment was recorded, but the latest invoice balance could not be confirmed.');
+      } finally {
+        setPaymentInvoiceRefreshing(false);
+      }
     } catch (submitError) {
-      setPaymentError(submitError.message || 'Payment could not be recorded. Please retry.');
+      setPaymentError(paymentAttemptRef.current?.uncertain
+        ? `Payment status could not be confirmed. Retry with the same details to avoid recording it twice. ${submitError.message || ''}`.trim()
+        : submitError.message || 'Payment could not be recorded. Please retry.');
     } finally {
       setPaymentSaving(false);
+      paymentSubmissionRef.current = false;
     }
   };
 
@@ -965,7 +1199,14 @@ const SellPage = ({ onOpenPaymentReport }) => {
     fetchSellOrders();
   }, [loggedInSeller]);
 
-const OrderDetail = ({ order, onCollectPayment }) => {
+const OrderDetail = ({
+  order,
+  onCollectPayment,
+  onRefreshPaymentInvoice,
+  paymentRefreshRequired,
+  paymentInvoiceRefreshing,
+  paymentInvoiceRefreshError,
+}) => {
   const totalQty = Array.isArray(order?.items)
     ? order.items.reduce((sum, i) => sum + Number(i.qty || 0), 0)
     : 0;
@@ -1093,7 +1334,20 @@ const OrderDetail = ({ order, onCollectPayment }) => {
 
       {/* Action buttons – unchanged */}
       <div className="action-buttons">
-        {canManageSellOrders && order.dueCollection > 0 && !['cancelled', 'return'].includes(order.status) && (
+        {canManageSellOrders && paymentRefreshRequired && !['cancelled', 'return'].includes(order.status) ? (
+          <div className="payment-refresh-required" role="status">
+            <span>Payment was recorded. Refresh the invoice balance before collecting again.</span>
+            {paymentInvoiceRefreshError && <span className="payment-dialog-error" role="alert">{paymentInvoiceRefreshError}</span>}
+            <button
+              type="button"
+              className="btn-collect-payment"
+              onClick={() => onRefreshPaymentInvoice(order)}
+              disabled={paymentInvoiceRefreshing}
+            >
+              {paymentInvoiceRefreshing ? 'Refreshing…' : 'Refresh invoice balance'}
+            </button>
+          </div>
+        ) : canManageSellOrders && order.dueCollection > 0 && !['cancelled', 'return'].includes(order.status) && (
           <button
             type="button"
             className="btn-collect-payment"
@@ -1105,18 +1359,24 @@ const OrderDetail = ({ order, onCollectPayment }) => {
         <button
           className="btn-share-whatsapp"
           onClick={() => activeOrder && sendWhatsAppPDF(activeOrder, shopProfile)}
+          disabled={paymentRefreshRequired}
+          title={paymentRefreshRequired ? 'Refresh the invoice balance before sharing it' : undefined}
         >
           📱 WhatsApp PDF
         </button>
         <button
           className="btn-share-email"
           onClick={() => activeOrder && sendEmailPDF(activeOrder, shopProfile)}
+          disabled={paymentRefreshRequired}
+          title={paymentRefreshRequired ? 'Refresh the invoice balance before sharing it' : undefined}
         >
           ✉️ Email PDF
         </button>
         <button
           className="btn-print"
           onClick={() => printReceipt(activeOrder, shopProfile)}
+          disabled={paymentRefreshRequired}
+          title={paymentRefreshRequired ? 'Refresh the invoice balance before downloading it' : undefined}
         >
           💾 Download PDF
         </button>
@@ -1676,7 +1936,14 @@ const OrderDetail = ({ order, onCollectPayment }) => {
           >
             ← Back to List
           </button>
-          <OrderDetail order={activeOrder} onCollectPayment={openPaymentCollection} />
+          <OrderDetail
+            order={activeOrder}
+            onCollectPayment={openPaymentCollection}
+            onRefreshPaymentInvoice={refreshPaymentInvoice}
+            paymentRefreshRequired={paymentRefreshRequired.includes(`${activeOrder.billType}:${activeOrder.id}`)}
+            paymentInvoiceRefreshing={paymentInvoiceRefreshing}
+            paymentInvoiceRefreshError={paymentInvoiceRefreshError}
+          />
         </div>
       )}
 
@@ -1807,7 +2074,7 @@ const OrderDetail = ({ order, onCollectPayment }) => {
       )}
 
       {paymentTarget && (
-        <div className="payment-dialog-backdrop" role="presentation" onClick={() => !paymentSaving && setPaymentTarget(null)}>
+        <div className="payment-dialog-backdrop" role="presentation" onClick={() => !paymentSaving && !paymentInvoiceRefreshing && setPaymentTarget(null)}>
           <section
             className="payment-dialog"
             role="dialog"
@@ -1815,22 +2082,78 @@ const OrderDetail = ({ order, onCollectPayment }) => {
             aria-labelledby="collect-payment-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <button type="button" className="payment-dialog-close" onClick={() => !paymentSaving && setPaymentTarget(null)} aria-label="Close payment dialog">×</button>
+            <button type="button" className="payment-dialog-close" onClick={() => !paymentSaving && !paymentInvoiceRefreshing && setPaymentTarget(null)} aria-label="Close payment dialog">×</button>
             <h2 id="collect-payment-title">{paymentResult ? 'Payment recorded' : 'Collect payment'}</h2>
             <p><strong>{paymentTarget.invoiceNo}</strong> · {paymentTarget.customer.name}</p>
-            <p>Balance due: ₹{Number(paymentTarget.dueCollection || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            <p>{paymentResult
+              ? paymentRefreshRequired.includes(`${paymentTarget.billType}:${paymentTarget.id}`)
+                ? 'Estimated balance (refresh required):'
+                : 'Balance after collection:'
+              : 'Balance due:'} ₹{Number(paymentTarget.dueCollection || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
             {paymentResult ? (
               <div className="payment-result" role="status">
-                <strong>Receipt: {paymentResult.receiptNo}</strong>
-                <span>Collected: ₹{Number(paymentResult.amount || paymentAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} by {paymentResult.collectorName || loggedInSeller}</span>
+                <strong>{paymentReceiptIdentifier
+                  ? `Receipt: ${paymentReceiptIdentifier}`
+                  : 'Payment successfully recorded'}</strong>
+                <span>Collected: ₹{Number(paymentResult.amount ?? paymentResult.amountReceived ?? paymentAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} by {paymentResult.collectorName || paymentResult.collectedByName || paymentResult.collected_by_name || loggedInSeller}</span>
+                {paymentInvoiceRefreshing && <span role="status">Refreshing the invoice balance…</span>}
+                {paymentInvoiceRefreshError ? (
+                  <>
+                    <p className="payment-dialog-error" role="alert">{paymentInvoiceRefreshError} The payment was saved; do not record it again.</p>
+                    <button
+                      type="button"
+                      className="btn-collect-payment"
+                      onClick={() => refreshPaymentInvoice(paymentTarget)}
+                      disabled={paymentInvoiceRefreshing}
+                    >
+                      {paymentInvoiceRefreshing ? 'Refreshing…' : 'Retry invoice refresh'}
+                    </button>
+                  </>
+                ) : !paymentInvoiceRefreshing && (
+                  <>
+                    <span>Paid to date: ₹{Number(paymentTarget.paidAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <span>Remaining balance: ₹{Number(paymentTarget.dueCollection || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <div className="payment-invoice-actions">
+                      <button
+                        type="button"
+                        className="btn-collect-payment"
+                        onClick={() => handlePaymentInvoiceAction('download')}
+                        disabled={Boolean(paymentInvoiceAction)}
+                      >
+                        {paymentInvoiceAction === 'download' ? 'Preparing…' : 'Download updated invoice'}
+                      </button>
+                      {paymentTarget.customer.phone && (
+                        <button
+                          type="button"
+                          className="btn-share-whatsapp"
+                          onClick={() => handlePaymentInvoiceAction('whatsapp')}
+                          disabled={Boolean(paymentInvoiceAction)}
+                        >
+                          {paymentInvoiceAction === 'whatsapp' ? 'Preparing…' : 'WhatsApp invoice'}
+                        </button>
+                      )}
+                      {paymentTarget.customer.email && (
+                        <button
+                          type="button"
+                          className="btn-share-email"
+                          onClick={() => handlePaymentInvoiceAction('email')}
+                          disabled={Boolean(paymentInvoiceAction)}
+                        >
+                          {paymentInvoiceAction === 'email' ? 'Preparing…' : 'Prepare email'}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+                {paymentInvoiceActionError && <p className="payment-dialog-error" role="alert">{paymentInvoiceActionError}</p>}
                 <button type="button" className="btn-collect-payment" onClick={() => {
                   setPaymentTarget(null);
                   if (onOpenPaymentReport) onOpenPaymentReport();
                   else navigate('/payments');
-                }}>
+                }} disabled={paymentInvoiceRefreshing || paymentSaving}>
                   View collection report
                 </button>
-                <button type="button" className="payment-dialog-cancel" onClick={() => setPaymentTarget(null)}>Done</button>
+                <button type="button" className="payment-dialog-cancel" onClick={() => setPaymentTarget(null)} disabled={paymentInvoiceRefreshing || paymentSaving}>Done</button>
               </div>
             ) : (
               <form className="payment-dialog-form" onSubmit={submitCollectedPayment}>
