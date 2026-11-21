@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { useNavigate } from 'react-router-dom';
 import './InventoryPage.css';
@@ -38,6 +38,8 @@ const InventoryPage = () => {
   const [currentPage, setCurrentPage] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -119,8 +121,10 @@ const InventoryPage = () => {
   
 const saveProduct = async (e, isEdit = false) => {
   e.preventDefault();
-  if (!isInventoryWritable) return;
+  if (!isInventoryWritable || isSavingRef.current) return;
 
+  isSavingRef.current = true;
+  setIsSaving(true);
   const formData = new FormData(e.target);
 
   const product = {
@@ -157,10 +161,13 @@ const saveProduct = async (e, isEdit = false) => {
     setEditingItem(null);
     e.target.reset();
 
-    fetchProducts(currentPage, searchTerm);
+    await fetchProducts(currentPage, searchTerm);
   } catch (error) {
     logger.error('Product save failed', error);
     alert('Save failed');
+  } finally {
+    isSavingRef.current = false;
+    setIsSaving(false);
   }
 };
   
@@ -369,7 +376,9 @@ const saveProduct = async (e, isEdit = false) => {
               <input name="price" type="number" step="0.01" defaultValue={editingItem?.price || ''} placeholder="Price ₹ *" required min="0" />
               <div className="modal-actions">
                 <button type="button" className="btn cancel" onClick={() => setShowAddModal(false)}>Cancel</button>
-                <button type="submit" className="btn primary">Save Product</button>
+                <button type="submit" className="btn primary" disabled={isSaving}>
+                  {isSaving ? 'Saving...' : 'Save Product'}
+                </button>
               </div>
             </form>
           </div>
