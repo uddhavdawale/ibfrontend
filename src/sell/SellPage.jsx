@@ -54,6 +54,26 @@ const formatExchangeAmount = (value) => {
     : '—';
 };
 
+const parseCurrencyCents = (value) => {
+  const match = /^(\d+)(?:\.(\d{0,2}))?$/.exec(String(value ?? '').trim().replace(/,/g, ''));
+  if (!match) return null;
+
+  const cents = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0') || 0);
+  return Number.isSafeInteger(cents) ? cents : null;
+};
+
+const toCurrencyCents = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? Math.round((amount + Math.sign(amount) * Number.EPSILON * Math.max(1, Math.abs(amount))) * 100)
+    : null;
+};
+
+const formatCurrencyCents = (cents) => (cents / 100).toLocaleString('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 const formatExchangeDate = (value) => {
   if (!value) return '—';
   const date = new Date(value);
@@ -886,7 +906,10 @@ const SellPage = ({ onOpenPaymentReport }) => {
       && String(previousAttempt.invoiceId) === String(order.id)
       && previousAttempt.billType === order.billType;
     setPaymentTarget(order);
-    setPaymentAmount(sameInvoice ? (previousAttempt.amountCents / 100).toFixed(2) : Number(order.dueCollection || 0).toFixed(2));
+    const balanceCents = toCurrencyCents(order.dueCollection || 0) || 0;
+    setPaymentAmount(sameInvoice
+      ? (previousAttempt.amountCents / 100).toFixed(2)
+      : (balanceCents / 100).toFixed(2));
     setPaymentMethod(sameInvoice ? previousAttempt.method : 'CASH');
     setPaymentReference(sameInvoice ? previousAttempt.referenceNo : '');
     setPaymentError('');
@@ -961,14 +984,12 @@ const SellPage = ({ onOpenPaymentReport }) => {
   const submitCollectedPayment = async (event) => {
     event.preventDefault();
     if (!paymentTarget || paymentSaving || paymentSubmissionRef.current || paymentResult) return;
-    const amount = Number(paymentAmount);
-    const balanceDue = Number(paymentTarget.dueCollection || 0);
-    const amountCents = Math.round(amount * 100);
-    const balanceCents = Math.round(balanceDue * 100);
-    if (!Number.isFinite(amount) || amountCents <= 0
-      || Math.abs(amount - amountCents / 100) > 0.000001
-      || amountCents > balanceCents) {
-      setPaymentError(`Enter an amount up to the balance due of ₹${balanceDue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}.`);
+    const amountCents = parseCurrencyCents(paymentAmount);
+    const balanceCents = toCurrencyCents(paymentTarget.dueCollection || 0);
+    if (amountCents === null || amountCents <= 0
+      || balanceCents === null || amountCents > balanceCents) {
+      const balanceDue = balanceCents === null ? 'unavailable' : `₹${formatCurrencyCents(balanceCents)}`;
+      setPaymentError(`Enter an amount up to the balance due of ${balanceDue}.`);
       return;
     }
 
@@ -1031,8 +1052,13 @@ const SellPage = ({ onOpenPaymentReport }) => {
 
       const paymentRecord = payload?.payment ?? payload?.data?.payment ?? payload;
       paymentAttemptRef.current = null;
-      const updatedPaid = Number(paymentTarget.paidAmount || 0) + amountCents / 100;
-      const updatedDue = Math.max(Number(paymentTarget.grandTotal || 0) - updatedPaid, 0);
+      const updatedPaidCents = (toCurrencyCents(paymentTarget.paidAmount || 0) || 0) + amountCents;
+      const updatedDueCents = Math.max(
+        (toCurrencyCents(paymentTarget.grandTotal || 0) || 0) - updatedPaidCents,
+        0
+      );
+      const updatedPaid = updatedPaidCents / 100;
+      const updatedDue = updatedDueCents / 100;
       const invoiceKey = `${paymentTarget.billType}:${paymentTarget.id}`;
       const estimatedOrder = normalizeInvoiceToOrder({
         ...paymentTarget,
@@ -2089,7 +2115,7 @@ const OrderDetail = ({
               ? paymentRefreshRequired.includes(`${paymentTarget.billType}:${paymentTarget.id}`)
                 ? 'Estimated balance (refresh required):'
                 : 'Balance after collection:'
-              : 'Balance due:'} ₹{Number(paymentTarget.dueCollection || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+              : 'Balance due:'} ₹{formatCurrencyCents(toCurrencyCents(paymentTarget.dueCollection || 0) || 0)}</p>
             {paymentResult ? (
               <div className="payment-result" role="status">
                 <strong>{paymentReceiptIdentifier
@@ -2161,7 +2187,7 @@ const OrderDetail = ({
                   <input
                     type="number"
                     min="0.01"
-                    max={paymentTarget.dueCollection}
+                    max={(toCurrencyCents(paymentTarget.dueCollection || 0) || 0) / 100}
                     step="0.01"
                     required
                     value={paymentAmount}
