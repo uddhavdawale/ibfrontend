@@ -34,32 +34,6 @@ const formatMoney = (value) => `₹${Number(value || 0).toLocaleString('en-IN', 
   maximumFractionDigits: 2,
 })}`;
 
-const normalizePaymentRecord = (payment, index) => {
-  const record = payment?.payment && typeof payment.payment === 'object'
-    ? { ...payment, ...payment.payment }
-    : payment;
-  const amountValue = record?.amount
-    ?? record?.paymentAmount
-    ?? record?.collectedAmount
-    ?? record?.amountReceived;
-  const amount = Number(amountValue);
-  if (!Number.isFinite(amount)) {
-    throw new Error('The payment-report service returned a payment without a valid amount.');
-  }
-
-  return {
-    ...record,
-    paymentId: record.paymentId ?? record.id ?? `${record.invoiceId ?? record.invoiceNo ?? 'payment'}-${record.collectedAt ?? index}`,
-    receiptNo: record.receiptNo ?? record.receiptNumber ?? record.receipt_no,
-    invoiceNo: record.invoiceNo ?? record.invoiceNumber ?? record.invoice?.invoiceNo,
-    customerName: record.customerName ?? record.customer?.name,
-    collectorName: record.collectorName ?? record.collectedByName ?? record.collectedBy?.name,
-    method: record.method ?? record.paymentMethod,
-    amount,
-    collectedAt: record.collectedAt ?? record.paymentDate,
-  };
-};
-
 const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
 const PAYMENT_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_PAYMENT_PROOF_SIZE = 5 * 1024 * 1024;
@@ -370,10 +344,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
         || !Number.isFinite(Number(payload.totalElements))) {
         throw new Error('The payment-report service returned an invalid response.');
       }
-      setReport({
-        ...payload,
-        payments: payload.payments.map(normalizePaymentRecord),
-      });
+      setReport(payload);
     } catch (loadError) {
       if (signal?.aborted) return;
       setReport(null);

@@ -127,33 +127,16 @@ const normalizeInvoice = (invoice, index, billType) => {
     invoice.paidAmount,
     invoice.amountPaid,
     invoice.totalPaid,
-    invoice.amountReceived,
-    invoice.totalReceived,
-    invoice.totalPaidAmount
+    invoice.amountReceived
   );
   const paid = isVoided ? 0 : paidValue === null
     ? (normalizedStatus === 'paid' ? total : 0)
     : paidValue;
   const invoiceDue = isVoided
     ? 0
-    : Math.max(readAmount(
-      invoice.outstandingAmount,
-      invoice.invoiceDueAmount,
-      invoice.dueAmount,
-      invoice.dueCollection,
-      invoice.balanceDue,
-      invoice.pendingAmount,
-      invoice.pendingBalance
-    ) ?? (total - paid), 0);
+    : Math.max(readAmount(invoice.outstandingAmount, invoice.invoiceDueAmount, invoice.dueAmount) ?? (total - paid), 0);
   const savedPreviousBalance = readAmount(invoice.previousBalance, invoice.openingBalance);
-  const savedBalance = readAmount(
-    invoice.currentBalance,
-    invoice.balanceAmount,
-    invoice.totalDueAmount,
-    invoice.dueBalance,
-    invoice.outstandingBalance,
-    invoice.customerDue
-  );
+  const savedBalance = readAmount(invoice.currentBalance, invoice.balanceAmount, invoice.totalDueAmount);
   const invoiceNo = invoice.invoiceNo || invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id ?? index + 1}`;
   const customerName = invoice.customerName || invoice.customer?.name || invoice.customer || 'Walk-in Customer';
   const customerPhone = invoice.customerPhone || invoice.customer?.phone || invoice.phone || '';
