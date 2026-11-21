@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
 import { useNavigate } from "react-router-dom";
 import "./SellPage.css";
@@ -35,6 +35,30 @@ const exportSellOrdersData = (orders, format = "csv") => {
 
 const MAX_EXPORT_ROWS = 500;
 const EXPORT_COOLDOWN_MS = 60 * 1000;
+
+const parseExchangeRecords = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.exchanges)) return payload.exchanges;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data?.exchanges)) return payload.data.exchanges;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
+  if (Array.isArray(payload?.content)) return payload.content;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+};
+
+const formatExchangeAmount = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount)
+    ? `₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—';
+};
+
+const formatExchangeDate = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('en-IN');
+};
 
 const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
   const currentShopProfile = await getCurrentShopProfile(true);
@@ -272,12 +296,15 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
 
   const normalizedItems = rawItems.map((item, itemIndex) => {
     const quantity = Number(item.quantity ?? item.qty ?? item.count ?? 0);
-    const unitPrice = Number(item.price ?? item.unitPrice ?? item.rate ?? 0);
+    const rawUnitPrice = item.price ?? item.unitPrice ?? item.rate;
+    const unitPrice = Number(rawUnitPrice ?? 0);
     const gstRate = Number(item.gstRate ?? item.gst ?? item.taxRate ?? 0);
     const lineTotal = Number(item.total ?? item.amount ?? item.lineTotal ?? (unitPrice * quantity));
 
     return {
       sn: item.sn ?? itemIndex + 1,
+      productId: item.productId ?? item.product_id ?? item.product?.id ?? item.productID ?? null,
+      unitPriceAvailable: rawUnitPrice !== undefined && rawUnitPrice !== null && rawUnitPrice !== '',
       item: item.name ?? item.item ?? item.productName ?? `Item ${itemIndex + 1}`,
       hsn: item.hsn ?? item.hsnCode ?? "9999",
       qty: quantity,
@@ -346,6 +373,51 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
   };
 };
 
+const getExchangeableItems = (order) => {
+  const groupedItems = new Map();
+  let unavailableItemCount = 0;
+
+  (Array.isArray(order?.items) ? order.items : []).forEach((item) => {
+    const productId = Number(item.productId);
+    const quantity = Number(item.qty ?? item.quantity ?? 0);
+    const rawUnitPrice = item.rate ?? item.unitPrice ?? item.price;
+    const unitPrice = Number(rawUnitPrice ?? 0);
+    const hasUnitPrice = item.unitPriceAvailable
+      ?? (rawUnitPrice !== undefined && rawUnitPrice !== null && rawUnitPrice !== '');
+
+    if (!Number.isSafeInteger(productId) || productId <= 0
+      || !Number.isFinite(quantity) || quantity <= 0
+      || !hasUnitPrice || !Number.isFinite(unitPrice) || unitPrice < 0) {
+      unavailableItemCount += 1;
+      return;
+    }
+
+    const key = String(productId);
+    const existing = groupedItems.get(key);
+    const returnedValue = quantity * unitPrice;
+
+    if (existing) {
+      existing.soldQuantity += quantity;
+      existing.returnedValue += returnedValue;
+    } else {
+      groupedItems.set(key, {
+        productId,
+        productName: String(item.item ?? item.name ?? item.productName ?? `Product ${productId}`),
+        soldQuantity: quantity,
+        returnedValue,
+      });
+    }
+  });
+
+  return {
+    items: Array.from(groupedItems.values()).map((item) => ({
+      ...item,
+      unitPrice: item.returnedValue / item.soldQuantity,
+    })),
+    unavailableItemCount,
+  };
+};
+
 const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User") => {
   const invoiceId = invoiceSummary?.id ?? invoiceSummary?.invoiceId;
   if (!invoiceId) return invoiceSummary;
@@ -385,6 +457,17 @@ const SellPage = ({ onOpenPaymentReport }) => {
   const [exportFormat, setExportFormat] = useState('csv');
   const [openActionMenuFor, setOpenActionMenuFor] = useState(null);
   const [cancellingOrderId, setCancellingOrderId] = useState(null);
+  const [exchangeTarget, setExchangeTarget] = useState(null);
+  const [exchangeReason, setExchangeReason] = useState('');
+  const [exchangeNewInvoiceAmount, setExchangeNewInvoiceAmount] = useState('');
+  const [exchangeQuantities, setExchangeQuantities] = useState({});
+  const [exchangeError, setExchangeError] = useState('');
+  const [exchangeSaving, setExchangeSaving] = useState(false);
+  const [exchangeMessage, setExchangeMessage] = useState('');
+  const [exchangeRecords, setExchangeRecords] = useState([]);
+  const [exchangeHistoryLoading, setExchangeHistoryLoading] = useState(true);
+  const [exchangeHistoryError, setExchangeHistoryError] = useState('');
+  const [exchangeHistoryRefreshing, setExchangeHistoryRefreshing] = useState(false);
   const [lastExportAt, setLastExportAt] = useState(0);
   const [role, setRole] = useState(() => getCurrentUserRole());
   const [loggedInSeller, setLoggedInSeller] = useState(() => getLoggedInSellerName());
@@ -415,6 +498,39 @@ const SellPage = ({ onOpenPaymentReport }) => {
   });
   const pageSize = 5;
   const canManageSellOrders = canWriteBilling(role);
+
+  const loadExchangeHistory = useCallback(async (silent = false) => {
+    if (silent) setExchangeHistoryRefreshing(true);
+    else setExchangeHistoryLoading(true);
+    setExchangeHistoryError('');
+
+    try {
+      const response = await apiFetch(API_ENDPOINTS.exchanges, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (response.status === 403) {
+        setExchangeHistoryError('You do not have permission to view exchange history.');
+        return;
+      }
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || payload?.error || `Unable to load exchange history (${response.status}).`);
+      }
+
+      setExchangeRecords(parseExchangeRecords(payload));
+    } catch (loadError) {
+      setExchangeHistoryError(loadError.message || 'Unable to load exchange history.');
+    } finally {
+      setExchangeHistoryLoading(false);
+      setExchangeHistoryRefreshing(false);
+    }
+  }, [navigate]);
 
   const cycleStatusFilter = () => {
     setStatusFilter((current) => {
@@ -498,6 +614,123 @@ const SellPage = ({ onOpenPaymentReport }) => {
         },
       },
     });
+  };
+
+  const openExchangeOrder = async (order) => {
+    if (!canManageSellOrders) {
+      setError('Your role has read-only sell order access.');
+      return;
+    }
+
+    if (!order || ['cancelled', 'return'].includes(String(order.status || '').toLowerCase())) {
+      setError('Cancelled or fully returned orders cannot be exchanged.');
+      return;
+    }
+
+    setExchangeMessage('');
+    setExchangeError('');
+    let orderWithItems = order;
+    if (!Array.isArray(orderWithItems.items) || orderWithItems.items.length === 0) {
+      setCancellingOrderId(order.id);
+      try {
+        orderWithItems = await fetchInvoiceDetail(order, loggedInSeller);
+      } finally {
+        setCancellingOrderId(null);
+      }
+    }
+
+    const { items } = getExchangeableItems(orderWithItems);
+    setExchangeTarget(orderWithItems);
+    setExchangeReason('');
+    setExchangeNewInvoiceAmount('');
+    setExchangeQuantities(Object.fromEntries(items.map((item) => [String(item.productId), '0'])));
+    setOpenActionMenuFor(null);
+  };
+
+  const submitExchange = async (event) => {
+    event.preventDefault();
+    if (!exchangeTarget || exchangeSaving) return;
+
+    const invoiceId = Number(exchangeTarget.id);
+    const newInvoiceAmount = Number(exchangeNewInvoiceAmount);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+      setExchangeError('This order does not have a valid invoice ID and cannot be exchanged.');
+      return;
+    }
+
+    if (!exchangeReason.trim()) {
+      setExchangeError('Enter a reason for the exchange.');
+      return;
+    }
+
+    if (!Number.isFinite(newInvoiceAmount) || newInvoiceAmount < 0
+      || !Number.isInteger(newInvoiceAmount * 100)) {
+      setExchangeError('Enter a valid new invoice amount with up to two decimal places.');
+      return;
+    }
+
+    const { items: exchangeableItems } = getExchangeableItems(exchangeTarget);
+    const hasInvalidQuantity = exchangeableItems.some((item) => {
+      const quantity = Number(exchangeQuantities[String(item.productId)] || 0);
+      return !Number.isFinite(quantity) || quantity < 0 || quantity > item.soldQuantity;
+    });
+    if (hasInvalidQuantity) {
+      setExchangeError('Return quantities must be between zero and the quantity sold.');
+      return;
+    }
+
+    const items = exchangeableItems.flatMap((item) => {
+      const quantity = Number(exchangeQuantities[String(item.productId)] || 0);
+      if (quantity === 0) return [];
+
+      return [{
+        productId: item.productId,
+        productName: item.productName,
+        quantity,
+        unitPrice: item.unitPrice,
+      }];
+    });
+
+    if (items.length === 0) {
+      setExchangeError('Select at least one valid quantity to exchange.');
+      return;
+    }
+
+    setExchangeSaving(true);
+    setExchangeError('');
+    try {
+      const response = await apiFetch(API_ENDPOINTS.exchanges, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId,
+          reason: exchangeReason.trim(),
+          newInvoiceAmount,
+          items,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (response.status === 403) {
+        setExchangeError('You do not have permission to exchange this order.');
+        return;
+      }
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || payload?.error || `Exchange could not be recorded (${response.status}).`);
+      }
+
+      setExchangeMessage(`Exchange recorded for ${exchangeTarget.invoiceNo}. Create any replacement bill separately from Billing.`);
+      setExchangeTarget(null);
+      await loadExchangeHistory(true);
+    } catch (submitError) {
+      setExchangeError(submitError.message || 'Exchange could not be recorded. Please retry.');
+    } finally {
+      setExchangeSaving(false);
+    }
   };
 
   const getNextRecurringDate = (dateString, frequency) => {
@@ -629,6 +862,11 @@ const SellPage = ({ onOpenPaymentReport }) => {
 
     if (action === 'return') {
       await returnOrder(order);
+      return;
+    }
+
+    if (action === 'exchange') {
+      await openExchangeOrder(order);
     }
   };
 
@@ -649,6 +887,10 @@ const SellPage = ({ onOpenPaymentReport }) => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    loadExchangeHistory();
+  }, [loadExchangeHistory]);
 
   const selectOrder = async (order) => {
     if (!order) {
@@ -907,6 +1149,9 @@ const OrderDetail = ({ order, onCollectPayment }) => {
   }, [totalPages]);
 
   const visibleOrders = filteredOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+  const exchangeData = exchangeTarget
+    ? getExchangeableItems(exchangeTarget)
+    : { items: [], unavailableItemCount: 0 };
 
   const handleSellOrderExport = () => {
     const now = Date.now();
@@ -1106,6 +1351,7 @@ const OrderDetail = ({ order, onCollectPayment }) => {
       <div className="page-header">
         <h1>📋 Sell Orders ({sellOrders.length})</h1>
         {error && <p className="error-text">{error}</p>}
+        {exchangeMessage && <p className="sell-success-message" role="status">{exchangeMessage}</p>}
         {loading && <p className="loading-text">🔄 Loading live sell orders...</p>}
         {!canManageSellOrders && <p className="error-text">Read-only mode: billing viewer access.</p>}
         <div className="sell-page-actions">
@@ -1275,6 +1521,14 @@ const OrderDetail = ({ order, onCollectPayment }) => {
                   >
                     Return Order
                   </button>
+                  <button
+                    type="button"
+                    className="order-action-menu-item"
+                    onClick={() => handleThreeDotMenuAction(order, 'exchange')}
+                    disabled={isRowActionBusy || !canManageSellOrders || ['cancelled', 'return'].includes(String(order.status || '').toLowerCase())}
+                  >
+                    Exchange Order
+                  </button>
                 </div>
               )}
             </span>
@@ -1301,6 +1555,109 @@ const OrderDetail = ({ order, onCollectPayment }) => {
           Next →
         </button>
       </div>
+
+      <section className="exchange-history" aria-labelledby="exchange-history-title">
+        <div className="exchange-history-header">
+          <div>
+            <h2 id="exchange-history-title">Exchange history ({exchangeRecords.length})</h2>
+            <p>Recorded exchanges, returned quantities, stock credit, and invoice details.</p>
+          </div>
+          <button
+            type="button"
+            className="exchange-history-refresh"
+            onClick={() => loadExchangeHistory(true)}
+            disabled={exchangeHistoryLoading || exchangeHistoryRefreshing}
+          >
+            {exchangeHistoryRefreshing ? 'Refreshing…' : 'Refresh history'}
+          </button>
+        </div>
+
+        {exchangeHistoryLoading ? (
+          <p className="exchange-history-message">Loading exchange history…</p>
+        ) : exchangeHistoryError ? (
+          <p className="exchange-history-error" role="alert">{exchangeHistoryError}</p>
+        ) : exchangeRecords.length === 0 ? (
+          <p className="exchange-history-message">No exchanges recorded yet.</p>
+        ) : (
+          <div className="exchange-record-list">
+            {exchangeRecords.map((record, index) => {
+              const returnedItems = Array.isArray(record.items) ? record.items : [];
+              const tenant = record.tenant && typeof record.tenant === 'object' ? record.tenant : {};
+              const exchangeKey = record.id ?? `${record.invoiceId || 'invoice'}-${record.exchangeDate || index}`;
+              const statusClass = String(record.status || 'recorded').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+              const tenantDetails = [
+                tenant.name,
+                tenant.code,
+                tenant.address,
+                tenant.city,
+                tenant.pincode,
+              ].filter(Boolean).join(' · ') || (record.tenant ? String(record.tenant) : '—');
+
+              return (
+                <details className="exchange-record" key={exchangeKey} open={index === 0}>
+                  <summary>
+                    <span className="exchange-record-primary">
+                      <strong>{record.invoiceNo || `Invoice #${record.invoiceId ?? '—'}`}</strong>
+                      <span>{record.customerName || 'Walk-in customer'} · {formatExchangeDate(record.exchangeDate)}</span>
+                    </span>
+                    <span className="exchange-record-summary">
+                      <span className={`exchange-status ${statusClass}`}>{record.status || 'Recorded'}</span>
+                      <strong>Credit {formatExchangeAmount(record.creditAmount)}</strong>
+                    </span>
+                  </summary>
+
+                  <div className="exchange-record-details">
+                    <dl className="exchange-record-metadata">
+                      <div><dt>Exchange ID</dt><dd>{record.id ?? '—'}</dd></div>
+                      <div><dt>Invoice ID</dt><dd>{record.invoiceId ?? '—'}</dd></div>
+                      <div><dt>Customer</dt><dd>{record.customerName || '—'}</dd></div>
+                      <div><dt>Phone</dt><dd>{record.customerPhone || '—'}</dd></div>
+                      <div><dt>Exchange date</dt><dd>{formatExchangeDate(record.exchangeDate)}</dd></div>
+                      <div><dt>Status</dt><dd>{record.status || 'Recorded'}</dd></div>
+                      <div><dt>Reason</dt><dd>{record.reason || '—'}</dd></div>
+                      <div><dt>Exchange credit</dt><dd>{formatExchangeAmount(record.creditAmount)}</dd></div>
+                      <div><dt>New invoice amount</dt><dd>{formatExchangeAmount(record.newInvoiceAmount)}</dd></div>
+                      <div><dt>Tenant</dt><dd>{tenantDetails}</dd></div>
+                    </dl>
+
+                    <h3>Returned items</h3>
+                    {returnedItems.length === 0 ? (
+                      <p className="exchange-history-message">No returned item details were included.</p>
+                    ) : (
+                      <div className="exchange-history-table-wrap">
+                        <table className="exchange-history-table">
+                          <thead>
+                            <tr>
+                              <th>Item ID</th>
+                              <th>Product ID</th>
+                              <th>Product</th>
+                              <th>Quantity</th>
+                              <th>Unit price</th>
+                              <th>Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {returnedItems.map((item, itemIndex) => (
+                              <tr key={item.id ?? `${item.productId ?? 'product'}-${itemIndex}`}>
+                                <td>{item.id ?? '—'}</td>
+                                <td>{item.productId ?? '—'}</td>
+                                <td>{item.productName || '—'}</td>
+                                <td>{item.quantity ?? '—'}</td>
+                                <td>{formatExchangeAmount(item.unitPrice)}</td>
+                                <td>{formatExchangeAmount(item.lineTotal ?? Number(item.quantity || 0) * Number(item.unitPrice || 0))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {activeOrder && (
         <div className="detail-container">
@@ -1509,6 +1866,132 @@ const OrderDetail = ({ order, onCollectPayment }) => {
                 </div>
               </form>
             )}
+          </section>
+        </div>
+      )}
+
+      {exchangeTarget && (
+        <div
+          className="payment-dialog-backdrop"
+          role="presentation"
+          onClick={() => !exchangeSaving && setExchangeTarget(null)}
+        >
+          <section
+            className="payment-dialog exchange-order-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exchange-order-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="payment-dialog-close"
+              onClick={() => !exchangeSaving && setExchangeTarget(null)}
+              aria-label="Close exchange order"
+            >
+              ×
+            </button>
+            <h2 id="exchange-order-title">Exchange order {exchangeTarget.invoiceNo}</h2>
+            <p>Select quantities being returned. Returned stock and exchange credit are calculated by the backend.</p>
+            <p className="exchange-order-note">Replacement items or invoices are not created here. Create any replacement bill separately from Billing.</p>
+
+            {exchangeData.unavailableItemCount > 0 && (
+              <p className="exchange-order-warning" role="status">
+                {exchangeData.unavailableItemCount} invoice item(s) do not include a valid product ID or unit price and cannot be returned here.
+              </p>
+            )}
+
+            {exchangeData.items.length > 0 ? (
+              <div className="exchange-items-table-wrap">
+                <table className="exchange-items-table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Sold</th>
+                      <th>Unit price</th>
+                      <th>Return qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exchangeData.items.map((item) => (
+                      <tr key={item.productId}>
+                        <td>{item.productName}</td>
+                        <td>{item.soldQuantity}</td>
+                        <td>₹{item.unitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            max={item.soldQuantity}
+                            step="any"
+                            value={exchangeQuantities[String(item.productId)] || '0'}
+                            onChange={(event) => {
+                              setExchangeQuantities((current) => ({
+                                ...current,
+                                [String(item.productId)]: event.target.value,
+                              }));
+                              setExchangeError('');
+                            }}
+                            aria-label={`Return quantity for ${item.productName}`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="exchange-order-warning" role="alert">
+                No invoice items with valid product IDs are available to exchange.
+              </p>
+            )}
+
+            <form className="payment-dialog-form" onSubmit={submitExchange}>
+              <label>Reason for exchange
+                <textarea
+                  required
+                  maxLength="500"
+                  rows="3"
+                  value={exchangeReason}
+                  onChange={(event) => {
+                    setExchangeReason(event.target.value);
+                    setExchangeError('');
+                  }}
+                />
+              </label>
+              <label>New invoice amount (₹)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={exchangeNewInvoiceAmount}
+                  onChange={(event) => {
+                    setExchangeNewInvoiceAmount(event.target.value);
+                    setExchangeError('');
+                  }}
+                />
+              </label>
+              <p className="exchange-order-note">This amount is stored with the exchange record; it does not create a replacement invoice.</p>
+              {exchangeError && <p className="payment-dialog-error" role="alert">{exchangeError}</p>}
+              <div className="payment-dialog-actions">
+                <button
+                  type="button"
+                  className="payment-dialog-cancel"
+                  onClick={() => setExchangeTarget(null)}
+                  disabled={exchangeSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-collect-payment"
+                  disabled={exchangeSaving || exchangeData.items.length === 0}
+                >
+                  {exchangeSaving ? 'Recording exchange…' : 'Record exchange'}
+                </button>
+              </div>
+            </form>
           </section>
         </div>
       )}
