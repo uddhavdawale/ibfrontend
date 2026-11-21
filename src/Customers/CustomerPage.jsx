@@ -29,7 +29,21 @@ const normalizeCustomerRecord = (source = {}, fallback = EMPTY_CUSTOMER) => ({
   gstNumber: source.gstNumber || source.gstin || source.gst || fallback.gstNumber || 'N/A',
   phone: source.phone || source.mobile || source.contactNumber || fallback.phone || '',
   email: source.email || source.mail || fallback.email || '',
-  dueBalance: Number(source.dueBalance ?? source.outstandingBalance ?? source.balanceDue ?? fallback.dueBalance ?? 0),
+  dueBalance: Number(
+    source.dueBalance
+      ?? source.outstandingBalance
+      ?? source.balanceDue
+      ?? source.pendingAmount
+      ?? source.pendingBalance
+      ?? source.amountDue
+      ?? source.totalDue
+      ?? source.customerDue
+      ?? source.balance
+      ?? source.receivable
+      ?? source.outstanding
+      ?? fallback.dueBalance
+      ?? 0
+  ),
   previousOrderCount: Number(source.previousOrderCount ?? source.totalOrders ?? source.orderCount ?? source.orderCountTotal ?? fallback.previousOrderCount ?? 0),
   lastOrderId: Number(source.lastOrderId ?? source.lastOrder ?? source.orderId ?? fallback.lastOrderId ?? 0),
   lastOrderNo: source.lastOrderNo || source.lastInvoiceNo || source.lastOrderNumber || source.invoiceNumber || fallback.lastOrderNo || 'INV-000',
