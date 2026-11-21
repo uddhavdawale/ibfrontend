@@ -405,6 +405,10 @@ const BillingPage = () => {
   };
 
   const normalizeDigits = (value) => String(value || '').replace(/\D/g, '');
+  const normalizeCustomerPhone = (value) => {
+    const digits = normalizeDigits(value).replace(/^0+/, '');
+    return digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+  };
 
   const toCustomerArray = (payload) => {
     if (Array.isArray(payload)) return payload;
@@ -418,7 +422,9 @@ const BillingPage = () => {
       if (Array.isArray(payload.data.customers)) return payload.data.customers;
       if (Array.isArray(payload.data.content)) return payload.data.content;
       if (Array.isArray(payload.data.items)) return payload.data.items;
+      return toCustomerArray(payload.data);
     }
+    if (payload.customer && typeof payload.customer === 'object') return toCustomerArray(payload.customer);
     return [payload];
   };
 
@@ -443,64 +449,40 @@ const BillingPage = () => {
   };
 
   const resolveCustomerPreviousBalance = async () => {
-    const customerPhoneRaw = String(customer.phone || '').trim();
-    const customerPhoneDigits = normalizeDigits(customer.phone);
+    const customerPhoneDigits = normalizeCustomerPhone(customer.phone);
     const customerName = String(customer.name || '').trim().toLowerCase();
 
-    if (!customerPhoneDigits && !customerName) return 0;
+    if (!customerPhoneDigits && !customerName) return { profileId: null, balance: 0 };
 
-    const fetchDueFromEndpoint = async (endpoint) => {
-      try {
-        const response = await apiFetch(endpoint);
-        if (!response.ok) return null;
-        const data = await response.json();
-        const customers = toCustomerArray(data);
-        if (!customers.length) return 0;
-
-        const matchedByPhone = customerPhoneDigits
-          ? customers.find((entry) => normalizeDigits(entry?.phone || entry?.mobile || entry?.contactNumber) === customerPhoneDigits)
-          : null;
-
-        const matchedByName = customerName
-          ? customers.find((entry) => {
-            const entryName = String(entry?.customerName || entry?.name || entry?.customer || '').trim().toLowerCase();
-            return entryName === customerName;
-          })
-          : null;
-
-        const selected = matchedByPhone || matchedByName || customers[0];
-        return readCustomerDueBalance(selected);
-      } catch {
-        return null;
+    const endpoint = customerPhoneDigits
+      ? API_ENDPOINTS.customerProfileByPhone(String(customer.phone || '').trim())
+      : API_ENDPOINTS.customerProfilesSearch(customer.name);
+    try {
+      const response = await apiFetch(endpoint);
+      if (response.status === 404) return { profileId: null, balance: 0 };
+      if (!response.ok) {
+        throw new Error("Unable to verify the customer's existing balance. Please try again.");
       }
-    };
+      const customers = toCustomerArray(await response.json());
+      const matches = customers.filter((entry) => {
+        if (customerPhoneDigits) {
+          return normalizeCustomerPhone(entry?.phone || entry?.mobile || entry?.contactNumber) === customerPhoneDigits;
+        }
+        const entryName = String(entry?.customerName || entry?.name || entry?.customer || '').trim().toLowerCase();
+        return entryName === customerName;
+      });
+      if (matches.length !== 1) return { profileId: null, balance: 0 };
 
-    if (customerPhoneDigits) {
-      const phoneInputs = [...new Set([customerPhoneRaw, customerPhoneDigits].filter(Boolean))];
-      const phoneEndpoints = phoneInputs.flatMap((phoneValue) => ([
-        API_ENDPOINTS.customerByPhone(phoneValue),
-        API_ENDPOINTS.customerProfileByPhone(phoneValue),
-      ]));
-
-      for (const endpoint of phoneEndpoints) {
-        const amount = await fetchDueFromEndpoint(endpoint);
-        if (amount !== null) return amount;
-      }
+      return {
+        profileId: matches[0].id ?? matches[0].profileId ?? null,
+        balance: readCustomerDueBalance(matches[0]),
+      };
+    } catch (error) {
+      logger.warn('Customer balance lookup failed during invoice creation', {
+        error: error.message || String(error),
+      });
+      throw new Error("Unable to verify the customer's existing balance. Please try again.");
     }
-
-    if (customerName) {
-      const nameEndpoints = [
-        API_ENDPOINTS.customerSearch(customer.name),
-        API_ENDPOINTS.customerProfilesSearch(customer.name),
-      ];
-
-      for (const endpoint of nameEndpoints) {
-        const amount = await fetchDueFromEndpoint(endpoint);
-        if (amount !== null) return amount;
-      }
-    }
-
-    return 0;
   };
 
   const calculateInvoiceTotals = (items) => {
@@ -523,22 +505,24 @@ const BillingPage = () => {
   };
 
   const resolveCustomerDueState = (previousBalanceValue, totalAmountValue, receivedAmountValue) => {
-    const safePreviousBalance = Number(previousBalanceValue || 0);
-    const safeTotalAmount = Number(totalAmountValue || 0);
-    const safeReceivedAmount = Number(receivedAmountValue || 0);
-    const invoiceDueAmount = Math.max(safeTotalAmount - safeReceivedAmount, 0);
-    const totalDueAmount = Math.max(safePreviousBalance + invoiceDueAmount, 0);
-    return { invoiceDueAmount, totalDueAmount };
+    const toCents = (value) => {
+      const amount = Number(value || 0);
+      return Number.isFinite(amount) ? Math.round((amount + Number.EPSILON) * 100) : 0;
+    };
+    const previousBalanceCents = Math.max(toCents(previousBalanceValue), 0);
+    const totalAmountCents = Math.max(toCents(totalAmountValue), 0);
+    const receivedAmountCents = Math.max(toCents(receivedAmountValue), 0);
+    const invoiceDueCents = Math.max(totalAmountCents - receivedAmountCents, 0);
+    const totalDueCents = previousBalanceCents + invoiceDueCents;
+    return {
+      invoiceDueAmount: invoiceDueCents / 100,
+      totalDueAmount: totalDueCents / 100,
+    };
   };
 
-  const syncCustomerProfileDueBalance = async (balanceToStore) => {
-    const cashCustomerName = String(customer?.name || '').trim();
-    const cashCustomerPhone = normalizeDigits(customer?.phone || '');
+  const syncCustomerProfileDueBalance = async (profileId, balanceToStore) => {
     const amount = Math.max(Number(balanceToStore || 0), 0);
-
-    if ((!cashCustomerPhone && !cashCustomerName) || !Number.isFinite(amount)) {
-      return;
-    }
+    if (profileId == null || !Number.isFinite(amount)) return false;
 
     const profileUpdatePayload = {
       dueBalance: amount,
@@ -553,71 +537,20 @@ const BillingPage = () => {
       outstanding: amount,
     };
 
-    const candidateEndpoints = [];
-    if (cashCustomerPhone) {
-      candidateEndpoints.push(
-        API_ENDPOINTS.customerProfileByPhone(cashCustomerPhone),
-        API_ENDPOINTS.customerByPhone(cashCustomerPhone),
-      );
-    }
-    if (cashCustomerName) {
-      candidateEndpoints.push(
-        API_ENDPOINTS.customerProfilesSearch(cashCustomerName),
-        API_ENDPOINTS.customerSearch(cashCustomerName),
-      );
-    }
+    try {
+      const response = await apiFetch(API_ENDPOINTS.customerProfileById(profileId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileUpdatePayload),
+      });
+      if (response.ok) return true;
 
-    const uniqueEndpoints = [...new Set(candidateEndpoints.filter(Boolean))];
-
-    const tryUpdateProfile = async (url, method = 'PATCH') => {
-      try {
-        const response = await apiFetch(url, {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(profileUpdatePayload),
-        });
-
-        if (response.ok) return true;
-
-        if (response.status === 404) return false;
-
-        const payload = await response.clone().json().catch(() => ({}));
-        logger.warn('Customer profile due sync failed', { url, status: response.status, payload });
-        return false;
-      } catch (error) {
-        logger.warn('Customer profile due sync exception', { url, error: error.message || String(error) });
-        return false;
-      }
-    };
-
-    const seenIds = new Set();
-    for (const endpoint of uniqueEndpoints) {
-      if (seenIds.has(endpoint)) continue;
-      seenIds.add(endpoint);
-
-      try {
-        const response = await apiFetch(endpoint, { method: 'GET' });
-        if (!response.ok) continue;
-
-        const payload = await response.json().catch(() => null);
-        const profileList = Array.isArray(payload) ? payload : (payload && typeof payload === 'object' ? toCustomerArray(payload) : []);
-        const matchedProfile = profileList.find((entry) => {
-          if (!cashCustomerPhone) return true;
-          const phoneValue = normalizeDigits(String(entry?.phone || entry?.mobile || entry?.contactNumber || ''));
-          return phoneValue === cashCustomerPhone;
-        }) || profileList[0];
-
-        if (matchedProfile?.id) {
-          const profileEndpoint = API_ENDPOINTS.customerProfileById(matchedProfile.id);
-          const updated = await tryUpdateProfile(profileEndpoint, 'PUT');
-          if (updated) return;
-        }
-
-        const fallbackUpdated = await tryUpdateProfile(endpoint, 'PATCH');
-        if (fallbackUpdated) return;
-      } catch (error) {
-        logger.warn('Customer profile lookup failed during due sync', { endpoint, error: error.message || String(error) });
-      }
+      const payload = await response.json().catch(() => ({}));
+      logger.warn('Customer profile due sync failed', { status: response.status, payload });
+      return false;
+    } catch (error) {
+      logger.warn('Customer profile due sync exception', { error: error.message || String(error) });
+      return false;
     }
   };
 
@@ -1245,7 +1178,8 @@ const BillingPage = () => {
       const normalizedStatus = status === 'paid' ? 'paid' : status === 'partial' ? 'partial' : 'pending';
       const paidAmount = Number(amountReceived) || 0;
       const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
-      const previousBalance = await resolveCustomerPreviousBalance();
+      const customerBalanceSnapshot = await resolveCustomerPreviousBalance();
+      const previousBalance = customerBalanceSnapshot.balance;
       const shouldRecordPayment = receivedAmount > 0;
       const initialPaymentStatus = shouldRecordPayment ? 'pending' : normalizedStatus;
       const initialPaidAmount = shouldRecordPayment ? 0 : receivedAmount;
@@ -1263,6 +1197,9 @@ const BillingPage = () => {
         previousBalance,
         balanceAmount: initialBalance,
         currentBalance: initialBalance,
+        subtotal,
+        gstAmount,
+        grandTotal,
         totalAmount: grandTotal,
         billType,
         isGstInvoice: billType === BILL_TYPES.GST,
@@ -1285,7 +1222,7 @@ const BillingPage = () => {
         })
       };
 
-      logger.info('Submitting invoice to backend', payload);
+      logger.info('Submitting invoice to backend', { billType, itemCount: cart.length });
       const invoiceEndpoint = billType === BILL_TYPES.NON_GST ? API_ENDPOINTS.nonGstInvoices : API_ENDPOINTS.invoices;
       const response = await apiFetch(invoiceEndpoint, {
         method: 'POST',
@@ -1306,7 +1243,7 @@ const BillingPage = () => {
       }
 
       const generatedInvoiceNo = result?.invoiceNo || invoiceNo;
-      logger.info('Invoice generated and saved', result);
+      logger.info('Invoice generated and saved', { invoiceNo: generatedInvoiceNo, billType });
 
       let paymentRecorded = !shouldRecordPayment;
       let paymentWarning = '';
@@ -1353,10 +1290,18 @@ const BillingPage = () => {
       const recordedBalance = resolveCustomerDueState(previousBalance, grandTotal, recordedAmount).totalDueAmount;
       setPaymentStatus(recordedStatus);
 
+      let customerBalanceWarning = '';
       try {
-        await syncCustomerProfileDueBalance(recordedBalance);
+        const customerProfileId = result?.customerProfileId
+          ?? result?.customerProfile?.id
+          ?? customerBalanceSnapshot.profileId;
+        if (customerProfileId != null
+          && !(await syncCustomerProfileDueBalance(customerProfileId, recordedBalance))) {
+          customerBalanceWarning = 'The invoice was saved, but the customer profile balance could not be synchronized.';
+        }
       } catch (error) {
         logger.warn('Customer profile sync skipped after invoice save', error);
+        customerBalanceWarning = 'The invoice was saved, but the customer profile balance could not be synchronized.';
       }
 
       const previewInvoice = {
@@ -1386,8 +1331,11 @@ const BillingPage = () => {
         }))
       };
 
-      if (paymentWarning) {
-        alert(`Invoice ${generatedInvoiceNo} was saved, but its payment could not be confirmed. Check the Payment report or Sales page before recording it again. ${paymentWarning}`);
+      if (paymentWarning || customerBalanceWarning) {
+        alert([
+          paymentWarning && `Invoice ${generatedInvoiceNo} was saved, but its payment could not be confirmed. Check the Payment report or Sales page before recording it again. ${paymentWarning}`,
+          customerBalanceWarning,
+        ].filter(Boolean).join('\n'));
       }
       openInvoiceWindow(previewInvoice);
 
