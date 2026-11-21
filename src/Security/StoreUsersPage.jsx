@@ -33,7 +33,9 @@ const toRoleLabel = (role) => ROLE_LABELS[String(role || '').trim().toLowerCase(
 const parseUsersPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.users)) return payload.users;
+  if (Array.isArray(payload?.items)) return payload.items;
   if (Array.isArray(payload?.data?.users)) return payload.data.users;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
   if (Array.isArray(payload?.data?.content)) return payload.data.content;
   if (Array.isArray(payload?.content)) return payload.content;
   if (Array.isArray(payload?.data)) return payload.data;
@@ -71,31 +73,10 @@ const parseStorageJson = (key) => {
   }
 };
 
-const resolveScopeContext = () => {
+const resolveCurrentUserId = () => {
   const authContext = getAuthContext();
   const user = parseStorageJson('user');
-  const shopProfile = parseStorageJson('shopProfile');
-
-  return {
-    tenantId: String(authContext?.tenantId ?? user?.tenantId ?? shopProfile?.tenantId ?? '').trim(),
-    shopId: String(authContext?.shopId ?? user?.shopId ?? shopProfile?.shopId ?? shopProfile?.id ?? '').trim(),
-    ownerName: toLowerText(user?.ownerName || user?.name || shopProfile?.ownerName || shopProfile?.businessName || ''),
-    currentUserId: String(authContext?.userId ?? user?.id ?? user?.userId ?? '').trim(),
-  };
-};
-
-const matchesScope = (user, scope) => {
-  const hasUserScopeFields = Boolean(user.tenantId || user.shopId || user.ownerName);
-  const hasCallerScope = Boolean(scope.tenantId || scope.shopId || scope.ownerName);
-
-  // Preserve existing behavior when the backend does not return scope metadata.
-  if (!hasUserScopeFields || !hasCallerScope) return true;
-
-  if (scope.tenantId && user.tenantId) return scope.tenantId === user.tenantId;
-  if (scope.shopId && user.shopId) return scope.shopId === user.shopId;
-  if (scope.ownerName && user.ownerName) return scope.ownerName === toLowerText(user.ownerName);
-
-  return false;
+  return String(authContext?.userId ?? user?.id ?? user?.userId ?? '').trim();
 };
 
 const userMatchesSearch = (user, query) => {
@@ -138,16 +119,14 @@ const StoreUsersPage = () => {
     role: STORE_ROLES.STORE_MANAGER,
   });
 
-  const scopeContext = useMemo(() => resolveScopeContext(), []);
+  const currentUserId = useMemo(() => resolveCurrentUserId(), []);
 
   const sortedUsers = useMemo(() => {
-    return users
-      .filter((item) => matchesScope(item, scopeContext))
-      .sort((a, b) => {
+    return [...users].sort((a, b) => {
       if (a.disabled !== b.disabled) return a.disabled ? 1 : -1;
       return a.username.localeCompare(b.username);
-      });
-  }, [scopeContext, users]);
+    });
+  }, [users]);
 
   const filteredUsers = useMemo(() => {
     return sortedUsers.filter((item) => {
@@ -182,7 +161,7 @@ const StoreUsersPage = () => {
     setError('');
 
     try {
-      const response = await apiFetch(API_ENDPOINTS.users, {
+      const response = await apiFetch(API_ENDPOINTS.existingUsers, {
         method: 'GET',
         headers: { Accept: 'application/json' },
       });
@@ -308,7 +287,7 @@ const StoreUsersPage = () => {
     const userId = user.id;
     const nextDisabled = !user.disabled;
 
-    if (String(scopeContext.currentUserId) && String(userId) === String(scopeContext.currentUserId)) {
+    if (currentUserId && String(userId) === currentUserId) {
       setError('You cannot disable your own account.');
       return;
     }
@@ -378,7 +357,7 @@ const StoreUsersPage = () => {
   const deleteUser = async (user) => {
     const userId = user.id;
 
-    if (String(scopeContext.currentUserId) && String(userId) === String(scopeContext.currentUserId)) {
+    if (currentUserId && String(userId) === currentUserId) {
       setError('You cannot delete your own account.');
       return;
     }
@@ -541,7 +520,7 @@ const StoreUsersPage = () => {
             {pagedUsers.map((user) => {
               const rowBusy = savingId === String(user.id) || deletingId === String(user.id) || resettingId === String(user.id);
               const isEditing = editingId === String(user.id);
-              const isCurrentUser = String(scopeContext.currentUserId) && String(scopeContext.currentUserId) === String(user.id);
+              const isCurrentUser = currentUserId && currentUserId === String(user.id);
 
               return (
                 <div className="store-users-row" role="row" key={String(user.id)}>

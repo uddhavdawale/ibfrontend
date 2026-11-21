@@ -7,6 +7,7 @@ export const API_ENDPOINTS = {
   passwordRecovery: `${API_BASE_URL}/api/auth/password/forgot`,
   passwordReset: `${API_BASE_URL}/api/auth/password/reset`,
   users: `${API_BASE_URL}/api/users`,
+  existingUsers: `${API_BASE_URL}/api/users/existing`,
   userById: (id) => `${API_BASE_URL}/api/users/${id}`,
   userStatusById: (id) => `${API_BASE_URL}/api/users/${id}/status`,
   userResendPasswordById: (id) => `${API_BASE_URL}/api/users/${id}/resend-password`,
