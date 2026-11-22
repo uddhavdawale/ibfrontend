@@ -11,6 +11,7 @@ import SignupPage from './Login/SignupPage.jsx';
 import SellPage from './sell/SellPage.jsx';
 const PaymentCollectionPage = lazy(() => import('./Payments/PaymentCollectionPage.jsx'));
 const LedgerReportPage = lazy(() => import('./Dashboard/LedgerReportPage.jsx'));
+const AdminHsnTaxRatesPage = lazy(() => import('./Admin/AdminHsnTaxRatesPage.jsx'));
 import MfaScreen from './auth/mfa/MfaScreen.jsx';
 import AccessDenied from './Security/AccessDenied.jsx';
 import UsersRolesPage from './Security/UsersRolesPage.jsx';
@@ -386,6 +387,7 @@ const AppRoutes = () => {
       <Route path="/audit" element={isAuthenticated ? (canOpenAudit ? <AuditPage /> : <Navigate to="/access-denied" state={{ from: '/audit', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin" element={isAuthenticated ? (canViewAdminPanel ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/access-denied" state={{ from: '/admin', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/dashboard" element={isAuthenticated ? (canViewAdminPanel ? <AdminDashboardPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/dashboard', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/hsn-tax-rates" element={isAuthenticated ? (canViewAdminPanel ? <Suspense fallback={<div className="loading-screen" role="status">Loading HSN/SAC rate management…</div>}><AdminHsnTaxRatesPage onLogout={logoutUser} /></Suspense> : <Navigate to="/access-denied" state={{ from: '/admin/hsn-tax-rates', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/retailers" element={isAuthenticated ? (canViewAdminPanel ? <AdminRetailersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/retailers', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/organizations" element={isAuthenticated ? (canViewAdminPanel ? <Suspense fallback={<div className="loading-screen" role="status">Loading organization management…</div>}><AdminOrganizationsPage onLogout={logoutUser} /></Suspense> : <Navigate to="/access-denied" state={{ from: '/admin/organizations', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/reports" element={isAuthenticated ? (canViewAdminPanel ? <AdminReportsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/reports', role }} replace />) : <Navigate to="/login" replace />} />

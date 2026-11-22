@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import './BillingPage.css';
 import logger from '../utils/logger';
-import { API_ENDPOINTS, apiFetch } from '../Config/api';
+import { API_ENDPOINTS, apiFetch, getCurrentUserProfile } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
 import { openWhatsAppChat } from '../utils/whatsapp';
 import createSecureIdempotencyKey from '../utils/createSecureIdempotencyKey';
@@ -11,13 +11,64 @@ import {
   getShopDisplayName,
   isValidIndianGstin,
   readStoredShopProfile,
+  resolveIssuerStateCode,
   resolveInvoiceIssuerProfile,
 } from '../modules/shopProfile/shopProfileService';
-import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
+import {
+  BILL_TYPES,
+  INDIAN_GST_STATES,
+  TAX_PRICE_MODES,
+  buildTaxProfileForItem,
+  getProductGstRate,
+  getProductGstRateStatus,
+  getProductHsnCode,
+  isValidHsnCode,
+  normalizeIndianGstState,
+  roundCurrency,
+} from '../modules/tax/gstConfig';
 import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
 
 const PAYMENT_SCREENSHOT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_PAYMENT_SCREENSHOT_SIZE = 5 * 1024 * 1024;
+const ISSUER_STATE_CONFIGURATION_ERROR = 'Set the selected issuer’s state or configure a valid GSTIN before creating a GST invoice.';
+const GSTIN_PLACEHOLDER = '27ABCDE1234F1Z5';
+const getValidProfileGstin = (profile = {}) => {
+  const records = [
+    profile,
+    profile.shop,
+    profile.business,
+    profile.taxRegistration,
+    profile.gstRegistration,
+    profile.data,
+    profile.data?.shop,
+    profile.data?.business,
+  ].filter((record) => record && typeof record === 'object');
+  return records
+    .flatMap((record) => [
+      record.gstin,
+      record.gstNumber,
+      record.gstinNumber,
+      record.gstRegistrationNumber,
+      record.taxRegistration?.gstin,
+      record.gstRegistration?.gstin,
+    ])
+    .map((value) => String(value || '').trim().toUpperCase())
+    .find((value) => value !== GSTIN_PLACEHOLDER && isValidIndianGstin(value)) || '';
+};
+const getInvoiceRecoveryStorageKey = () => {
+  try {
+    const user = JSON.parse(window.localStorage.getItem('user') || '{}');
+    const tenantKey = user.tenantId
+      ?? user.organizationId
+      ?? user.tenant?.id
+      ?? user.storeId
+      ?? user.username
+      ?? 'current';
+    return `billing:invoice-recovery:${String(tenantKey).toLowerCase()}`;
+  } catch {
+    return 'billing:invoice-recovery:current';
+  }
+};
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -34,7 +85,13 @@ const getAssignedOrganization = (profile = {}) => (
   || null
 );
 const getOrganizationAddress = (organization = {}) => String(
-  organization.address
+  (typeof organization.address === 'string' ? organization.address : [
+    organization.address?.addressLine1,
+    organization.address?.addressLine2,
+    organization.address?.city,
+    organization.address?.state,
+    organization.address?.pincode || organization.address?.postalCode,
+  ].filter(Boolean).join(', '))
   || [
     organization.addressLine1,
     organization.addressLine2,
@@ -49,6 +106,8 @@ const getInvoiceIssuerProfile = (issuerType, profile = {}) => {
   const name = String(organization.name || organization.organizationName || '').trim();
   const gstin = String(organization.gstin || organization.gstNumber || '').trim().toUpperCase();
   const address = getOrganizationAddress(organization);
+  const state = String(organization.state || organization.stateName || organization.state_name || '').trim();
+  const stateCode = String(organization.stateCode || organization.state_code || organization.gstStateCode || '').trim();
   const phone = String(organization.phone || organization.contactNumber || '').trim();
   const email = String(organization.email || organization.supportEmail || '').trim();
   return {
@@ -59,12 +118,23 @@ const getInvoiceIssuerProfile = (issuerType, profile = {}) => {
     tenantName: name,
     gstin,
     gstNumber: gstin,
+    state: state || stateCode,
+    stateCode,
     address,
     phone,
     contactNumber: phone,
     email,
     supportEmail: email,
   };
+};
+const getGstConfigurationMessage = (product = {}) => {
+  const status = getProductGstRateStatus(product);
+  if (status === 'HSN_MISSING') return 'Add an HSN/SAC to this product';
+  if (status === 'HSN_INVALID') return 'Correct this product HSN/SAC';
+  if (status === 'RATE_NOT_FOUND') return 'No GST rate is mapped to this HSN/SAC';
+  if (!isValidHsnCode(product.hsn)) return 'A valid HSN/SAC is required';
+  if (getProductGstRate(product) === null) return 'A valid GST rate is required';
+  return 'HSN-based GST rate is not resolved';
 };
 const normalizePaymentMethod = (method) => {
   const normalizedMethod = String(method || '').trim().toUpperCase();
@@ -118,16 +188,28 @@ const BillingPage = () => {
   const [latestAddedProductId, setLatestAddedProductId] = useState(null);
   const cartItemsRef = useRef(null);
   const cartItemRefs = useRef(new Map());
-  const [customer, setCustomer] = useState({ name: '', phone: '', email: '' });
+  const [customer, setCustomer] = useState({ name: '', phone: '', email: '', state: '' });
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [customerSelectionLocked, setCustomerSelectionLocked] = useState(false);
   const [searchProduct, setSearchProduct] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('INV-001');
+  const [invoiceRecoveryInvoiceNo, setInvoiceRecoveryInvoiceNo] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return window.sessionStorage.getItem(getInvoiceRecoveryStorageKey()) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('UPI');
   const [paymentStatus, setPaymentStatus] = useState('pending');
-  const [billType, setBillType] = useState(BILL_TYPES.GST);
+  const [resolvingIssuerProfile, setResolvingIssuerProfile] = useState(false);
+  const [billType, setBillType] = useState(() => (
+    getValidProfileGstin(readStoredShopProfile()) ? BILL_TYPES.GST : BILL_TYPES.NON_GST
+  ));
+  const [taxPriceMode, setTaxPriceMode] = useState(TAX_PRICE_MODES.EXCLUSIVE);
   const [issuerType, setIssuerType] = useState('STORE');
-  const [editingPriceId, setEditingPriceId] = useState(null);
   const [paymentDialog, setPaymentDialog] = useState({ open: false, step: 'payment-check' });
   const [partialPaymentAmount, setPartialPaymentAmount] = useState('');
   const [showPartialInvoiceAction, setShowPartialInvoiceAction] = useState(false);
@@ -135,16 +217,37 @@ const BillingPage = () => {
   const [paymentScreenshotPreview, setPaymentScreenshotPreview] = useState('');
   const [paymentScreenshotError, setPaymentScreenshotError] = useState('');
   const paymentScreenshotInputRef = useRef(null);
+  const invoiceSubmissionInProgressRef = useRef(false);
+  const markInvoiceRecoveryRequired = (generatedInvoiceNumber) => {
+    const recoveryNumber = String(generatedInvoiceNumber || 'unknown');
+    setInvoiceRecoveryInvoiceNo(recoveryNumber);
+    try {
+      window.sessionStorage.setItem(getInvoiceRecoveryStorageKey(), recoveryNumber);
+    } catch (error) {
+      logger.warn('Invoice recovery guard could not be persisted for this tab', error);
+    }
+  };
+  const clearInvoiceRecoveryRequired = () => {
+    setInvoiceRecoveryInvoiceNo('');
+    try {
+      window.sessionStorage.removeItem(getInvoiceRecoveryStorageKey());
+    } catch (error) {
+      logger.warn('Invoice recovery guard could not be cleared for this tab', error);
+    }
+  };
   
   // Dynamic Products
   const [products, setProducts] = useState([]);
+  const [productLoadError, setProductLoadError] = useState('');
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
   const [issuerProfileReady, setIssuerProfileReady] = useState(false);
+  const [gstRegistrationReady, setGstRegistrationReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState(() => getCurrentUserRole());
   const shopDisplayName = getShopDisplayName(shopProfile);
   const isBillingWritable = canWriteBilling(role);
   const assignedOrganization = getAssignedOrganization(shopProfile) || {};
+  const hasStoreGstRegistration = gstRegistrationReady && Boolean(getValidProfileGstin(shopProfile));
   const assignedOrganizationId = assignedOrganization.id ?? assignedOrganization.organizationId;
   const hasAssignedOrganization = Boolean(String(assignedOrganizationId ?? '').trim());
   const assignedOrganizationName = String(
@@ -164,6 +267,50 @@ const BillingPage = () => {
   const canIssueOrganizationInvoice = Boolean(
     issuerProfileReady && hasAssignedOrganization && assignedOrganizationName
   );
+  const currentInvoiceIssuerProfile = getInvoiceIssuerProfile(issuerType, shopProfile);
+  const issuerStateCode = resolveIssuerStateCode(currentInvoiceIssuerProfile);
+  const placeOfSupplyState = normalizeIndianGstState(customer.state);
+  const isInterStateSupply = Boolean(
+    issuerStateCode && placeOfSupplyState && issuerStateCode !== placeOfSupplyState
+  );
+  const resolveIssuerProfileBeforeGstInvoice = async () => {
+    let activeShopProfile = shopProfile;
+    let selectedIssuerProfile = getInvoiceIssuerProfile(issuerType, activeShopProfile);
+    let stateCode = resolveIssuerStateCode(selectedIssuerProfile);
+    if (stateCode) return { issuerProfile: selectedIssuerProfile, stateCode };
+
+    try {
+      activeShopProfile = await getCurrentShopProfile(true, false);
+      setShopProfile(activeShopProfile);
+      setIssuerProfileReady(true);
+      selectedIssuerProfile = getInvoiceIssuerProfile(issuerType, activeShopProfile);
+      stateCode = resolveIssuerStateCode(selectedIssuerProfile);
+    } catch (error) {
+      logger.warn('Unable to refresh selected issuer profile before GST invoice', error);
+    }
+
+    if (!stateCode && issuerType === 'STORE') {
+      try {
+        const userProfile = await getCurrentUserProfile();
+        const userGstin = getValidProfileGstin(userProfile);
+        if (userGstin) {
+          const resolvedGstin = getValidProfileGstin(activeShopProfile) || userGstin;
+          activeShopProfile = {
+            ...activeShopProfile,
+            gstin: resolvedGstin,
+            gstNumber: resolvedGstin,
+          };
+          setShopProfile(activeShopProfile);
+          selectedIssuerProfile = getInvoiceIssuerProfile(issuerType, activeShopProfile);
+          stateCode = resolveIssuerStateCode(selectedIssuerProfile);
+        }
+      } catch (error) {
+        logger.warn('Unable to resolve store GSTIN from the authenticated retailer profile', error);
+      }
+    }
+
+    return { issuerProfile: selectedIssuerProfile, stateCode };
+  };
 
   useEffect(() => {
     if (!paymentScreenshot) {
@@ -176,14 +323,8 @@ const BillingPage = () => {
     return () => URL.revokeObjectURL(previewUrl);
   }, [paymentScreenshot]);
   
-  // ✅ Centralized GST logic lives in src/modules/tax/gstConfig.js
-  const getGstSlab = (price, category = '') => {
-    const configuredRate = resolveCategoryTax(category, 0).total;
-    if (configuredRate > 0) return configuredRate;
-    return getLegacyGstSlab(price);
-  };
-  
   const refreshProducts = async () => {
+    setProductLoadError('');
     try {
       const productEndpoints = [
         API_ENDPOINTS.billingProductsPage(0, 100),
@@ -208,7 +349,8 @@ const BillingPage = () => {
         const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
         const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice ?? 0) || 0;
         const category = product.category || product.categoryName || product.group || 'default';
-        const categoryTax = resolveCategoryTax(category, Number(product.gst ?? product.taxRate ?? 0) || getGstSlab(sellingPrice, category));
+        const gstRate = getProductGstRate(product);
+        const gstRateStatus = getProductGstRateStatus(product);
 
         return {
           id: product.id ?? product.productId,
@@ -217,11 +359,10 @@ const BillingPage = () => {
           category,
           price: sellingPrice,
           mrp: mrpValue,
-          hsn: product.hsn || product.hsnCode || '9999',
-          gst: categoryTax.total,
-          cgst: categoryTax.cgst,
-          sgst: categoryTax.sgst,
-          igst: categoryTax.igst,
+          hsn: getProductHsnCode(product),
+          gst: gstRate,
+          gstRate,
+          gstRateStatus,
           stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
           salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
         };
@@ -229,11 +370,8 @@ const BillingPage = () => {
       setProducts(productsWithGst);
     } catch (error) {
       logger.error('Billing product fetch failed', error);
-      setProducts([
-        { id: 1, name: 'Shirt', hsn: '6109', price: 299, mrp: 349, gst: 5, stock: 12 },
-        { id: 2, name: 'Jeans', hsn: '6203', price: 799, mrp: 999, gst: 12, stock: 8 },
-        { id: 3, name: 'Laptop', hsn: '8471', price: 45999, mrp: 48999, gst: 18, stock: 5 }
-      ]);
+      setProducts([]);
+      setProductLoadError('Products and their HSN-based GST rates could not be loaded. Check your connection and retry.');
     }
   };
 
@@ -243,19 +381,38 @@ const BillingPage = () => {
 
     let active = true;
 
-    getCurrentShopProfile(true, false)
-      .then((profile) => {
-        if (active) {
-          setShopProfile(profile);
-          setIssuerProfileReady(true);
+    const loadIssuerProfile = async () => {
+      let profile;
+      let verifiedShopProfile = false;
+      try {
+        profile = await getCurrentShopProfile(true, false);
+        verifiedShopProfile = true;
+      } catch {
+        profile = readStoredShopProfile();
+      }
+
+      let storeGstin = getValidProfileGstin(profile);
+      if (!storeGstin) {
+        try {
+          const userProfile = await getCurrentUserProfile();
+          storeGstin = getValidProfileGstin(userProfile);
+        } catch (error) {
+          logger.warn('Unable to verify the retailer GSTIN from the authenticated profile', error);
         }
-      })
-      .catch(() => {
-        if (active) {
-          setShopProfile(readStoredShopProfile());
-          setIssuerProfileReady(false);
-        }
-      });
+      }
+
+      if (storeGstin) {
+        profile = { ...profile, gstin: storeGstin, gstNumber: storeGstin };
+      }
+      if (!active) return;
+
+      setShopProfile(profile);
+      setIssuerProfileReady(verifiedShopProfile);
+      setGstRegistrationReady(true);
+      setBillType(storeGstin ? BILL_TYPES.GST : BILL_TYPES.NON_GST);
+    };
+
+    loadIssuerProfile();
 
     const initializeBillingData = async () => {
       try {
@@ -327,6 +484,7 @@ const BillingPage = () => {
           const matchName = String(entry?.customerName || entry?.name || entry?.customer || '').trim();
           const matchPhone = String(entry?.phone || entry?.mobile || entry?.contactNumber || '').trim();
           const matchEmail = String(entry?.email || '').trim();
+          const matchState = String(entry?.placeOfSupplyState || entry?.state || entry?.stateName || '').trim();
           if (!matchName && !matchPhone) return acc;
           const key = `${matchName || 'Unknown'}|${matchPhone || ''}`;
           if (acc.some((item) => item.key === key)) return acc;
@@ -335,6 +493,7 @@ const BillingPage = () => {
             name: matchName || 'Unknown customer',
             phone: matchPhone,
             email: matchEmail,
+            state: matchState,
           });
           return acc;
         }, []);
@@ -352,15 +511,41 @@ const BillingPage = () => {
   }, [customer.name, customer.phone, customerSelectionLocked]);
   
   // Cart totals
-  const getItemTaxSummary = (item) => buildTaxProfileForItem({ ...item, category: item.category || 'default', gst: Number(item.gst ?? 0) || 0 }, billType);
+  const getItemTaxSummary = (item, quantity = 1) => buildTaxProfileForItem({
+    ...item,
+    price: Number(item.price || 0) * quantity,
+    category: item.category || 'default',
+    gst: getProductGstRate(item) ?? 0,
+  }, billType, taxPriceMode, isInterStateSupply ? 'inter-state' : 'intra-state');
+  const hasValidGstConfiguration = (item) => (
+    getProductGstRateStatus(item) === 'RESOLVED'
+    && isValidHsnCode(item.hsn)
+    && getProductGstRate(item) !== null
+  );
+  const itemsMissingGstConfiguration = billType === BILL_TYPES.GST
+    ? cart.filter((item) => !hasValidGstConfiguration(item))
+    : [];
+  const missingPlaceOfSupplyState = billType === BILL_TYPES.GST && !placeOfSupplyState;
+  const missingIssuerState = billType === BILL_TYPES.GST && !issuerStateCode;
+  const missingStoreGstRegistration = billType === BILL_TYPES.GST && !hasStoreGstRegistration;
+  const gstInvoiceValidationErrors = billType !== BILL_TYPES.GST
+    ? []
+    : [
+      missingStoreGstRegistration && 'GST invoices require a valid GSTIN registered to this store.',
+      ...itemsMissingGstConfiguration.map((item) => `${item.name}: ${getGstConfigurationMessage(item)}.`),
+      missingPlaceOfSupplyState && 'Select the buyer’s place-of-supply state.',
+      missingIssuerState && ISSUER_STATE_CONFIGURATION_ERROR,
+    ].filter(Boolean);
   const isGstBill = billType === BILL_TYPES.GST;
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-  const gstAmount = cart.reduce((sum, item) => sum + getItemTaxSummary(item).taxAmount, 0);
-  const grandTotal = billType === BILL_TYPES.NON_GST ? subtotal : subtotal + gstAmount;
+  const subtotal = roundCurrency(cart.reduce((sum, item) => sum + getItemTaxSummary(item, item.qty).taxableAmount, 0));
+  const gstAmount = roundCurrency(cart.reduce((sum, item) => sum + getItemTaxSummary(item, item.qty).taxAmount, 0));
+  const grandTotal = roundCurrency(cart.reduce((sum, item) => sum + getItemTaxSummary(item, item.qty).itemTotal, 0));
   const cartQuantity = cart.reduce((sum, item) => sum + item.qty, 0);
   const gstSummaryLabel = billType === BILL_TYPES.NON_GST
     ? 'GST (0%)'
-    : `GST (${cart.length > 0 ? `${((gstAmount / Math.max(subtotal, 1)) * 100).toFixed(1)}%` : '0%'})`;
+    : taxPriceMode === TAX_PRICE_MODES.INCLUSIVE
+      ? `${isInterStateSupply ? 'IGST' : 'GST'} included`
+      : `${isInterStateSupply ? 'IGST' : 'GST'} (${cart.length > 0 ? `${((gstAmount / Math.max(subtotal, 1)) * 100).toFixed(1)}%` : '0%'})`;
 
   useEffect(() => {
     if (!cartNotice) return undefined;
@@ -375,14 +560,6 @@ const BillingPage = () => {
     }
     setLatestAddedProductId(null);
   }, [cart, latestAddedProductId]);
-  
-  // ✅ FIXED: Update price
-  const updatePrice = (id, newPrice) => {
-    if (!isBillingWritable) return;
-    setCart(currentCart => currentCart.map(item =>
-      item.id === id ? { ...item, price: parseFloat(newPrice) || item.price } : item
-    ));
-  };
   
   // Add to cart
   const addToCart = (product) => {
@@ -415,7 +592,13 @@ const BillingPage = () => {
     if (consumedOrderDraftRef.current === draftKey) return;
     consumedOrderDraftRef.current = draftKey;
 
-    setCustomer(orderDraft.customer || { name: '', phone: '', email: '' });
+    const draftCustomer = orderDraft.customer || {};
+    setCustomer({
+      name: draftCustomer.name || '',
+      phone: draftCustomer.phone || '',
+      email: draftCustomer.email || '',
+      state: normalizeIndianGstState(draftCustomer.state || draftCustomer.placeOfSupplyState),
+    });
 
     let matchedItems = [];
     if (location.state?.repeatedOrder) {
@@ -703,34 +886,56 @@ const BillingPage = () => {
     const invoiceIssuerAddress = escapeHtml(invoiceShopProfile.address || '');
     const invoiceIssuerPhone = escapeHtml(invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '');
     const invoiceIssuerEmail = escapeHtml(invoiceShopProfile.email || invoiceShopProfile.supportEmail || '');
+    const taxComponentType = invoiceData.taxComponentType === 'IGST' ? 'IGST' : 'CGST_SGST';
+    const placeOfSupplyLabel = INDIAN_GST_STATES.find(
+      ({ code }) => code === String(invoiceData.placeOfSupplyState || '')
+    )?.name || invoiceData.placeOfSupplyState || '';
+    const safeInvoiceNo = escapeHtml(invoiceData.invoiceNo);
+    const safeCustomerName = escapeHtml(invoiceData.customerName);
+    const safeCustomerPhone = escapeHtml(invoiceData.customerPhone);
+    const safeCustomerEmail = escapeHtml(invoiceData.customerEmail || 'N/A');
+    const safeCustomerState = escapeHtml(placeOfSupplyLabel);
+    const safePaymentMethod = escapeHtml(invoiceData.paymentMethod || 'Cash');
+    const safePaymentStatus = escapeHtml(invoiceData.paymentStatus);
     const invoiceRows = invoiceData.items.map((item, index) => {
       const amount = Number(item.price) * Number(item.qty);
-      const gstValue = isNonGst ? 0 : (amount * Number(item.gst || 0)) / 100;
-      const total = amount + gstValue;
+      const enteredUnitPrice = Number(item.enteredPrice ?? item.price);
+      const taxableAmount = Number(item.taxableAmount ?? amount);
+      const gstValue = isNonGst ? 0 : Number(item.taxAmount ?? (taxableAmount * Number(item.gst || 0)) / 100);
+      const cgstValue = isNonGst || taxComponentType === 'IGST' ? 0 : Number(item.cgstAmount ?? (gstValue / 2));
+      const sgstValue = isNonGst || taxComponentType === 'IGST' ? 0 : Number(item.sgstAmount ?? (gstValue - cgstValue));
+      const igstValue = isNonGst ? 0 : Number(item.igstAmount ?? item.igst ?? (taxComponentType === 'IGST' ? gstValue : 0));
+      const total = taxableAmount + gstValue;
+      const safeItemName = escapeHtml(item.name || '-');
+      const safeHsn = escapeHtml(item.hsn || '9999');
+      const safeQuantity = escapeHtml(item.qty);
       if (isNonGst) {
         return `
           <tr>
             <td>${index + 1}</td>
-            <td>${item.name}</td>
-            <td>${item.hsn || '9999'}</td>
-            <td>${item.qty}</td>
-            <td>₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td>${safeItemName}</td>
+            <td>${safeHsn}</td>
+            <td>${safeQuantity}</td>
+            <td>₹${enteredUnitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
           </tr>
         `;
       }
 
+      const taxComponentCells = taxComponentType === 'IGST'
+        ? `<td>₹${igstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>`
+        : `<td>₹${cgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td><td>₹${sgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>`;
       return `
         <tr>
           <td>${index + 1}</td>
-          <td>${item.name}</td>
-          <td>${item.hsn || '9999'}</td>
-          <td>${item.qty}</td>
-          <td>₹${Number(item.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-          <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-          <td>${item.gst || 0}%</td>
-          <td>₹${gstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td>${safeItemName}</td>
+          <td>${safeHsn}</td>
+          <td>${safeQuantity}</td>
+          <td>₹${enteredUnitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td>₹${taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td>${escapeHtml(item.gst ?? 0)}%</td>
+          ${taxComponentCells}
           <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
         </tr>
       `;
@@ -752,7 +957,7 @@ const BillingPage = () => {
       <html>
         <head>
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Invoice ${invoiceData.invoiceNo}</title>
+          <title>Invoice ${safeInvoiceNo}</title>
           <style>
             :root {
               --invoice-green: #1b8d54;
@@ -1179,20 +1384,21 @@ const BillingPage = () => {
                   <div class="brand-meta">GSTIN: ${invoiceIssuerGstin}<br> ${invoiceIssuerAddress}<br> ${invoiceIssuerPhone}<br> ${invoiceIssuerEmail}</div>
                 </div>
                 <div class="invoice-summary">
-                  <div><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>
+                  <div><strong>Invoice:</strong> ${safeInvoiceNo}</div>
                   <div><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}</div>
                   <div><strong>Type:</strong> ${invoiceData.billType === BILL_TYPES.NON_GST ? 'Non-GST Bill' : 'GST Bill'}</div>
-                  <div><strong>Status:</strong> <span class="status-pill ${invoiceData.paymentStatus === 'paid' ? 'status-paid' : 'status-pending'}">${invoiceData.paymentStatus}</span></div>
+                  <div><strong>Status:</strong> <span class="status-pill ${invoiceData.paymentStatus === 'paid' ? 'status-paid' : 'status-pending'}">${safePaymentStatus}</span></div>
                 </div>
               </div>
             </div>
 
             <div class="invoice-body">
               <div class="customer-grid">
-                <div><strong>Customer:</strong> ${invoiceData.customerName}</div>
-                <div><strong>Phone:</strong> ${invoiceData.customerPhone}</div>
-                <div><strong>Email:</strong> ${invoiceData.customerEmail || 'N/A'}</div>
-                <div><strong>Payment:</strong> ${invoiceData.paymentMethod}</div>
+                <div><strong>Customer:</strong> ${safeCustomerName}</div>
+                <div><strong>Phone:</strong> ${safeCustomerPhone}</div>
+                <div><strong>Email:</strong> ${safeCustomerEmail}</div>
+                ${safeCustomerState ? `<div><strong>Place of supply:</strong> ${safeCustomerState}</div>` : ''}
+                <div><strong>Payment:</strong> ${safePaymentMethod}</div>
               </div>
 
               <div class="invoice-table-wrap">
@@ -1203,9 +1409,9 @@ const BillingPage = () => {
                       <th>Item</th>
                       <th>HSN</th>
                       <th>Qty</th>
-                      <th>Rate</th>
-                      <th>Amount</th>
-                      ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : '<th>GST%</th><th>GST</th>'}
+                      <th>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Rate incl.' : 'Rate'}</th>
+                      <th>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Taxable' : 'Amount'}</th>
+                      ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : `<th>GST%</th>${taxComponentType === 'IGST' ? '<th>IGST</th>' : '<th>CGST</th><th>SGST</th>'}`}
                       <th>Total</th>
                     </tr>
                   </thead>
@@ -1217,8 +1423,8 @@ const BillingPage = () => {
 
               <div class="totals">
                 <div class="totals-row"><span>Total Qty</span><span>${invoiceData.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</span></div>
-                <div class="totals-row"><span>Subtotal</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : `<div class="totals-row"><span>GST Total</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>`}
+                <div class="totals-row"><span>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Taxable Subtotal' : 'Subtotal'}</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : `<div class="totals-row"><span>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} included` : `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} Total`}</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>`}
                 <div class="totals-row grand"><span>Grand Total</span><span>₹${invoiceData.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
               </div>
 
@@ -1236,7 +1442,7 @@ const BillingPage = () => {
                   <div class="summary-row"><span>Previous Balance</span><span>₹${previousBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row"><span>Due Amount</span><span>₹${dueAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                   <div class="summary-row total"><span>Balance</span><span>₹${currentBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
-                  <div class="summary-row"><span>Payment mode</span><span>${invoiceData.paymentMethod || 'Cash'}</span></div>
+                  <div class="summary-row"><span>Payment mode</span><span>${safePaymentMethod}</span></div>
                 </div>
               </div>
 
@@ -1265,8 +1471,23 @@ const BillingPage = () => {
 
   // Generate invoice
   const submitInvoice = async (status, amountReceived = 0) => {
-    if (!isBillingWritable) return;
+    if (!isBillingWritable || invoiceSubmissionInProgressRef.current) return;
+    if (invoiceRecoveryInvoiceNo) {
+      alert(`Invoice ${invoiceRecoveryInvoiceNo} may already have been saved. Check the invoice history before allowing another submission.`);
+      return;
+    }
+
+    invoiceSubmissionInProgressRef.current = true;
+    setIsSubmittingInvoice(true);
+    let invoiceRequestStarted = false;
+    let invoiceResponseReceived = false;
+    let invoiceOutcomeUncertain = false;
+    let submittedInvoiceNumber = '';
     try {
+      if (billType === BILL_TYPES.GST && gstInvoiceValidationErrors.length > 0) {
+        throw new Error(gstInvoiceValidationErrors.join(' '));
+      }
+
       if (issuerType === 'ORGANIZATION') {
         if (!issuerProfileReady || !canIssueOrganizationInvoice) {
           throw new Error('The store organization assignment could not be verified. Select the store as invoice issuer and try again.');
@@ -1279,12 +1500,12 @@ const BillingPage = () => {
       const selectedIssuerProfile = getInvoiceIssuerProfile(issuerType, shopProfile);
       const normalizedStatus = status === 'paid' ? 'paid' : status === 'partial' ? 'partial' : 'pending';
       const paidAmount = Number(amountReceived) || 0;
-      const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
+      const requestedReceivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
       const customerBalanceSnapshot = await resolveCustomerPreviousBalance();
       const previousBalance = customerBalanceSnapshot.balance;
-      const shouldRecordPayment = receivedAmount > 0;
+      const shouldRecordPayment = requestedReceivedAmount > 0;
       const initialPaymentStatus = shouldRecordPayment ? 'pending' : normalizedStatus;
-      const initialPaidAmount = shouldRecordPayment ? 0 : receivedAmount;
+      const initialPaidAmount = shouldRecordPayment ? 0 : requestedReceivedAmount;
       const initialBalance = resolveCustomerDueState(previousBalance, grandTotal, initialPaidAmount).totalDueAmount;
 
       const payload = {
@@ -1304,51 +1525,142 @@ const BillingPage = () => {
         grandTotal,
         totalAmount: grandTotal,
         billType,
+        taxPricingMode: isGstBill ? taxPriceMode : TAX_PRICE_MODES.EXCLUSIVE,
+        placeOfSupplyState: isGstBill ? placeOfSupplyState : undefined,
         issuerType,
         isGstInvoice: billType === BILL_TYPES.GST,
         items: cart.map((item) => {
-          const taxSummary = getItemTaxSummary(item);
+          const taxSummary = getItemTaxSummary(item, item.qty);
+          const inclusivePrice = isGstBill && taxPriceMode === TAX_PRICE_MODES.INCLUSIVE;
           return {
             productId: item.id,
             name: item.name,
             sku: item.sku || '',
-            hsn: item.hsn || '9999',
-            gstRate: Number(taxSummary.gstRate) || 0,
-            cgst: Number(taxSummary.cgst) || 0,
-            sgst: Number(taxSummary.sgst) || 0,
-            igst: Number(taxSummary.igst) || 0,
-            price: Number(item.price) || 0,
+            hsn: item.hsn,
+            gstRate: Number(taxSummary.gstRate),
+            cgst: taxSummary.cgstAmount,
+            sgst: taxSummary.sgstAmount,
+            igst: taxSummary.igstAmount,
+            price: inclusivePrice
+              ? Number((taxSummary.taxableAmount / Math.max(Number(item.qty) || 1, 1)).toFixed(4))
+              : Number(item.price) || 0,
+            enteredPrice: Number(item.price) || 0,
             qty: Number(item.qty) || 0,
             category: item.category || 'default',
+            taxPricingMode: inclusivePrice ? TAX_PRICE_MODES.INCLUSIVE : TAX_PRICE_MODES.EXCLUSIVE,
+            taxableAmount: taxSummary.taxableAmount,
             taxAmount: Number(taxSummary.taxAmount) || 0,
+            cgstAmount: taxSummary.cgstAmount,
+            sgstAmount: taxSummary.sgstAmount,
+            igstAmount: taxSummary.igstAmount,
           };
         })
       };
 
       logger.info('Submitting invoice to backend', { billType, issuerType, itemCount: cart.length });
       const invoiceEndpoint = billType === BILL_TYPES.NON_GST ? API_ENDPOINTS.nonGstInvoices : API_ENDPOINTS.invoices;
+      invoiceRequestStarted = true;
       const response = await apiFetch(invoiceEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      invoiceResponseReceived = true;
+      invoiceOutcomeUncertain = response.ok || response.status >= 500;
 
       let result;
       const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
+      if (contentType.includes('json')) {
         result = await response.json();
       } else {
         result = await response.text();
       }
 
       if (!response.ok) {
-        throw new Error(typeof result === 'string' ? result : (result?.message || 'Invoice save failed'));
+        throw new Error(typeof result === 'string' ? result : (result?.message || result?.data?.message || 'Invoice save failed'));
       }
 
       const savedInvoice = result?.invoice
         ?? result?.data?.invoice
         ?? (result?.data && typeof result.data === 'object' ? result.data : result);
       const generatedInvoiceNo = savedInvoice?.invoiceNo || result?.invoiceNo || invoiceNo;
+      submittedInvoiceNumber = generatedInvoiceNo;
+      const serverSubtotal = Number(savedInvoice?.subtotal ?? savedInvoice?.subTotal);
+      const serverGstAmount = Number(savedInvoice?.gstAmount ?? savedInvoice?.totalGst ?? savedInvoice?.gst);
+      const serverGrandTotal = Number(savedInvoice?.grandTotal ?? savedInvoice?.totalAmount);
+      const serverItems = Array.isArray(savedInvoice?.items)
+        ? savedInvoice.items
+        : Array.isArray(result?.items) ? result.items : [];
+      const hasServerTaxData = Number.isFinite(serverSubtotal)
+        && Number.isFinite(serverGstAmount)
+        && Number.isFinite(serverGrandTotal)
+        && serverItems.length === cart.length
+        && serverItems.every((item) => (
+          isValidHsnCode(item.hsn ?? item.hsnCode ?? item.hsnSac)
+          && Number.isFinite(Number(item.enteredPrice))
+          && Number.isFinite(Number(item.taxableAmount))
+          && Number.isFinite(Number(item.taxAmount))
+          && Number.isFinite(Number(item.gstRate ?? item.gst))
+          && Number.isFinite(Number(item.cgstAmount ?? item.cgst))
+          && Number.isFinite(Number(item.sgstAmount ?? item.sgst))
+          && Number.isFinite(Number(item.igstAmount ?? item.igst))
+        ));
+      if (billType === BILL_TYPES.GST && !hasServerTaxData) {
+        throw new Error(`Invoice ${generatedInvoiceNo} was saved, but the server response did not include its calculated tax totals and item breakdown. No payment was recorded; contact support before retrying.`);
+      }
+      const authoritativeSubtotal = hasServerTaxData ? serverSubtotal : subtotal;
+      const authoritativeGstAmount = hasServerTaxData ? serverGstAmount : gstAmount;
+      const authoritativeGrandTotal = hasServerTaxData ? serverGrandTotal : grandTotal;
+      const authoritativeReceivedAmount = normalizedStatus === 'paid'
+        ? authoritativeGrandTotal
+        : Math.max(Math.min(paidAmount, authoritativeGrandTotal), 0);
+      const authoritativeTaxPricingMode = String(
+        savedInvoice?.taxPricingMode || (isGstBill ? taxPriceMode : TAX_PRICE_MODES.EXCLUSIVE)
+      ).toLowerCase() === TAX_PRICE_MODES.INCLUSIVE
+        ? TAX_PRICE_MODES.INCLUSIVE
+        : TAX_PRICE_MODES.EXCLUSIVE;
+      const authoritativePlaceOfSupplyState = normalizeIndianGstState(
+        savedInvoice?.placeOfSupplyState ?? placeOfSupplyState
+      );
+      const authoritativeTaxComponentType = savedInvoice?.taxComponentType === 'IGST'
+        || serverItems.some((item) => Number(item.igstAmount ?? item.igst ?? 0) > 0)
+        || isInterStateSupply
+        ? 'IGST'
+        : 'CGST_SGST';
+      const authoritativeItems = hasServerTaxData
+        ? serverItems.map((item, index) => {
+          const enteredPrice = Number(item.enteredPrice ?? item.price ?? cart[index].price);
+          return {
+            name: item.name ?? item.productName ?? cart[index].name,
+            hsn: item.hsn ?? item.hsnCode ?? item.hsnSac ?? cart[index].hsn,
+            qty: Number(item.qty ?? item.quantity ?? cart[index].qty),
+            price: Number(item.price ?? item.enteredPrice ?? cart[index].price),
+            enteredPrice,
+            gst: Number(item.gstRate ?? item.gst),
+            taxableAmount: Number(item.taxableAmount),
+            taxAmount: Number(item.taxAmount),
+            cgstAmount: Number(item.cgstAmount ?? item.cgst ?? 0),
+            sgstAmount: Number(item.sgstAmount ?? item.sgst ?? 0),
+            igstAmount: Number(item.igstAmount ?? item.igst ?? 0),
+          };
+        })
+        : cart.map((item) => {
+          const taxSummary = getItemTaxSummary(item, item.qty);
+          return {
+            name: item.name,
+            hsn: item.hsn,
+            qty: Number(item.qty) || 0,
+            price: Number(item.price) || 0,
+            enteredPrice: Number(item.price) || 0,
+            gst: Number(taxSummary.gstRate) || 0,
+            taxableAmount: taxSummary.taxableAmount,
+            taxAmount: taxSummary.taxAmount,
+            cgstAmount: taxSummary.cgstAmount,
+            sgstAmount: taxSummary.sgstAmount,
+            igstAmount: taxSummary.igstAmount,
+          };
+        });
+      const receivedAmount = authoritativeReceivedAmount;
       logger.info('Invoice generated and saved', { invoiceNo: generatedInvoiceNo, billType });
 
       let paymentRecorded = !shouldRecordPayment;
@@ -1391,9 +1703,9 @@ const BillingPage = () => {
 
       const recordedAmount = paymentRecorded ? receivedAmount : 0;
       const recordedStatus = paymentRecorded
-        ? receivedAmount >= grandTotal ? 'paid' : normalizedStatus
+        ? receivedAmount >= authoritativeGrandTotal ? 'paid' : normalizedStatus
         : 'pending';
-      const recordedBalance = resolveCustomerDueState(previousBalance, grandTotal, recordedAmount).totalDueAmount;
+      const recordedBalance = resolveCustomerDueState(previousBalance, authoritativeGrandTotal, recordedAmount).totalDueAmount;
       setPaymentStatus(recordedStatus);
 
       let customerBalanceWarning = '';
@@ -1446,9 +1758,11 @@ const BillingPage = () => {
 
       const previewInvoice = {
         invoiceNo: generatedInvoiceNo,
-        customerName: customer.name || 'Walk-in Customer',
+        customerName: savedInvoice?.customerName || customer.name || 'Walk-in Customer',
         customerPhone: customer.phone || '0000000000',
         customerEmail: customer.email || '',
+        customerState: authoritativePlaceOfSupplyState,
+        placeOfSupplyState: authoritativePlaceOfSupplyState,
         paymentMethod,
         paymentStatus: recordedStatus,
         paidAmount: recordedAmount,
@@ -1458,6 +1772,8 @@ const BillingPage = () => {
         balanceAmount: recordedBalance,
         currentBalance: recordedBalance,
         billType,
+        taxPricingMode: authoritativeTaxPricingMode,
+        taxComponentType: authoritativeTaxComponentType,
         issuerType: issuerSnapshot.issuerType,
         issuerName: issuerSnapshot.issuerName,
         issuerGstin: issuerSnapshot.issuerGstin,
@@ -1466,16 +1782,10 @@ const BillingPage = () => {
         issuerEmail: issuerSnapshot.issuerEmail,
         issuerSnapshot,
         shopProfile: invoiceIssuerProfile,
-        subtotal: subtotal,
-        gst: gstAmount,
-        grandTotal: grandTotal,
-        items: cart.map((item) => ({
-          name: item.name,
-          hsn: item.hsn || '9999',
-          qty: Number(item.qty) || 0,
-          price: Number(item.price) || 0,
-          gst: Number(getItemTaxSummary(item).gstRate) || 0,
-        }))
+        subtotal: authoritativeSubtotal,
+        gst: authoritativeGstAmount,
+        grandTotal: authoritativeGrandTotal,
+        items: authoritativeItems,
       };
 
       if (paymentWarning || customerBalanceWarning) {
@@ -1488,11 +1798,17 @@ const BillingPage = () => {
 
       await refreshProducts();
       setCart([]);
-      setCustomer({ name: '', phone: '', email: '' });
+      setCustomer({ name: '', phone: '', email: '', state: '' });
       setInvoiceNo(generatedInvoiceNo);
     } catch (error) {
+      if (invoiceRequestStarted && (!invoiceResponseReceived || invoiceOutcomeUncertain)) {
+        markInvoiceRecoveryRequired(submittedInvoiceNumber || 'unknown');
+      }
       logger.error('Invoice generation failed', error);
       alert(`❌ ${error.message || 'Failed to generate invoice. Please try again.'}`);
+    } finally {
+      invoiceSubmissionInProgressRef.current = false;
+      setIsSubmittingInvoice(false);
     }
   };
 
@@ -1502,15 +1818,45 @@ const BillingPage = () => {
     if (paymentScreenshotInputRef.current) paymentScreenshotInputRef.current.value = '';
   };
 
-  const generateInvoice = () => {
+  const generateInvoice = async () => {
     if (!isBillingWritable) {
       alert('Your role has read-only billing access.');
+      return;
+    }
+
+    if (resolvingIssuerProfile) return;
+
+    if (invoiceRecoveryInvoiceNo) {
+      alert(`Invoice ${invoiceRecoveryInvoiceNo} may already have been saved. Check the invoice history before allowing another submission.`);
       return;
     }
 
     if (cart.length === 0) {
       alert('Add items to cart first!');
       return;
+    }
+
+    if (billType === BILL_TYPES.GST) {
+      const invoiceErrors = gstInvoiceValidationErrors.filter(
+        (message) => message !== ISSUER_STATE_CONFIGURATION_ERROR
+      );
+      if (invoiceErrors.length > 0) {
+        alert(invoiceErrors.join('\n'));
+        return;
+      }
+
+      if (!issuerStateCode) {
+        setResolvingIssuerProfile(true);
+        try {
+          const issuer = await resolveIssuerProfileBeforeGstInvoice();
+          if (!issuer.stateCode) {
+            alert(ISSUER_STATE_CONFIGURATION_ERROR);
+            return;
+          }
+        } finally {
+          setResolvingIssuerProfile(false);
+        }
+      }
     }
 
     clearPaymentScreenshot();
@@ -1755,6 +2101,7 @@ const BillingPage = () => {
                           name: suggestion.name,
                           phone: suggestion.phone || customer.phone,
                           email: suggestion.email || customer.email,
+                          state: normalizeIndianGstState(suggestion.state) || customer.state,
                         });
                         setCustomerSuggestions([]);
                         setCustomerSelectionLocked(true);
@@ -1781,6 +2128,27 @@ const BillingPage = () => {
               className="input-field"
               disabled={!isBillingWritable}
             />
+            {isGstBill && (
+              <label className="place-of-supply-control" htmlFor="place-of-supply-state">
+                <span>Buyer’s place-of-supply state *</span>
+                <select
+                  id="place-of-supply-state"
+                  value={placeOfSupplyState}
+                  onChange={(event) => setCustomer({ ...customer, state: event.target.value })}
+                  className="input-field"
+                  required
+                  disabled={!isBillingWritable}
+                >
+                  <option value="">Select state</option>
+                  {INDIAN_GST_STATES.map(({ code, name }) => (
+                    <option key={code} value={code}>{name}</option>
+                  ))}
+                </select>
+                {issuerStateCode && (
+                  <small>Invoice issuer state: {INDIAN_GST_STATES.find(({ code }) => code === issuerStateCode)?.name || issuerStateCode}</small>
+                )}
+              </label>
+            )}
           </div>
 
           <div className="products-section">
@@ -1794,7 +2162,14 @@ const BillingPage = () => {
               />
             </div>
             <div className="products-grid">
-              {filteredProducts.length > 0 ? (
+              {productLoadError ? (
+                <div className="product-load-error" role="alert">
+                  <span>{productLoadError}</span>
+                  <button type="button" className="product-load-retry" onClick={refreshProducts}>
+                    Retry
+                  </button>
+                </div>
+              ) : filteredProducts.length > 0 ? (
                 filteredProducts.map(product => (
                   <div key={product.id} className="product-card" onClick={() => isBillingWritable && addToCart(product)}>
                     <div className="product-info">
@@ -1807,16 +2182,18 @@ const BillingPage = () => {
                       <p className="price-gst">
                         ₹{product.price.toLocaleString()}
                         {isGstBill && (
-                          <>
-                            {' + '}{product.gst}% GST
-                          </>
+                          hasValidGstConfiguration(product)
+                            ? taxPriceMode === TAX_PRICE_MODES.INCLUSIVE
+                              ? ` (incl. ${product.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'})`
+                              : ` + ${product.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'}`
+                            : ` (${getGstConfigurationMessage(product)})`
                         )}
                         {Number(product.mrp ?? 0) > 0 && (
                           <span className="mrp-tag"> | MRP ₹{Number(product.mrp).toLocaleString()}</span>
                         )}
                       </p>
                       <small>
-                        HSN: {product.hsn} | Stock: {product.stock}
+                        HSN: {product.hsn || 'Missing'} | Stock: {product.stock}
                         {Number(product.salesCount ?? 0) > 0 ? ` | Sold: ${product.salesCount}` : ''}
                       </small>
                     </div>
@@ -1839,8 +2216,9 @@ const BillingPage = () => {
                 <p className="cart-empty-state">Your cart is empty. Select a product to get started.</p>
               ) : cart.map(item => {
                 const taxSummary = getItemTaxSummary(item);
-                const itemGstAmount = billType === BILL_TYPES.NON_GST ? 0 : taxSummary.taxAmount;
-                const itemTotalWithGst = (item.price * item.qty) + itemGstAmount;
+                const lineTaxSummary = getItemTaxSummary(item, item.qty);
+                const itemTotalWithGst = lineTaxSummary.itemTotal;
+                const hasGstConfiguration = hasValidGstConfiguration(item);
                 
                 return (
                   <div
@@ -1854,26 +2232,17 @@ const BillingPage = () => {
                     <div className="cart-item-left">
                       <h4>{item.name}</h4>
                       <div className="cart-price-row">
-                        {editingPriceId === item.id ? (
-                          <input 
-                            type="number" 
-                            step="0.01"
-                            value={item.price} 
-                            onChange={(e) => updatePrice(item.id, e.target.value)}
-                            onBlur={() => setEditingPriceId(null)}
-                            autoFocus
-                            className="price-input"
-                          />
-                        ) : (
-                          <span 
-                            className="price-display"
-                            onClick={() => isBillingWritable && setEditingPriceId(item.id)}
-                          >
-                            ₹{item.price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
-                          </span>
-                        )}
+                        <span className="price-display">
+                          ₹{item.price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
+                        </span>
                         {isGstBill ? (
-                          <span className="gst-equation">+ {taxSummary.gstRate}% GST</span>
+                          <span className="gst-equation">
+                            {!hasGstConfiguration
+                              ? getGstConfigurationMessage(item)
+                              : taxPriceMode === TAX_PRICE_MODES.INCLUSIVE
+                                ? `${taxSummary.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'} included`
+                                : `+ ${taxSummary.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'}`}
+                          </span>
                         ) : null}
                         <span className="item-total-equation">
                           = ₹{itemTotalWithGst.toLocaleString('en-IN', {minimumFractionDigits: 2})}
@@ -1912,42 +2281,87 @@ const BillingPage = () => {
             </div>
 
             <div className="totals" aria-live="polite" aria-atomic="true">
+              {itemsMissingGstConfiguration.length > 0 && (
+                <p className="tax-setup-warning" role="alert">
+                  {itemsMissingGstConfiguration.map((item) => `${item.name}: ${getGstConfigurationMessage(item)}.`).join(' ')}
+                </p>
+              )}
+              {missingPlaceOfSupplyState && (
+                <p className="tax-setup-warning" role="alert">Select the buyer’s place-of-supply state before creating a GST invoice.</p>
+              )}
+              {missingIssuerState && (
+                <p className="tax-setup-warning" role="alert">Set the selected issuer’s state or configure a valid GSTIN before creating a GST invoice.</p>
+              )}
               <div className="total-row">
-                <span>Subtotal:</span>
-                <span>₹{subtotal.toLocaleString()}</span>
+                <span>{taxPriceMode === TAX_PRICE_MODES.INCLUSIVE && isGstBill ? 'Taxable subtotal:' : 'Subtotal:'}</span>
+                <span>₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               {isGstBill && (
                 <div className="total-row gst-row">
                   <span>{gstSummaryLabel}:</span>
-                  <span>₹{gstAmount.toLocaleString()}</span>
+                  <span>₹{gstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="grand-total">
                 <span>Grand Total:</span>
-                <span>₹{grandTotal.toLocaleString()}</span>
+                <span>₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
-            <button
-              type="button"
-              className={`bill-type-toggle ${isGstBill ? 'gst' : 'non-gst'}`}
-              onClick={() => {
-                if (!isBillingWritable) return;
-                const nextBillType = isGstBill ? BILL_TYPES.NON_GST : BILL_TYPES.GST;
-                setBillType(nextBillType);
-                if (nextBillType === BILL_TYPES.GST && !canIssueOrganizationGstInvoice) {
-                  setIssuerType('STORE');
-                }
-              }}
-              aria-label={`Switch to ${isGstBill ? 'Non-GST' : 'GST'} billing`}
-              aria-pressed={isGstBill}
-              disabled={!isBillingWritable}
-            >
-              <span className="toggle-track">
-                <span className="toggle-thumb" />
-              </span>
-              <span className="toggle-label">{isGstBill ? 'GST' : 'Non-GST'}</span>
-            </button>
+            {hasStoreGstRegistration ? (
+              <button
+                type="button"
+                className={`bill-type-toggle ${isGstBill ? 'gst' : 'non-gst'}`}
+                onClick={() => {
+                  if (!isBillingWritable) return;
+                  const nextBillType = isGstBill ? BILL_TYPES.NON_GST : BILL_TYPES.GST;
+                  setBillType(nextBillType);
+                  if (nextBillType === BILL_TYPES.GST && !canIssueOrganizationGstInvoice) {
+                    setIssuerType('STORE');
+                  }
+                }}
+                aria-label={`Switch to ${isGstBill ? 'Non-GST' : 'GST'} billing`}
+                aria-pressed={isGstBill}
+                disabled={!isBillingWritable}
+              >
+                <span className="toggle-track">
+                  <span className="toggle-thumb" />
+                </span>
+                <span className="toggle-label">{isGstBill ? 'GST' : 'Non-GST'}</span>
+              </button>
+            ) : (
+              <p className="invoice-issuer-hint" role="status">
+                {gstRegistrationReady
+                  ? 'GST billing is unavailable without a valid store GSTIN. Only Non-GST bills can be created.'
+                  : 'Checking the store GST registration...'}
+              </p>
+            )}
+
+            {isGstBill && (
+              <fieldset className="tax-price-mode-control" disabled={!isBillingWritable}>
+                <legend>GST price setting</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="tax-price-mode"
+                    value={TAX_PRICE_MODES.EXCLUSIVE}
+                    checked={taxPriceMode === TAX_PRICE_MODES.EXCLUSIVE}
+                    onChange={() => setTaxPriceMode(TAX_PRICE_MODES.EXCLUSIVE)}
+                  />
+                  Add GST to price
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="tax-price-mode"
+                    value={TAX_PRICE_MODES.INCLUSIVE}
+                    checked={taxPriceMode === TAX_PRICE_MODES.INCLUSIVE}
+                    onChange={() => setTaxPriceMode(TAX_PRICE_MODES.INCLUSIVE)}
+                  />
+                  Price includes GST
+                </label>
+              </fieldset>
+            )}
 
             <div className="invoice-issuer-control">
               <label htmlFor="invoice-issuer">Invoice issued by</label>
@@ -1979,6 +2393,11 @@ const BillingPage = () => {
                   Organization-issued GST invoices require the assigned organization’s GSTIN and address.
                 </small>
               )}
+              {resolvingIssuerProfile && (
+                <small className="invoice-issuer-hint" role="status">
+                  Checking the selected issuer’s tax registration...
+                </small>
+              )}
               {!issuerProfileReady && (
                 <small className="invoice-issuer-hint">
                   Organization invoicing is unavailable until the store assignment is verified.
@@ -1987,6 +2406,28 @@ const BillingPage = () => {
             </div>
 
             <div className="payment-section">
+              {invoiceRecoveryInvoiceNo && (
+                <div className="invoice-recovery-warning" role="alert">
+                  <p>
+                    Invoice {invoiceRecoveryInvoiceNo} may already be saved. Check invoice history before retrying to avoid a duplicate; confirm payment separately if the invoice was saved.
+                  </p>
+                  <div className="invoice-recovery-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearInvoiceRecoveryRequired();
+                        setCart([]);
+                        setCustomer({ name: '', phone: '', email: '', state: '' });
+                      }}
+                    >
+                      Invoice was saved - clear cart
+                    </button>
+                    <button type="button" onClick={clearInvoiceRecoveryRequired}>
+                      I verified no invoice was saved
+                    </button>
+                  </div>
+                </div>
+              )}
               <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="payment-select" disabled={!isBillingWritable}>
                 <option>UPI (PhonePe/GPay)</option>
                 <option>Card</option>
@@ -1996,8 +2437,8 @@ const BillingPage = () => {
               <div className={`payment-status-pill ${paymentStatus === 'paid' ? 'paid' : paymentStatus === 'partial' ? 'partial' : 'pending'}`}>
                 {paymentStatus === 'paid' ? 'Payment: Paid' : paymentStatus === 'partial' ? 'Payment: Partial' : 'Payment: Pending'}
               </div>
-              <button className="pay-btn primary" onClick={generateInvoice} disabled={!isBillingWritable || cart.length === 0}>
-                💳 Pay ₹{grandTotal.toLocaleString()}
+              <button className="pay-btn primary" onClick={generateInvoice} disabled={!isBillingWritable || cart.length === 0 || isSubmittingInvoice || resolvingIssuerProfile || Boolean(invoiceRecoveryInvoiceNo)}>
+                {resolvingIssuerProfile ? 'Checking issuer...' : isSubmittingInvoice ? 'Saving invoice...' : `💳 Pay ₹${grandTotal.toLocaleString()}`}
               </button>
             </div>
           </div>

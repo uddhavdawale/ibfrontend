@@ -1,4 +1,5 @@
 import { normalizeInvoiceData } from './invoiceData';
+import { getIndianGstStateName } from '../modules/tax/gstConfig';
 import {
   getShopDisplayName,
   readStoredShopProfile,
@@ -15,7 +16,7 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
     invoiceData.shopProfile || readStoredShopProfile()
   );
   const shopDisplayName = getShopDisplayName(activeShopProfile);
-  const { rows, subtotal, gstTotal, grandTotal, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
+  const { rows, subtotal, gstTotal, grandTotal, taxPricingMode, taxComponentType, placeOfSupplyState, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
   const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
 
   const rupeeSymbol = 'Rs.';
@@ -109,9 +110,9 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   // Bill-to panel
   const billToY = 45;
   pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(left, billToY, right - left, 22, 2, 2, 'F');
+  pdf.roundedRect(left, billToY, right - left, 29, 2, 2, 'F');
   pdf.setDrawColor(226, 232, 240);
-  pdf.roundedRect(left, billToY, right - left, 22, 2, 2, 'S');
+  pdf.roundedRect(left, billToY, right - left, 29, 2, 2, 'S');
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8.5);
@@ -126,31 +127,54 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.8);
   pdf.text(`Phone: ${customerPhone}`, left + 5, billToY + 19);
+  if (placeOfSupplyState) {
+    pdf.text(`Place of supply: ${getIndianGstStateName(placeOfSupplyState) || placeOfSupplyState}`, left + 5, billToY + 25);
+  }
 
   pdf.text(`Method: ${paymentMethod}`, 120, billToY + 13);
   pdf.text(`Status: ${invoiceStatus}`, 120, billToY + 19);
 
-  // Same 9-column table shape for GST and Non-GST invoices so the layout is
-  // always consistent; Non-GST rows simply show 0% / Rs.0.00 in the GST columns.
+  // Keep the same table shape for GST and Non-GST invoices.
   // Column widths are sized to sum exactly to the printable width (right - left)
   // so the table never overflows the page margins.
-  const tableHead = [['S.No', 'Item', 'HSN', 'Qty', 'Rate', 'Amount', 'GST%', 'GST', 'Total']];
-  const columnStyles = {
-    0: { cellWidth: 11 },
-    1: { cellWidth: 39 },
-    2: { cellWidth: 16 },
-    3: { cellWidth: 11 },
-    4: { cellWidth: 19, halign: 'right' },
-    5: { cellWidth: 21, halign: 'right' },
-    6: { cellWidth: 14, halign: 'center' },
-    7: { cellWidth: 20, halign: 'right' },
-    8: { cellWidth: 27, halign: 'right' },
+  const tableHead = [[
+    'S.No',
+    'Item',
+    'HSN',
+    'Qty',
+    taxPricingMode === 'inclusive' ? 'Rate incl.' : 'Rate',
+    'Taxable',
+    'GST%',
+    ...(taxComponentType === 'IGST' ? ['IGST'] : ['CGST', 'SGST']),
+    'Total',
+  ]];
+  const columnStyles = taxComponentType === 'IGST' ? {
+    0: { cellWidth: 9 },
+    1: { cellWidth: 31 },
+    2: { cellWidth: 13 },
+    3: { cellWidth: 9 },
+    4: { cellWidth: 18, halign: 'right' },
+    5: { cellWidth: 22, halign: 'right' },
+    6: { cellWidth: 10, halign: 'center' },
+    7: { cellWidth: 30, halign: 'right' },
+    8: { cellWidth: 36, halign: 'right' },
+  } : {
+    0: { cellWidth: 9 },
+    1: { cellWidth: 31 },
+    2: { cellWidth: 13 },
+    3: { cellWidth: 9 },
+    4: { cellWidth: 18, halign: 'right' },
+    5: { cellWidth: 22, halign: 'right' },
+    6: { cellWidth: 10, halign: 'center' },
+    7: { cellWidth: 18, halign: 'right' },
+    8: { cellWidth: 18, halign: 'right' },
+    9: { cellWidth: 30, halign: 'right' },
   };
 
   autoTable(pdf, {
     head: tableHead,
     body: rows,
-    startY: 73,
+    startY: 80,
     theme: 'grid',
     tableWidth: right - left,
     styles: {
@@ -191,8 +215,13 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   // Right panel rows: [label, value, isBold, isHighlight]
   const dueColor = currentBalance > 0 ? [220, 38, 38] : [22, 163, 74];
   const rightRows = [];
-  rightRows.push(['Subtotal', formatCurrency(subtotal)]);
-  if (!isNonGstInvoice) rightRows.push(['GST Total', formatCurrency(gstTotal)]);
+  rightRows.push([taxPricingMode === 'inclusive' ? 'Taxable Subtotal' : 'Subtotal', formatCurrency(subtotal)]);
+  if (!isNonGstInvoice) {
+    const taxLabel = taxPricingMode === 'inclusive'
+      ? `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} included`
+      : `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} Total`;
+    rightRows.push([taxLabel, formatCurrency(gstTotal)]);
+  }
   rightRows.push(['GRAND TOTAL', formatCurrency(grandTotal), true]);
   rightRows.push(['divider']);
   rightRows.push(['Received Amount', formatCurrency(receivedAmount)]);

@@ -309,6 +309,67 @@
   font-size: 0.95rem;
 }
 
+.admin-hsn-upload-panel {
+  max-width: 860px;
+}
+
+.admin-hsn-upload-copy {
+  color: #475569;
+  line-height: 1.6;
+}
+
+.admin-hsn-upload-file {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 20px 0 12px;
+  font-weight: 600;
+}
+
+.admin-hsn-upload-file input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 12px;
+  border: 1px dashed #94a3b8;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.admin-hsn-upload-meta {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.admin-hsn-upload-error,
+.admin-hsn-upload-success {
+  padding: 12px 14px;
+  border-radius: 10px;
+  line-height: 1.5;
+}
+
+.admin-hsn-upload-error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.admin-hsn-upload-success {
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.admin-hsn-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.admin-hsn-upload-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .admin-table-scroll {
   max-width: 100%;
   overflow-x: auto;

@@ -5,6 +5,7 @@ import './Admin.css';
 
 const navItems = [
   { label: 'Dashboard', path: '/admin/dashboard' },
+  { label: 'HSN/SAC GST Rates', path: '/admin/hsn-tax-rates' },
   { label: 'Retailers', path: '/admin/retailers' },
   { label: 'Organizations', path: '/admin/organizations' },
   { label: 'Signup Approvals', path: '/admin/signup-approvals' },

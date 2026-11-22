@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, apiFetch } from '../../Config/api';
+import { INDIAN_GST_STATES, normalizeIndianGstState } from '../tax/gstConfig';
 
 const fallbackShopProfile = Object.freeze({
   businessName: 'IB ENTERPRISES',
@@ -17,6 +18,99 @@ export const isValidIndianGstin = (value) => /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9
   String(value || '').trim().toUpperCase()
 );
 
+export const resolveIssuerStateCode = (profile = {}) => {
+  const records = [
+    profile,
+    profile.assignedOrganization,
+    profile.assignedOrganization?.address,
+    profile.assignedOrganization?.businessAddress,
+    profile.shop,
+    profile.shop?.address,
+    profile.tenant,
+    profile.tenant?.address,
+    profile.organization,
+    profile.organization?.address,
+    profile.shop?.organization,
+    profile.shop?.organization?.address,
+    profile.tenant?.organization,
+    profile.tenant?.organization?.address,
+    profile.businessAddress,
+    profile.registeredAddress,
+    profile.taxRegistration,
+    profile.gstRegistration,
+    profile.address,
+    profile.location,
+  ].filter((value) => value && typeof value === 'object' && !Array.isArray(value));
+  const gstin = records
+    .flatMap((record) => [
+      record.gstin,
+      record.gstNumber,
+      record.gstinNumber,
+      record.gstRegistrationNumber,
+    ])
+    .map((value) => String(value || '').trim().toUpperCase())
+    .find((value) => value !== '27ABCDE1234F1Z5' && isValidIndianGstin(value));
+  if (gstin) {
+    const stateFromGstin = normalizeIndianGstState(gstin.slice(0, 2));
+    if (stateFromGstin) return stateFromGstin;
+  }
+
+  const stateFields = [
+    'issuerStateCode',
+    'issuerState',
+    'stateCode',
+    'state_code',
+    'gstStateCode',
+    'gst_state_code',
+    'state',
+    'stateName',
+    'state_name',
+    'registeredState',
+    'placeOfBusinessState',
+    'province',
+  ];
+  const stateFromProfile = records
+    .flatMap((record) => stateFields.map((field) => record[field]))
+    .map((value) => (
+      value && typeof value === 'object'
+        ? value.code || value.stateCode || value.name || value.label
+        : value
+    ))
+    .map(normalizeIndianGstState)
+    .find(Boolean);
+  if (stateFromProfile) return stateFromProfile;
+
+  const addressFields = [
+    'address',
+    'addressLine1',
+    'addressLine2',
+    'street',
+    'city',
+    'location',
+    'businessAddress',
+    'registeredAddress',
+  ];
+  const addressText = records
+    .flatMap((record) => addressFields.map((field) => record[field]))
+    .map((value) => (
+      value && typeof value === 'object'
+        ? Object.values(value).filter((part) => typeof part === 'string').join(' ')
+        : String(value || '')
+    ))
+    .map((value) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ');
+  const paddedAddress = ` ${addressText} `;
+  const matchingStateCodes = INDIAN_GST_STATES
+    .filter(({ name }) => {
+      const stateName = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      return paddedAddress.includes(` ${stateName} `);
+    })
+    .map(({ code }) => code);
+  const uniqueStateCodes = [...new Set(matchingStateCodes)];
+  return uniqueStateCodes.length === 1 ? uniqueStateCodes[0] : '';
+};
+
 export const normalizeShopProfile = (profile = {}) => {
   const rawBusinessName = [
     profile.businessName,
@@ -29,14 +123,34 @@ export const normalizeShopProfile = (profile = {}) => {
   ].find((value) => typeof value === 'string' && value.trim());
 
   const businessName = (rawBusinessName || fallbackShopProfile.businessName).trim();
-  const gstin = String(profile.gstin || profile.gstNumber || '').trim();
+  const nestedAddress = profile.address && typeof profile.address === 'object'
+    ? profile.address
+    : {};
+  const gstin = String(
+    profile.gstin
+    || profile.gstNumber
+    || profile.gstinNumber
+    || profile.gstRegistrationNumber
+    || profile.taxRegistration?.gstin
+    || ''
+  ).trim();
   const resolvedGstin = gstin.toUpperCase() === '27ABCDE1234F1Z5' ? '' : gstin;
-  const profileAddress = String(profile.address || '').trim();
+  const profileAddress = String(
+    typeof profile.address === 'string'
+      ? profile.address
+      : profile.tenantAddress || profile.fullAddress || ''
+  ).trim();
   const composedAddress = [
+      nestedAddress.addressLine1 || nestedAddress.line1,
+      nestedAddress.addressLine2 || nestedAddress.line2,
+      nestedAddress.street,
+      nestedAddress.city,
+      nestedAddress.state || nestedAddress.stateName,
+      nestedAddress.pincode || nestedAddress.postalCode || nestedAddress.zipCode,
       profile.addressLine1,
       profile.addressLine2,
       profile.city,
-      profile.state,
+      profile.state?.name || profile.stateName || profile.state_name || profile.state,
       profile.pincode || profile.postalCode || profile.zipCode,
     ].filter(Boolean).join(', ');
   const resolvedAddress = profileAddress && profileAddress.toLowerCase() !== 'aurangabad, maharashtra 431001'
@@ -46,6 +160,20 @@ export const normalizeShopProfile = (profile = {}) => {
     .includes(resolvedAddress.trim().toLowerCase())
     ? ''
     : resolvedAddress;
+  const state = profile.state?.name
+    || profile.stateName
+    || profile.state_name
+    || (typeof profile.state === 'string' ? profile.state : '')
+    || nestedAddress.state?.name
+    || nestedAddress.stateName
+    || nestedAddress.state_name
+    || (typeof nestedAddress.state === 'string' ? nestedAddress.state : '');
+  const stateCode = profile.stateCode
+    || profile.state_code
+    || profile.gstStateCode
+    || nestedAddress.stateCode
+    || nestedAddress.state_code
+    || '';
 
   return {
     ...fallbackShopProfile,
@@ -59,6 +187,8 @@ export const normalizeShopProfile = (profile = {}) => {
     gstin: resolvedGstin,
     gstNumber: resolvedGstin,
     address,
+    state,
+    stateCode,
     phone: profile.phone || profile.contactNumber || fallbackShopProfile.phone,
     email: profile.email || profile.supportEmail || fallbackShopProfile.email,
   };

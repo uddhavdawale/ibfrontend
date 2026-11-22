@@ -75,6 +75,7 @@ export const API_ENDPOINTS = {
   auditEventsPage: (page = 0, size = 50) => `${API_BASE_URL}/api/audit/events?page=${page}&size=${size}`,
   auditExport: `${API_BASE_URL}/api/audit/export`,
   adminDashboard: `${API_BASE_URL}/api/admin/dashboard`,
+  adminHsnTaxRatesUpload: `${API_BASE_URL}/api/admin/hsn-tax-rates/upload`,
   adminOrganizations: `${API_BASE_URL}/api/admin/organizations`,
   adminOrganizationsPage: (page = 0, size = 20) => `${API_BASE_URL}/api/admin/organizations?page=${page}&size=${size}`,
   adminStores: (page = 0, size = 20, search = '') => `${API_BASE_URL}/api/admin/stores?page=${page}&size=${size}&search=${encodeURIComponent(search)}`,
