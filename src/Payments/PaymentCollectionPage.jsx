@@ -90,6 +90,9 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
   const [reconciliationError, setReconciliationError] = useState('');
   const [reconciliationSuccess, setReconciliationSuccess] = useState('');
   const [tickets, setTickets] = useState([]);
+  const ticketRequestRef = useRef(0);
+  const ticketSubmitInFlightRef = useRef(false);
+  const ticketActionInFlightRef = useRef(false);
   const [cashBalance, setCashBalance] = useState(null);
   const [cashierBalances, setCashierBalances] = useState([]);
   const [cashierBalanceSummary, setCashierBalanceSummary] = useState(null);
@@ -143,13 +146,16 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
     else navigate('/sell');
   };
 
-  const loadTickets = useCallback(async (requestedPage = ticketPage) => {
+  const loadTickets = useCallback(async (requestedPage = 0) => {
+    const requestId = ticketRequestRef.current + 1;
+    ticketRequestRef.current = requestId;
     setTicketLoading(true);
     setTicketError('');
     try {
       const params = new URLSearchParams({ page: String(requestedPage), size: '20' });
       const response = await apiFetch(`${API_ENDPOINTS.cashCollectionTickets}?${params.toString()}`);
       const payload = await response.json().catch(() => ({}));
+      if (requestId !== ticketRequestRef.current) return;
       if (!response.ok) {
         throw new Error(payload.message || payload.error || `Unable to load collection tickets (${response.status}).`);
       }
@@ -160,16 +166,18 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
       }
       setTickets(payload.content);
       setTicketTotalPages(Math.max(Number(payload.totalPages), 1));
+      setTicketPage(Number(payload.page));
     } catch (loadError) {
+      if (requestId !== ticketRequestRef.current) return;
       setTicketError(loadError.message || 'Unable to load collection tickets.');
     } finally {
-      setTicketLoading(false);
+      if (requestId === ticketRequestRef.current) setTicketLoading(false);
     }
-  }, [ticketPage]);
+  }, []);
 
   useEffect(() => {
-    if (canAccessTickets) loadTickets();
-  }, [canAccessTickets, loadTickets]);
+    if (canAccessTickets) loadTickets(ticketPage);
+  }, [canAccessTickets, loadTickets, ticketPage]);
 
   const loadCashBalances = useCallback(async (requestedPage = cashBalancePage) => {
     if (!canViewCashierBalances && !canSubmitTicket) return;
@@ -247,6 +255,35 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
   useEffect(() => {
     if (canViewCashierBalances || canSubmitTicket) loadCashBalances();
   }, [canSubmitTicket, canViewCashierBalances, loadCashBalances]);
+
+  useEffect(() => {
+    if (!canViewCashierBalances && !canSubmitTicket) return undefined;
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadCashBalances(cashBalancePage);
+        if (canAccessTickets) loadTickets(ticketPage);
+      }
+    };
+
+    const intervalId = window.setInterval(refreshWhenVisible, 60 * 1000);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [
+    canAccessTickets,
+    canSubmitTicket,
+    canViewCashierBalances,
+    cashBalancePage,
+    loadCashBalances,
+    loadTickets,
+    ticketPage,
+  ]);
 
   const loadTicketRecipients = useCallback(async () => {
     setStoreAdminsLoading(true);
@@ -482,6 +519,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
 
   const submitTicket = async (event) => {
     event.preventDefault();
+    if (ticketSubmitInFlightRef.current) return;
     setTicketError('');
     setTicketSuccess('');
     const declaredAmount = Number(cashBalance?.availableToSubmit);
@@ -506,7 +544,9 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
       return;
     }
 
+    ticketSubmitInFlightRef.current = true;
     setTicketSaving(true);
+    let conflictStatus = 0;
     try {
       const requestFingerprint = JSON.stringify({
         recipientUserId: recipient.id,
@@ -546,6 +586,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
         requestOptions = { method: 'POST', body: formData };
       }
       const response = await apiFetch(API_ENDPOINTS.cashCollectionTickets, requestOptions);
+      conflictStatus = response.status;
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(payload.message || payload.error || `Unable to submit collection ticket (${response.status}).`);
@@ -560,12 +601,18 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
       if (ticketProofInputRef.current) ticketProofInputRef.current.value = '';
       setTicketIdempotencyKey('');
       setTicketIdempotencyFingerprint('');
+      if (payload.balance && !canViewCashierBalances) setCashBalance(payload.balance);
       await loadTickets(0);
       setTicketPage(0);
       await loadCashBalances(0);
     } catch (saveError) {
       setTicketError(saveError.message || 'Unable to submit collection ticket.');
+      if (conflictStatus === 409) {
+        await loadCashBalances(0);
+        await loadTicketRecipients();
+      }
     } finally {
+      ticketSubmitInFlightRef.current = false;
       setTicketSaving(false);
     }
   };
@@ -576,6 +623,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
   };
 
   const submitTicketCount = async (ticket) => {
+    if (ticketActionInFlightRef.current) return;
     setTicketError('');
     setTicketSuccess('');
     const amountValue = ticketCounts[`${ticket.id}-countedAmount`];
@@ -589,6 +637,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
     const notes = String(ticketCounts[`${ticket.id}-notes`] || '').trim();
     const keyName = `${ticket.id}-count`;
 
+    ticketActionInFlightRef.current = true;
     setTicketSaving(true);
     try {
       const requestFingerprint = JSON.stringify({ countedAmount, notes });
@@ -636,11 +685,13 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
     } catch (actionError) {
       setTicketError(actionError.message || 'Unable to count collection ticket.');
     } finally {
+      ticketActionInFlightRef.current = false;
       setTicketSaving(false);
     }
   };
 
   const resolveTicket = async (ticket) => {
+    if (ticketActionInFlightRef.current) return;
     setTicketError('');
     setTicketSuccess('');
     const resolvedAmountValue = ticketCounts[`${ticket.id}-resolvedAmount`];
@@ -657,6 +708,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
     }
     const keyName = `${ticket.id}-resolve`;
 
+    ticketActionInFlightRef.current = true;
     setTicketSaving(true);
     try {
       const requestFingerprint = JSON.stringify({ resolvedAmount, resolutionNote });
@@ -698,6 +750,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
     } catch (resolveError) {
       setTicketError(resolveError.message || 'Unable to resolve collection ticket.');
     } finally {
+      ticketActionInFlightRef.current = false;
       setTicketSaving(false);
     }
   };
