@@ -6,12 +6,66 @@ import { API_ENDPOINTS, apiFetch } from '../Config/api';
 import { buildInvoicePdf } from '../utils/invoicePdf';
 import { openWhatsAppChat } from '../utils/whatsapp';
 import createSecureIdempotencyKey from '../utils/createSecureIdempotencyKey';
-import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
+import {
+  getCurrentShopProfile,
+  getShopDisplayName,
+  isValidIndianGstin,
+  readStoredShopProfile,
+  resolveInvoiceIssuerProfile,
+} from '../modules/shopProfile/shopProfileService';
 import { BILL_TYPES, buildTaxProfileForItem, getLegacyGstSlab, resolveCategoryTax } from '../modules/tax/gstConfig';
 import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
 
 const PAYMENT_SCREENSHOT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_PAYMENT_SCREENSHOT_SIZE = 5 * 1024 * 1024;
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}[character]));
+const getAssignedOrganization = (profile = {}) => (
+  profile.assignedOrganization
+  || profile.organization
+  || profile.tenant?.organization
+  || profile.shop?.organization
+  || profile.data?.organization
+  || null
+);
+const getOrganizationAddress = (organization = {}) => String(
+  organization.address
+  || [
+    organization.addressLine1,
+    organization.addressLine2,
+    organization.city,
+    organization.state,
+    organization.pincode || organization.postalCode,
+  ].filter(Boolean).join(', ')
+).trim();
+const getInvoiceIssuerProfile = (issuerType, profile = {}) => {
+  if (issuerType !== 'ORGANIZATION') return profile;
+  const organization = getAssignedOrganization(profile) || {};
+  const name = String(organization.name || organization.organizationName || '').trim();
+  const gstin = String(organization.gstin || organization.gstNumber || '').trim().toUpperCase();
+  const address = getOrganizationAddress(organization);
+  const phone = String(organization.phone || organization.contactNumber || '').trim();
+  const email = String(organization.email || organization.supportEmail || '').trim();
+  return {
+    ...profile,
+    businessName: name,
+    shopName: name,
+    displayName: name,
+    tenantName: name,
+    gstin,
+    gstNumber: gstin,
+    address,
+    phone,
+    contactNumber: phone,
+    email,
+    supportEmail: email,
+  };
+};
 const normalizePaymentMethod = (method) => {
   const normalizedMethod = String(method || '').trim().toUpperCase();
   if (normalizedMethod.startsWith('UPI')) return 'UPI';
@@ -72,6 +126,7 @@ const BillingPage = () => {
   const [paymentMethod, setPaymentMethod] = useState('UPI');
   const [paymentStatus, setPaymentStatus] = useState('pending');
   const [billType, setBillType] = useState(BILL_TYPES.GST);
+  const [issuerType, setIssuerType] = useState('STORE');
   const [editingPriceId, setEditingPriceId] = useState(null);
   const [paymentDialog, setPaymentDialog] = useState({ open: false, step: 'payment-check' });
   const [partialPaymentAmount, setPartialPaymentAmount] = useState('');
@@ -84,10 +139,31 @@ const BillingPage = () => {
   // Dynamic Products
   const [products, setProducts] = useState([]);
   const [shopProfile, setShopProfile] = useState(() => readStoredShopProfile());
+  const [issuerProfileReady, setIssuerProfileReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState(() => getCurrentUserRole());
   const shopDisplayName = getShopDisplayName(shopProfile);
   const isBillingWritable = canWriteBilling(role);
+  const assignedOrganization = getAssignedOrganization(shopProfile) || {};
+  const assignedOrganizationId = assignedOrganization.id ?? assignedOrganization.organizationId;
+  const hasAssignedOrganization = Boolean(String(assignedOrganizationId ?? '').trim());
+  const assignedOrganizationName = String(
+    assignedOrganization.name || assignedOrganization.organizationName || ''
+  ).trim();
+  const assignedOrganizationGstin = String(
+    assignedOrganization.gstin || assignedOrganization.gstNumber || ''
+  ).trim().toUpperCase();
+  const assignedOrganizationAddress = getOrganizationAddress(assignedOrganization);
+  const canIssueOrganizationGstInvoice = Boolean(
+    issuerProfileReady
+    && hasAssignedOrganization
+    && assignedOrganizationName
+    && isValidIndianGstin(assignedOrganizationGstin)
+    && assignedOrganizationAddress
+  );
+  const canIssueOrganizationInvoice = Boolean(
+    issuerProfileReady && hasAssignedOrganization && assignedOrganizationName
+  );
 
   useEffect(() => {
     if (!paymentScreenshot) {
@@ -167,12 +243,18 @@ const BillingPage = () => {
 
     let active = true;
 
-    getCurrentShopProfile(true)
+    getCurrentShopProfile(true, false)
       .then((profile) => {
-        if (active) setShopProfile(profile);
+        if (active) {
+          setShopProfile(profile);
+          setIssuerProfileReady(true);
+        }
       })
       .catch(() => {
-        if (active) setShopProfile(readStoredShopProfile());
+        if (active) {
+          setShopProfile(readStoredShopProfile());
+          setIssuerProfileReady(false);
+        }
       });
 
     const initializeBillingData = async () => {
@@ -497,10 +579,15 @@ const BillingPage = () => {
   };
 
   const generateInvoicePdf = async (invoiceData, refreshShopProfile = true) => {
-    const currentShopProfile = refreshShopProfile
-      ? await getCurrentShopProfile(true)
-      : invoiceData.shopProfile || shopProfile || readStoredShopProfile();
-    if (refreshShopProfile) setShopProfile(currentShopProfile);
+    const hasIssuerSnapshot = Boolean(
+      invoiceData.issuerName || invoiceData.issuerSnapshot?.issuerName
+    );
+    const currentShopProfile = hasIssuerSnapshot
+      ? resolveInvoiceIssuerProfile(invoiceData, invoiceData.shopProfile || shopProfile || readStoredShopProfile())
+      : refreshShopProfile
+        ? await getCurrentShopProfile(true)
+        : invoiceData.shopProfile || shopProfile || readStoredShopProfile();
+    if (refreshShopProfile && !hasIssuerSnapshot) setShopProfile(currentShopProfile);
     return buildInvoicePdf({ ...invoiceData, shopProfile: currentShopProfile });
   };
 
@@ -611,6 +698,11 @@ const BillingPage = () => {
 
     const invoiceShopProfile = invoiceData.shopProfile || shopProfile;
     const isNonGst = invoiceData.billType === BILL_TYPES.NON_GST;
+    const invoiceIssuerName = escapeHtml(getShopDisplayName(invoiceShopProfile));
+    const invoiceIssuerGstin = escapeHtml(invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || '');
+    const invoiceIssuerAddress = escapeHtml(invoiceShopProfile.address || '');
+    const invoiceIssuerPhone = escapeHtml(invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '');
+    const invoiceIssuerEmail = escapeHtml(invoiceShopProfile.email || invoiceShopProfile.supportEmail || '');
     const invoiceRows = invoiceData.items.map((item, index) => {
       const amount = Number(item.price) * Number(item.qty);
       const gstValue = isNonGst ? 0 : (amount * Number(item.gst || 0)) / 100;
@@ -1083,8 +1175,8 @@ const BillingPage = () => {
             <div class="invoice-header-band">
               <div class="invoice-header-grid">
                 <div>
-                  <h1>${getShopDisplayName(invoiceShopProfile)}</h1>
-                  <div class="brand-meta">GSTIN: ${invoiceShopProfile.gstin || invoiceShopProfile.gstNumber || ''}<br> ${invoiceShopProfile.address || ''}<br> ${invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '+91 98765 43210'}<br> ${invoiceShopProfile.email || invoiceShopProfile.supportEmail || 'sales@ibenterprises.com'}</div>
+                  <h1>${invoiceIssuerName}</h1>
+                  <div class="brand-meta">GSTIN: ${invoiceIssuerGstin}<br> ${invoiceIssuerAddress}<br> ${invoiceIssuerPhone}<br> ${invoiceIssuerEmail}</div>
                 </div>
                 <div class="invoice-summary">
                   <div><strong>Invoice:</strong> ${invoiceData.invoiceNo}</div>
@@ -1175,6 +1267,16 @@ const BillingPage = () => {
   const submitInvoice = async (status, amountReceived = 0) => {
     if (!isBillingWritable) return;
     try {
+      if (issuerType === 'ORGANIZATION') {
+        if (!issuerProfileReady || !canIssueOrganizationInvoice) {
+          throw new Error('The store organization assignment could not be verified. Select the store as invoice issuer and try again.');
+        }
+        if (billType === BILL_TYPES.GST && !canIssueOrganizationGstInvoice) {
+          throw new Error('Organization-issued GST invoices require the assigned organization’s GSTIN and address.');
+        }
+      }
+
+      const selectedIssuerProfile = getInvoiceIssuerProfile(issuerType, shopProfile);
       const normalizedStatus = status === 'paid' ? 'paid' : status === 'partial' ? 'partial' : 'pending';
       const paidAmount = Number(amountReceived) || 0;
       const receivedAmount = normalizedStatus === 'paid' ? grandTotal : Math.max(Math.min(paidAmount, grandTotal), 0);
@@ -1202,6 +1304,7 @@ const BillingPage = () => {
         grandTotal,
         totalAmount: grandTotal,
         billType,
+        issuerType,
         isGstInvoice: billType === BILL_TYPES.GST,
         items: cart.map((item) => {
           const taxSummary = getItemTaxSummary(item);
@@ -1222,7 +1325,7 @@ const BillingPage = () => {
         })
       };
 
-      logger.info('Submitting invoice to backend', { billType, itemCount: cart.length });
+      logger.info('Submitting invoice to backend', { billType, issuerType, itemCount: cart.length });
       const invoiceEndpoint = billType === BILL_TYPES.NON_GST ? API_ENDPOINTS.nonGstInvoices : API_ENDPOINTS.invoices;
       const response = await apiFetch(invoiceEndpoint, {
         method: 'POST',
@@ -1242,13 +1345,16 @@ const BillingPage = () => {
         throw new Error(typeof result === 'string' ? result : (result?.message || 'Invoice save failed'));
       }
 
-      const generatedInvoiceNo = result?.invoiceNo || invoiceNo;
+      const savedInvoice = result?.invoice
+        ?? result?.data?.invoice
+        ?? (result?.data && typeof result.data === 'object' ? result.data : result);
+      const generatedInvoiceNo = savedInvoice?.invoiceNo || result?.invoiceNo || invoiceNo;
       logger.info('Invoice generated and saved', { invoiceNo: generatedInvoiceNo, billType });
 
       let paymentRecorded = !shouldRecordPayment;
       let paymentWarning = '';
       if (shouldRecordPayment) {
-        const invoiceId = result?.id ?? result?.invoiceId;
+        const invoiceId = savedInvoice?.id ?? savedInvoice?.invoiceId ?? result?.id ?? result?.invoiceId;
         if (invoiceId == null) {
           paymentWarning = 'The server did not return an invoice ID for recording the payment.';
         } else {
@@ -1292,7 +1398,9 @@ const BillingPage = () => {
 
       let customerBalanceWarning = '';
       try {
-        const customerProfileId = result?.customerProfileId
+        const customerProfileId = savedInvoice?.customerProfileId
+          ?? savedInvoice?.customerProfile?.id
+          ?? result?.customerProfileId
           ?? result?.customerProfile?.id
           ?? customerBalanceSnapshot.profileId;
         if (customerProfileId != null
@@ -1303,6 +1411,38 @@ const BillingPage = () => {
         logger.warn('Customer profile sync skipped after invoice save', error);
         customerBalanceWarning = 'The invoice was saved, but the customer profile balance could not be synchronized.';
       }
+
+      const returnedIssuerSnapshot = savedInvoice?.issuerSnapshot
+        ?? result?.issuerSnapshot
+        ?? savedInvoice
+        ?? {};
+      const issuerSnapshot = {
+        issuerType: returnedIssuerSnapshot.issuerType || issuerType,
+        issuerName: returnedIssuerSnapshot.issuerName
+          || savedInvoice?.issuerName
+          || result?.issuerName
+          || selectedIssuerProfile.businessName,
+        issuerGstin: returnedIssuerSnapshot.issuerGstin
+          ?? savedInvoice?.issuerGstin
+          ?? selectedIssuerProfile.gstin
+          ?? '',
+        issuerAddress: returnedIssuerSnapshot.issuerAddress
+          ?? savedInvoice?.issuerAddress
+          ?? selectedIssuerProfile.address
+          ?? '',
+        issuerPhone: returnedIssuerSnapshot.issuerPhone
+          ?? savedInvoice?.issuerPhone
+          ?? selectedIssuerProfile.phone
+          ?? '',
+        issuerEmail: returnedIssuerSnapshot.issuerEmail
+          ?? savedInvoice?.issuerEmail
+          ?? selectedIssuerProfile.email
+          ?? '',
+      };
+      const invoiceIssuerProfile = resolveInvoiceIssuerProfile(
+        { issuerSnapshot },
+        selectedIssuerProfile
+      );
 
       const previewInvoice = {
         invoiceNo: generatedInvoiceNo,
@@ -1318,7 +1458,14 @@ const BillingPage = () => {
         balanceAmount: recordedBalance,
         currentBalance: recordedBalance,
         billType,
-        shopProfile,
+        issuerType: issuerSnapshot.issuerType,
+        issuerName: issuerSnapshot.issuerName,
+        issuerGstin: issuerSnapshot.issuerGstin,
+        issuerAddress: issuerSnapshot.issuerAddress,
+        issuerPhone: issuerSnapshot.issuerPhone,
+        issuerEmail: issuerSnapshot.issuerEmail,
+        issuerSnapshot,
+        shopProfile: invoiceIssuerProfile,
         subtotal: subtotal,
         gst: gstAmount,
         grandTotal: grandTotal,
@@ -1784,7 +1931,14 @@ const BillingPage = () => {
             <button
               type="button"
               className={`bill-type-toggle ${isGstBill ? 'gst' : 'non-gst'}`}
-              onClick={() => isBillingWritable && setBillType(isGstBill ? BILL_TYPES.NON_GST : BILL_TYPES.GST)}
+              onClick={() => {
+                if (!isBillingWritable) return;
+                const nextBillType = isGstBill ? BILL_TYPES.NON_GST : BILL_TYPES.GST;
+                setBillType(nextBillType);
+                if (nextBillType === BILL_TYPES.GST && !canIssueOrganizationGstInvoice) {
+                  setIssuerType('STORE');
+                }
+              }}
               aria-label={`Switch to ${isGstBill ? 'Non-GST' : 'GST'} billing`}
               aria-pressed={isGstBill}
               disabled={!isBillingWritable}
@@ -1794,6 +1948,43 @@ const BillingPage = () => {
               </span>
               <span className="toggle-label">{isGstBill ? 'GST' : 'Non-GST'}</span>
             </button>
+
+            <div className="invoice-issuer-control">
+              <label htmlFor="invoice-issuer">Invoice issued by</label>
+              <select
+                id="invoice-issuer"
+                value={issuerType}
+                onChange={(event) => setIssuerType(event.target.value)}
+                className="payment-select"
+                disabled={!isBillingWritable}
+              >
+                <option value="STORE">Store — {shopDisplayName}</option>
+                <option
+                  value="ORGANIZATION"
+                  disabled={
+                    isGstBill
+                      ? !canIssueOrganizationGstInvoice
+                      : !canIssueOrganizationInvoice
+                  }
+                >
+                  {assignedOrganizationName
+                    ? `Organization — ${assignedOrganizationName}`
+                    : issuerProfileReady
+                      ? 'Organization — no organization assigned'
+                      : 'Organization — loading assignment'}
+                </option>
+              </select>
+              {isGstBill && assignedOrganizationName && !canIssueOrganizationGstInvoice && (
+                <small className="invoice-issuer-hint">
+                  Organization-issued GST invoices require the assigned organization’s GSTIN and address.
+                </small>
+              )}
+              {!issuerProfileReady && (
+                <small className="invoice-issuer-hint">
+                  Organization invoicing is unavailable until the store assignment is verified.
+                </small>
+              )}
+            </div>
 
             <div className="payment-section">
               <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className="payment-select" disabled={!isBillingWritable}>

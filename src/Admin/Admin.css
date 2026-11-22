@@ -352,6 +352,62 @@
   margin-top: 16px;
 }
 
+.organization-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.organization-form-grid label {
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.organization-form-grid .admin-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.organization-search {
+  margin-bottom: 16px;
+}
+
+.organization-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 190px;
+  background: #fff;
+}
+
+.organization-pagination {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.organization-feedback,
+.organization-inline-error {
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.organization-feedback.error,
+.organization-inline-error {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.organization-feedback.success {
+  background: #f0fdf4;
+  color: #166534;
+}
+
 .admin-approval-card {
   display: flex;
   flex-direction: column;
@@ -481,6 +537,14 @@
   .admin-panel,
   .admin-approval-card {
     padding: 14px;
+  }
+
+  .organization-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .organization-pagination {
+    flex-direction: column;
   }
 
   .admin-toolbar {

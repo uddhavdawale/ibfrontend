@@ -20,6 +20,7 @@ import { resolveMfaContext } from './auth/mfa/mfaService.js';
 import AuditPage from './Audit/AuditPage.jsx';
 import AdminDashboardPage from './Admin/AdminDashboardPage.jsx';
 import AdminRetailersPage from './Admin/AdminRetailersPage.jsx';
+const AdminOrganizationsPage = lazy(() => import('./Admin/AdminOrganizationsPage.jsx'));
 import AdminReportsPage from './Admin/AdminReportsPage.jsx';
 import AdminSignupApprovalsPage from './Admin/AdminSignupApprovalsPage.jsx';
 import AdminUsersPage from './Admin/AdminUsersPage.jsx';
@@ -386,6 +387,7 @@ const AppRoutes = () => {
       <Route path="/admin" element={isAuthenticated ? (canViewAdminPanel ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/access-denied" state={{ from: '/admin', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/dashboard" element={isAuthenticated ? (canViewAdminPanel ? <AdminDashboardPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/dashboard', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/retailers" element={isAuthenticated ? (canViewAdminPanel ? <AdminRetailersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/retailers', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/admin/organizations" element={isAuthenticated ? (canViewAdminPanel ? <Suspense fallback={<div className="loading-screen" role="status">Loading organization management…</div>}><AdminOrganizationsPage onLogout={logoutUser} /></Suspense> : <Navigate to="/access-denied" state={{ from: '/admin/organizations', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/reports" element={isAuthenticated ? (canViewAdminPanel ? <AdminReportsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/reports', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/signup-approvals" element={isAuthenticated ? (canViewAdminPanel ? <AdminSignupApprovalsPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/signup-approvals', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/admin/users" element={isAuthenticated ? (canManageUsersList ? <AdminUsersPage onLogout={logoutUser} /> : <Navigate to="/access-denied" state={{ from: '/admin/users', role }} replace />) : <Navigate to="/login" replace />} />

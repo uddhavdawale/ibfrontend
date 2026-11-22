@@ -13,6 +13,10 @@ const fallbackShopProfile = Object.freeze({
   supportEmail: 'sales@ibenterprises.com',
 });
 
+export const isValidIndianGstin = (value) => /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(
+  String(value || '').trim().toUpperCase()
+);
+
 export const normalizeShopProfile = (profile = {}) => {
   const rawBusinessName = [
     profile.businessName,
@@ -118,7 +122,35 @@ export const getShopLogoUrl = (profile = {}) => {
   return typeof logoUrl === 'string' ? logoUrl.trim() : '';
 };
 
-export const getCurrentShopProfile = async (forceRefresh = false) => {
+export const resolveInvoiceIssuerProfile = (invoice = {}, fallbackProfile = readStoredShopProfile()) => {
+  const snapshot = invoice.issuerSnapshot || invoice;
+  const issuerName = String(snapshot.issuerName || snapshot.name || '').trim();
+  if (!issuerName) return normalizeShopProfile(fallbackProfile);
+
+  const normalized = normalizeShopProfile({
+    businessName: issuerName,
+    shopName: issuerName,
+    displayName: issuerName,
+    tenantName: issuerName,
+    ownerName: issuerName,
+    gstin: snapshot.issuerGstin ?? snapshot.gstin ?? '',
+    address: snapshot.issuerAddress ?? snapshot.address ?? '',
+    phone: snapshot.issuerPhone ?? snapshot.phone ?? '',
+    email: snapshot.issuerEmail ?? snapshot.email ?? '',
+  });
+  return {
+    ...normalized,
+    gstin: String(snapshot.issuerGstin ?? snapshot.gstin ?? '').trim(),
+    gstNumber: String(snapshot.issuerGstin ?? snapshot.gstin ?? '').trim(),
+    address: String(snapshot.issuerAddress ?? snapshot.address ?? '').trim(),
+    phone: String(snapshot.issuerPhone ?? snapshot.phone ?? '').trim(),
+    contactNumber: String(snapshot.issuerPhone ?? snapshot.phone ?? '').trim(),
+    email: String(snapshot.issuerEmail ?? snapshot.email ?? '').trim(),
+    supportEmail: String(snapshot.issuerEmail ?? snapshot.email ?? '').trim(),
+  };
+};
+
+export const getCurrentShopProfile = async (forceRefresh = false, fallbackOnError = true) => {
   if (!forceRefresh) {
     const stored = readStoredShopProfile();
     if (stored && stored.businessName && stored.businessName !== 'IB ENTERPRISES') {
@@ -135,9 +167,10 @@ export const getCurrentShopProfile = async (forceRefresh = false) => {
     if (!response.ok) throw new Error(`Unable to load shop profile (${response.status})`);
 
     const payload = await response.json().catch(() => ({}));
-    const shop = payload.shop || payload.data || payload || {};
+    const shop = payload.shop || payload.data?.shop || payload.data || payload || {};
     return saveShopProfile(shop);
-  } catch {
+  } catch (error) {
+    if (!fallbackOnError) throw error;
     return readStoredShopProfile();
   }
 };

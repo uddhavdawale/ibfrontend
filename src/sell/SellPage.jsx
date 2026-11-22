@@ -6,7 +6,12 @@ import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
 import { openWhatsAppChat } from "../utils/whatsapp";
 import createSecureIdempotencyKey from "../utils/createSecureIdempotencyKey";
-import { getCurrentShopProfile, getShopDisplayName, readStoredShopProfile } from "../modules/shopProfile/shopProfileService";
+import {
+  getCurrentShopProfile,
+  getShopDisplayName,
+  readStoredShopProfile,
+  resolveInvoiceIssuerProfile,
+} from "../modules/shopProfile/shopProfileService";
 import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
 import { normalizeWhatsAppPhone } from "../utils/whatsappCommerce";
 
@@ -156,8 +161,13 @@ const formatExchangeDate = (value) => {
 };
 
 const generatePDF = async (order, shopProfile = readStoredShopProfile()) => {
+  if (order.issuerName || order.issuerSnapshot?.issuerName) {
+    const invoiceIssuerProfile = resolveInvoiceIssuerProfile(order, shopProfile);
+    return buildInvoicePdf({ ...order, shopProfile: invoiceIssuerProfile });
+  }
   const currentShopProfile = await getCurrentShopProfile(true);
-  return buildInvoicePdf({ ...order, shopProfile: currentShopProfile || shopProfile });
+  const invoiceIssuerProfile = resolveInvoiceIssuerProfile(order, currentShopProfile || shopProfile);
+  return buildInvoicePdf({ ...order, shopProfile: invoiceIssuerProfile });
 };
 
 const sendWhatsAppPDF = async (order, shopProfile = readStoredShopProfile()) => {
@@ -393,6 +403,13 @@ const normalizeInvoiceToOrder = (invoice, index = 0, fallbackSoldBy = "Current U
     previousBalance,
     balanceAmount,
     currentBalance,
+    issuerType: invoice.issuerType ?? invoice.issuerSnapshot?.issuerType ?? 'STORE',
+    issuerName: invoice.issuerName ?? invoice.issuerSnapshot?.issuerName ?? '',
+    issuerGstin: invoice.issuerGstin ?? invoice.issuerSnapshot?.issuerGstin ?? '',
+    issuerAddress: invoice.issuerAddress ?? invoice.issuerSnapshot?.issuerAddress ?? '',
+    issuerPhone: invoice.issuerPhone ?? invoice.issuerSnapshot?.issuerPhone ?? '',
+    issuerEmail: invoice.issuerEmail ?? invoice.issuerSnapshot?.issuerEmail ?? '',
+    issuerSnapshot: invoice.issuerSnapshot,
     soldBy: invoice.soldBy
       ?? invoice.soldByName
       ?? invoice.createdByName
@@ -1231,17 +1248,18 @@ const OrderDetail = ({
   const totalQty = Array.isArray(order?.items)
     ? order.items.reduce((sum, i) => sum + Number(i.qty || 0), 0)
     : 0;
+  const invoiceIssuerProfile = resolveInvoiceIssuerProfile(order, shopProfile);
 
   return (
     <div className="order-detail">
       {/* Keep your header exactly as‑is */}
       <div className="detail-header">
         <div className="invoice-shop-info">
-          <h2>{getShopDisplayName(shopProfile)}</h2>
-          <p>GSTIN: {shopProfile.gstin || shopProfile.gstNumber || ''}</p>
-          <p>{shopProfile.address || ''}</p>
-          <p>📞 {shopProfile.phone || shopProfile.contactNumber || '+91 98765 43210'}</p>
-          <p>✉️ {shopProfile.email || shopProfile.supportEmail || 'sales@ibenterprises.com'}</p>
+          <h2>{getShopDisplayName(invoiceIssuerProfile)}</h2>
+          <p>GSTIN: {invoiceIssuerProfile.gstin || invoiceIssuerProfile.gstNumber || ''}</p>
+          <p>{invoiceIssuerProfile.address || ''}</p>
+          {invoiceIssuerProfile.phone && <p>📞 {invoiceIssuerProfile.phone}</p>}
+          {invoiceIssuerProfile.email && <p>✉️ {invoiceIssuerProfile.email}</p>}
           <p>
             <strong>Invoice:</strong> {order.invoiceNo} |{" "}
             <strong>Date:</strong> {order.date}

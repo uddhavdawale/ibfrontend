@@ -75,6 +75,12 @@ export const API_ENDPOINTS = {
   auditEventsPage: (page = 0, size = 50) => `${API_BASE_URL}/api/audit/events?page=${page}&size=${size}`,
   auditExport: `${API_BASE_URL}/api/audit/export`,
   adminDashboard: `${API_BASE_URL}/api/admin/dashboard`,
+  adminOrganizations: `${API_BASE_URL}/api/admin/organizations`,
+  adminOrganizationsPage: (page = 0, size = 20) => `${API_BASE_URL}/api/admin/organizations?page=${page}&size=${size}`,
+  adminStores: (page = 0, size = 20, search = '') => `${API_BASE_URL}/api/admin/stores?page=${page}&size=${size}&search=${encodeURIComponent(search)}`,
+  adminOrganizationStore: (organizationId, tenantId) => (
+    `${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(organizationId)}/stores/${encodeURIComponent(tenantId)}`
+  ),
   adminRetailers: `${API_BASE_URL}/api/admin/retailers`,
   adminRetailerById: (id) => `${API_BASE_URL}/api/admin/retailers/${id}`,
   adminRetailerAction: (id, action) => `${API_BASE_URL}/api/admin/retailers/${id}/${action}`,

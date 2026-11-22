@@ -6,6 +6,7 @@ import './Admin.css';
 const navItems = [
   { label: 'Dashboard', path: '/admin/dashboard' },
   { label: 'Retailers', path: '/admin/retailers' },
+  { label: 'Organizations', path: '/admin/organizations' },
   { label: 'Signup Approvals', path: '/admin/signup-approvals' },
   { label: 'Users', path: '/admin/users' },
   { label: 'Audit Logs', path: '/admin/audit-logs' },

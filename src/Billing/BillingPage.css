@@ -402,6 +402,22 @@
   background: var(--billing-input-bg);
   color: var(--billing-text);
 }
+.invoice-issuer-control {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 16px;
+}
+.invoice-issuer-control label {
+  color: var(--billing-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.invoice-issuer-hint {
+  color: var(--billing-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .payment-status-pill {
   display: inline-flex;
   align-items: center;

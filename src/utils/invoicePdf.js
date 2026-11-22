@@ -1,12 +1,19 @@
 import { normalizeInvoiceData } from './invoiceData';
-import { getShopDisplayName, readStoredShopProfile } from '../modules/shopProfile/shopProfileService';
+import {
+  getShopDisplayName,
+  readStoredShopProfile,
+  resolveInvoiceIssuerProfile,
+} from '../modules/shopProfile/shopProfileService';
 
 export const buildInvoicePdf = async (invoiceData = {}) => {
   const { jsPDF } = await import('jspdf');
   const { autoTable } = await import('jspdf-autotable');
 
   const normalized = normalizeInvoiceData(invoiceData);
-  const activeShopProfile = invoiceData.shopProfile || readStoredShopProfile();
+  const activeShopProfile = resolveInvoiceIssuerProfile(
+    invoiceData,
+    invoiceData.shopProfile || readStoredShopProfile()
+  );
   const shopDisplayName = getShopDisplayName(activeShopProfile);
   const { rows, subtotal, gstTotal, grandTotal, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
   const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
