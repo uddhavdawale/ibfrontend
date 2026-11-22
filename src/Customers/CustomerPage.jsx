@@ -21,20 +21,14 @@ const EMPTY_CUSTOMER = {
   lastInvoiceDate: 'N/A',
 };
 
-const normalizeCustomerRecord = (source = {}, fallback = EMPTY_CUSTOMER) => ({
-  id: source.id ?? source.customerId ?? fallback.id ?? '',
-  customerName: source.customerName || source.name || source.customer || fallback.customerName || 'Walk-in Customer',
-  shopName: source.shopName || source.businessName || source.storeName || source.shop || fallback.shopName || 'IB Enterprises',
-  address: source.address || source.shopAddress || source.location || fallback.address || 'Aurangabad, Maharashtra',
-  gstNumber: source.gstNumber || source.gstin || source.gst || fallback.gstNumber || 'N/A',
-  phone: source.phone || source.mobile || source.contactNumber || fallback.phone || '',
-  email: source.email || source.mail || fallback.email || '',
-  dueBalance: Number(
+const normalizeCustomerRecord = (source = {}, fallback = EMPTY_CUSTOMER) => {
+  const dueBalance = Number(
     source.dueBalance
       ?? source.outstandingBalance
       ?? source.balanceDue
       ?? source.pendingAmount
       ?? source.pendingBalance
+      ?? source.currentBalance
       ?? source.amountDue
       ?? source.totalDue
       ?? source.customerDue
@@ -43,12 +37,22 @@ const normalizeCustomerRecord = (source = {}, fallback = EMPTY_CUSTOMER) => ({
       ?? source.outstanding
       ?? fallback.dueBalance
       ?? 0
-  ),
-  previousOrderCount: Number(source.previousOrderCount ?? source.totalOrders ?? source.orderCount ?? source.orderCountTotal ?? fallback.previousOrderCount ?? 0),
-  lastOrderId: Number(source.lastOrderId ?? source.lastOrder ?? source.orderId ?? fallback.lastOrderId ?? 0),
-  lastOrderNo: source.lastOrderNo || source.lastInvoiceNo || source.lastOrderNumber || source.invoiceNumber || fallback.lastOrderNo || 'INV-000',
-  lastInvoiceDate: source.lastInvoiceDate || source.lastOrderDate || source.updatedAt || fallback.lastInvoiceDate || '',
-});
+  );
+  return {
+    id: source.id ?? source.customerId ?? fallback.id ?? '',
+    customerName: source.customerName || source.name || source.customer || fallback.customerName || 'Walk-in Customer',
+    shopName: source.shopName || source.businessName || source.storeName || source.shop || fallback.shopName || 'IB Enterprises',
+    address: source.address || source.shopAddress || source.location || fallback.address || 'Aurangabad, Maharashtra',
+    gstNumber: source.gstNumber || source.gstin || source.gst || fallback.gstNumber || 'N/A',
+    phone: source.phone || source.mobile || source.contactNumber || fallback.phone || '',
+    email: source.email || source.mail || fallback.email || '',
+    dueBalance: Number.isFinite(dueBalance) ? Math.max(dueBalance, 0) : 0,
+    previousOrderCount: Number(source.previousOrderCount ?? source.totalOrders ?? source.orderCount ?? source.orderCountTotal ?? fallback.previousOrderCount ?? 0),
+    lastOrderId: Number(source.lastOrderId ?? source.lastOrder ?? source.orderId ?? fallback.lastOrderId ?? 0),
+    lastOrderNo: source.lastOrderNo || source.lastInvoiceNo || source.lastOrderNumber || source.invoiceNumber || fallback.lastOrderNo || 'INV-000',
+    lastInvoiceDate: source.lastInvoiceDate || source.lastOrderDate || source.updatedAt || fallback.lastInvoiceDate || '',
+  };
+};
 
 const extractCustomerList = (payload) => {
   if (Array.isArray(payload)) return payload;
@@ -130,11 +134,12 @@ const CustomerPage = () => {
       setError('');
 
       const endpoints = query
-        ? [API_ENDPOINTS.customerSearch(query), API_ENDPOINTS.customerProfilesSearch(query)]
-        : [API_ENDPOINTS.customers, API_ENDPOINTS.customerProfiles];
+        ? [API_ENDPOINTS.customerProfilesSearch(query), API_ENDPOINTS.customerSearch(query)]
+        : [API_ENDPOINTS.customerProfiles, API_ENDPOINTS.customers];
 
-      let payload = [];
+      let list = [];
       let lastError = null;
+      let hasSuccessfulResponse = false;
 
       for (const endpoint of endpoints) {
         try {
@@ -144,23 +149,28 @@ const CustomerPage = () => {
             continue;
           }
 
-          payload = await response.json();
-          break;
+          const payload = await response.json();
+          hasSuccessfulResponse = true;
+          const records = extractCustomerList(payload);
+          if (records.length > 0) {
+            list = records;
+            break;
+          }
         } catch (requestError) {
           lastError = requestError;
         }
       }
 
-      if (!payload && lastError) {
+      if (!hasSuccessfulResponse && lastError) {
         throw lastError;
       }
 
-      const list = extractCustomerList(payload).map((item) => normalizeCustomerRecord(item, EMPTY_CUSTOMER));
-      setCustomers(list);
+      const normalizedList = list.map((item) => normalizeCustomerRecord(item, EMPTY_CUSTOMER));
+      setCustomers(normalizedList);
       setSelectedCustomerId((currentId) => {
-        if (list.length === 0) return '';
-        if (currentId && list.some((item) => String(item.id) === String(currentId))) return currentId;
-        return String(list[0].id || '');
+        if (normalizedList.length === 0) return '';
+        if (currentId && normalizedList.some((item) => String(item.id) === String(currentId))) return currentId;
+        return String(normalizedList[0].id || '');
       });
     } catch (loadError) {
       setError(loadError.message || 'Unable to load customer records.');
@@ -182,9 +192,9 @@ const CustomerPage = () => {
 
           const endpoints = [];
           if (customerId) {
-            endpoints.push(API_ENDPOINTS.customerById(customerId), API_ENDPOINTS.customerProfileById(customerId));
+            endpoints.push(API_ENDPOINTS.customerProfileById(customerId), API_ENDPOINTS.customerById(customerId));
           } else {
-            endpoints.push(API_ENDPOINTS.customerByPhone(customerPhone), API_ENDPOINTS.customerProfileByPhone(customerPhone));
+            endpoints.push(API_ENDPOINTS.customerProfileByPhone(customerPhone), API_ENDPOINTS.customerByPhone(customerPhone));
           }
 
           let detailPayload = null;
