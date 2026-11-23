@@ -867,9 +867,18 @@ const BillingPage = () => {
     window.location.href = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
-  const downloadInvoicePdf = async (invoiceData) => {
+  const downloadInvoicePdf = async (invoiceData, downloadWindow = window) => {
     const pdf = await generateInvoicePdf(invoiceData);
-    pdf.save(`invoice_${invoiceData.invoiceNo}.pdf`);
+    const url = URL.createObjectURL(pdf.output('blob'));
+    const link = downloadWindow.document.createElement('a');
+    const safeInvoiceNo = String(invoiceData.invoiceNo || 'invoice')
+      .replace(/[^a-zA-Z0-9_-]/g, '_');
+    link.href = url;
+    link.download = `invoice_${safeInvoiceNo}.pdf`;
+    downloadWindow.document.body.appendChild(link);
+    link.click();
+    link.remove();
+    downloadWindow.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const openInvoiceWindow = (invoiceData) => {
@@ -943,7 +952,14 @@ const BillingPage = () => {
 
     previewWindow.shareInvoiceViaWhatsApp = async () => shareInvoiceViaWhatsApp(invoiceData, previewWindow);
     previewWindow.shareInvoiceViaEmail = async () => shareInvoiceViaEmail(invoiceData);
-    previewWindow.downloadInvoicePdf = async () => downloadInvoicePdf(invoiceData);
+    previewWindow.downloadInvoicePdf = async () => {
+      try {
+        await downloadInvoicePdf(invoiceData, previewWindow);
+      } catch (error) {
+        logger.error('Invoice PDF download failed', error);
+        previewWindow.alert('Unable to download the invoice PDF. Please try again.');
+      }
+    };
 
     const receivedAmount = Number(invoiceData.receivedAmount ?? invoiceData.paidAmount ?? invoiceData.amountPaid ?? 0);
     const previousBalance = Number(invoiceData.previousBalance ?? 0);
