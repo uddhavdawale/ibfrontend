@@ -38,6 +38,9 @@ const ROLE_ALIASES = Object.freeze({
   store_billing_viwer: STORE_ROLES.STORE_BILLING_VIEWER,
   billing_viewer: STORE_ROLES.STORE_BILLING_VIEWER,
   seller: STORE_ROLES.SELLER,
+  cashier: STORE_ROLES.SELLER,
+  cash_collector: STORE_ROLES.SELLER,
+  cash_handler: STORE_ROLES.SELLER,
   biller: STORE_ROLES.BILLING_MANAGER,
   billing_manager: STORE_ROLES.BILLING_MANAGER,
 
