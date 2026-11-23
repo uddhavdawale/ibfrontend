@@ -459,6 +459,10 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
           } catch (paymentError) {
             if (!active) return;
             setInvoices(normalizedInvoices);
+            setCanExport(
+              invoiceResult.status === 'fulfilled'
+              && nonGstResult.status === 'fulfilled'
+            );
             const reason = paymentError instanceof Error
               ? paymentError.message
               : 'Unexpected payment-history response.';
@@ -633,8 +637,10 @@ const LedgerReportPage = ({ onBackToDashboard }) => {
     const link = document.createElement('a');
     link.href = url;
     link.download = `customer-ledger-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (
