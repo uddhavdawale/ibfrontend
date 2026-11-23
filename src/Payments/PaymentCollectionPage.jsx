@@ -223,6 +223,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
         setCashBalancePage(Number(payload.page));
         setCashBalanceTotalPages(Math.max(Number(payload.totalPages), 1));
       } else {
+        const balance = payload.balance ?? payload;
         const requiredAmounts = [
           'cashPaymentCountSinceLastHandover',
           'cashCollectedSinceLastHandover',
@@ -234,11 +235,11 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
           'availableToSubmit',
           'cashCreditBalance',
         ];
-        if (!payload.balance
-          || !requiredAmounts.every((field) => Number.isFinite(Number(payload.balance[field])))) {
+        if (!balance
+          || !requiredAmounts.every((field) => Number.isFinite(Number(balance[field])))) {
           throw new Error('The cash-balance service did not return your current amount due.');
         }
-        setCashBalance(payload.balance);
+        setCashBalance(balance);
         setCashierBalanceSummary(null);
       }
     } catch (loadError) {
