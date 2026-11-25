@@ -17,7 +17,8 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   );
   const shopDisplayName = getShopDisplayName(activeShopProfile);
   const { rows, subtotal, gstTotal, grandTotal, taxPricingMode, taxComponentType, placeOfSupplyState, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, customerAddress, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
-  const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
+  const billType = String(invoiceData.billType ?? '').toLowerCase();
+  const isNonGstInvoice = ['non-gst', 'non gst', 'non_gst'].includes(billType);
 
   const rupeeSymbol = 'Rs.';
   const formatCurrency = (value) => `${rupeeSymbol} ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -85,9 +86,11 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.5);
-  pdf.text(`GSTIN: ${activeShopProfile.gstin || activeShopProfile.gstNumber || ''}`, left, 24);
-  pdf.text(activeShopProfile.address || '', left, 29.5);
-  pdf.text(`${activeShopProfile.phone || activeShopProfile.contactNumber || '+91 98765 43210'}  |  ${activeShopProfile.email || activeShopProfile.supportEmail || 'sales@ibenterprises.com'}`, left, 35);
+  if (!isNonGstInvoice) {
+    pdf.text(`GSTIN: ${activeShopProfile.gstin || activeShopProfile.gstNumber || ''}`, left, 24);
+  }
+  pdf.text(activeShopProfile.address || '', left, isNonGstInvoice ? 24 : 29.5);
+  pdf.text(`${activeShopProfile.phone || activeShopProfile.contactNumber || '+91 98765 43210'}  |  ${activeShopProfile.email || activeShopProfile.supportEmail || 'sales@ibenterprises.com'}`, left, isNonGstInvoice ? 29.5 : 35);
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(16);
@@ -113,7 +116,7 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   const addressLines = customerAddress
     ? pdf.splitTextToSize(`Address: ${customerAddress}`, customerDetailsWidth)
     : [];
-  const placeOfSupplyLabel = placeOfSupplyState
+  const placeOfSupplyLabel = !isNonGstInvoice && placeOfSupplyState
     ? `Place of supply: ${getIndianGstStateName(placeOfSupplyState) || placeOfSupplyState}`
     : '';
   const stateLines = placeOfSupplyLabel
@@ -148,21 +151,27 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   pdf.text(`Method: ${paymentMethod}`, 120, billToY + 13);
   pdf.text(`Status: ${invoiceStatus}`, 120, billToY + 19);
 
-  // Keep the same table shape for GST and Non-GST invoices.
-  // Column widths are sized to sum exactly to the printable width (right - left)
-  // so the table never overflows the page margins.
+  // Column widths sum to the printable width so the table stays within page margins.
   const tableHead = [[
     'S.No',
     'Item',
-    'HSN',
+    ...(!isNonGstInvoice ? ['HSN'] : []),
     'Qty',
-    taxPricingMode === 'inclusive' ? 'Rate incl.' : 'Rate',
-    'Taxable',
-    'GST%',
-    ...(taxComponentType === 'IGST' ? ['IGST'] : ['CGST', 'SGST']),
+    !isNonGstInvoice && taxPricingMode === 'inclusive' ? 'Rate incl.' : 'Rate',
+    isNonGstInvoice ? 'Amount' : 'Taxable',
+    ...(!isNonGstInvoice
+      ? ['GST%', ...(taxComponentType === 'IGST' ? ['IGST'] : ['CGST', 'SGST'])]
+      : []),
     'Total',
   ]];
-  const columnStyles = taxComponentType === 'IGST' ? {
+  const columnStyles = isNonGstInvoice ? {
+    0: { cellWidth: 12 },
+    1: { cellWidth: 65 },
+    2: { cellWidth: 15 },
+    3: { cellWidth: 25, halign: 'right' },
+    4: { cellWidth: 31, halign: 'right' },
+    5: { cellWidth: 30, halign: 'right' },
+  } : taxComponentType === 'IGST' ? {
     0: { cellWidth: 9 },
     1: { cellWidth: 31 },
     2: { cellWidth: 13 },
@@ -229,7 +238,7 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   // Right panel rows: [label, value, isBold, isHighlight]
   const dueColor = currentBalance > 0 ? [220, 38, 38] : [22, 163, 74];
   const rightRows = [];
-  rightRows.push([taxPricingMode === 'inclusive' ? 'Taxable Subtotal' : 'Subtotal', formatCurrency(subtotal)]);
+  rightRows.push([!isNonGstInvoice && taxPricingMode === 'inclusive' ? 'Taxable Subtotal' : 'Subtotal', formatCurrency(subtotal)]);
   if (!isNonGstInvoice) {
     const taxLabel = taxPricingMode === 'inclusive'
       ? `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} included`

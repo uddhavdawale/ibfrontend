@@ -1079,7 +1079,7 @@ const BillingPage = () => {
     const invoiceIssuerPhone = escapeHtml(invoiceShopProfile.phone || invoiceShopProfile.contactNumber || '');
     const invoiceIssuerEmail = escapeHtml(invoiceShopProfile.email || invoiceShopProfile.supportEmail || '');
     const taxComponentType = invoiceData.taxComponentType === 'IGST' ? 'IGST' : 'CGST_SGST';
-    const placeOfSupplyLabel = INDIAN_GST_STATES.find(
+    const placeOfSupplyLabel = isNonGst ? '' : INDIAN_GST_STATES.find(
       ({ code }) => code === String(invoiceData.placeOfSupplyState || '')
     )?.name || invoiceData.placeOfSupplyState || '';
     const safeInvoiceNo = escapeHtml(invoiceData.invoiceNo);
@@ -1107,6 +1107,19 @@ const BillingPage = () => {
       const safeItemName = escapeHtml(item.name || '-');
       const safeHsn = escapeHtml(item.hsn || '9999');
       const safeQuantity = escapeHtml(item.qty);
+      if (isNonGst) {
+        return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${safeItemName}</td>
+            <td>${safeQuantity}</td>
+            <td>₹${enteredUnitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td>₹${taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `;
+      }
+
       const taxComponentCells = taxComponentType === 'IGST'
         ? `<td>₹${igstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>`
         : `<td>₹${cgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td><td>₹${sgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>`;
@@ -1578,7 +1591,7 @@ const BillingPage = () => {
               <div class="invoice-header-grid">
                 <div>
                   <h1>${invoiceIssuerName}</h1>
-                  <div class="brand-meta">GSTIN: ${invoiceIssuerGstin}<br> ${invoiceIssuerAddress}<br> ${invoiceIssuerPhone}<br> ${invoiceIssuerEmail}</div>
+                  <div class="brand-meta">${isNonGst ? '' : `GSTIN: ${invoiceIssuerGstin}<br>`}${invoiceIssuerAddress}<br> ${invoiceIssuerPhone}<br> ${invoiceIssuerEmail}</div>
                 </div>
                 <div class="invoice-summary">
                   <div><strong>Invoice:</strong> ${safeInvoiceNo}</div>
@@ -1605,12 +1618,11 @@ const BillingPage = () => {
                     <tr>
                       <th>S.No</th>
                       <th>Item</th>
-                      <th>HSN</th>
+                      ${isNonGst ? '' : '<th>HSN</th>'}
                       <th>Qty</th>
-                      <th>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Rate incl.' : 'Rate'}</th>
-                      <th>Taxable</th>
-                      <th>GST%</th>
-                      ${taxComponentType === 'IGST' ? '<th>IGST</th>' : '<th>CGST</th><th>SGST</th>'}
+                      <th>${!isNonGst && invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Rate incl.' : 'Rate'}</th>
+                      <th>${isNonGst ? 'Amount' : 'Taxable'}</th>
+                      ${isNonGst ? '' : `<th>GST%</th>${taxComponentType === 'IGST' ? '<th>IGST</th>' : '<th>CGST</th><th>SGST</th>'}`}
                       <th>Total</th>
                     </tr>
                   </thead>
@@ -1622,7 +1634,7 @@ const BillingPage = () => {
 
               <div class="totals">
                 <div class="totals-row"><span>Total Qty</span><span>${invoiceData.items.reduce((sum, item) => sum + Number(item.qty || 0), 0)}</span></div>
-                <div class="totals-row"><span>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Taxable Subtotal' : 'Subtotal'}</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div class="totals-row"><span>${!isNonGst && invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Taxable Subtotal' : 'Subtotal'}</span><span>₹${invoiceData.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
                 ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : `<div class="totals-row"><span>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} included` : `${taxComponentType === 'IGST' ? 'IGST' : 'GST'} Total`}</span><span>₹${invoiceData.gst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>`}
                 <div class="totals-row grand"><span>Grand Total</span><span>₹${invoiceData.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
               </div>
