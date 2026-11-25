@@ -113,6 +113,44 @@
   margin-left: auto;
 }
 
+.inventory-page .inventory-refresh-btn {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid var(--inv-border);
+  border-radius: 10px;
+  background: var(--inv-surface);
+  color: var(--inv-text-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.inventory-page .inventory-refresh-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.4);
+  color: var(--inv-primary);
+}
+
+.inventory-page .inventory-refresh-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.inventory-page .inventory-refresh-btn.is-loading {
+  animation: inventory-refresh-spin 0.7s linear infinite;
+}
+
+@keyframes inventory-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .inventory-page .export-controls {
   display: inline-flex;
   align-items: center;
@@ -408,6 +446,53 @@
   cursor: not-allowed;
 }
 
+.inventory-page .inventory-value-error,
+.inventory-page .inventory-report-error {
+  color: var(--inv-danger);
+}
+
+.inventory-page .inventory-report-error {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--inv-danger);
+  border-radius: 12px;
+  background: var(--inv-surface-strong);
+}
+
+.inventory-page .inventory-report-insights {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.inventory-page .inventory-report-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+}
+
+.inventory-page .inventory-report-search .search-input {
+  width: 100%;
+}
+
+.inventory-page .inventory-report-table {
+  min-width: 900px;
+}
+
+.inventory-page .inventory-report-table tfoot th {
+  background: var(--inv-surface-muted);
+  color: var(--inv-text);
+}
+
+.inventory-page .inventory-report-placeholder {
+  padding: 28px !important;
+  text-align: center !important;
+}
+
+.inventory-page .inventory-report-pagination {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .inventory-page .modal-overlay {
   position: fixed;
   inset: 0;
@@ -516,6 +601,18 @@
 
   .inventory-page .search-input {
     max-width: none;
+  }
+
+  .inventory-page .inventory-report-insights {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-page .inventory-report-search {
+    width: 100%;
+  }
+
+  .inventory-page .inventory-report-search .add-btn {
+    flex-shrink: 0;
   }
 
   .inventory-page .modal-overlay {

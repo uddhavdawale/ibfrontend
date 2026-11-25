@@ -101,6 +101,42 @@
   box-shadow: 0 12px 22px rgba(15, 23, 42, 0.04);
 }
 
+.customer-pagination {
+  display: grid;
+  gap: 10px;
+  padding: 10px 2px 2px;
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.customer-pagination-range {
+  text-align: center;
+}
+
+.customer-pagination-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.customer-page-button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.customer-page-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .customer-list-item {
   width: 100%;
   display: flex;

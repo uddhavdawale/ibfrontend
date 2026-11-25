@@ -20,6 +20,7 @@ const EMPTY_CUSTOMER = {
   lastOrderNo: 'INV-000',
   lastInvoiceDate: 'N/A',
 };
+const CUSTOMER_PAGE_SIZE = 25;
 
 const normalizeCustomerRecord = (source = {}, fallback = EMPTY_CUSTOMER) => {
   const dueBalance = Number(
@@ -54,20 +55,6 @@ const normalizeCustomerRecord = (source = {}, fallback = EMPTY_CUSTOMER) => {
   };
 };
 
-const extractCustomerList = (payload) => {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.customers)) return payload.customers;
-  if (Array.isArray(payload?.data)) return payload.data;
-  if (Array.isArray(payload?.content)) return payload.content;
-  if (Array.isArray(payload?.items)) return payload.items;
-  if (Array.isArray(payload?.results)) return payload.results;
-  if (payload && typeof payload === 'object') {
-    const candidate = payload.data?.customers ?? payload.data?.content ?? payload.data?.items ?? payload.customers ?? payload.content ?? payload.items;
-    if (Array.isArray(candidate)) return candidate;
-  }
-  return [];
-};
-
 const formatMoney = (value) => {
   const numericValue = Number(value || 0);
   return new Intl.NumberFormat('en-IN', {
@@ -100,8 +87,17 @@ const CustomerPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [customers, setCustomers] = useState([]);
+  const [customerPage, setCustomerPage] = useState(0);
+  const [pageInfo, setPageInfo] = useState({
+    number: 0,
+    size: CUSTOMER_PAGE_SIZE,
+    totalElements: 0,
+    totalPages: 0,
+    dueCustomerCount: 0,
+  });
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reminderChannel, setReminderChannel] = useState('whatsapp');
@@ -120,6 +116,8 @@ const CustomerPage = () => {
     () => customers.find((customer) => String(customer.id) === String(selectedCustomerId)) || customers[0] || EMPTY_CUSTOMER,
     [customers, selectedCustomerId]
   );
+  const customerPageCount = pageInfo.totalPages;
+  const visibleCustomers = customers;
 
   const summaryCards = useMemo(() => [
     { label: 'Due Balance', value: formatMoney(selectedCustomer.dueBalance), tone: selectedCustomer.dueBalance > 0 ? 'warning' : 'success' },
@@ -128,53 +126,60 @@ const CustomerPage = () => {
     { label: 'Last Invoice Date', value: formatDate(selectedCustomer.lastInvoiceDate), tone: 'neutral' },
   ], [selectedCustomer]);
 
-  const loadCustomers = async (query = '') => {
+  const loadCustomers = async (query = '', page = 0) => {
     try {
       setLoading(true);
       setError('');
-
-      const endpoints = query
-        ? [API_ENDPOINTS.customerProfilesSearch(query), API_ENDPOINTS.customerSearch(query)]
-        : [API_ENDPOINTS.customerProfiles, API_ENDPOINTS.customers];
-
-      let list = [];
-      let lastError = null;
-      let hasSuccessfulResponse = false;
-
-      for (const endpoint of endpoints) {
-        try {
-          const response = await apiFetch(endpoint);
-          if (!response.ok) {
-            lastError = new Error(`Request failed for ${endpoint}`);
-            continue;
-          }
-
-          const payload = await response.json();
-          hasSuccessfulResponse = true;
-          const records = extractCustomerList(payload);
-          if (records.length > 0) {
-            list = records;
-            break;
-          }
-        } catch (requestError) {
-          lastError = requestError;
-        }
+      const response = await apiFetch(API_ENDPOINTS.customerProfilesPage(
+        page,
+        CUSTOMER_PAGE_SIZE,
+        query,
+      ));
+      if (!response.ok) {
+        throw new Error(`Customer list request failed (${response.status}).`);
+      }
+      const payload = await response.json();
+      const receivedPage = payload?.page;
+      if (!Array.isArray(payload?.content) || !receivedPage) {
+        throw new Error('Customer list API returned an unsupported response format.');
       }
 
-      if (!hasSuccessfulResponse && lastError) {
-        throw lastError;
+      const normalizedList = payload.content.map((item) => normalizeCustomerRecord(item, EMPTY_CUSTOMER));
+      const normalizedPage = {
+        number: Number(receivedPage.number),
+        size: Number(receivedPage.size),
+        totalElements: Number(receivedPage.totalElements),
+        totalPages: Number(receivedPage.totalPages),
+        dueCustomerCount: Number(receivedPage.dueCustomerCount),
+      };
+      if (!Number.isInteger(normalizedPage.number) || normalizedPage.number !== page
+        || normalizedPage.size !== CUSTOMER_PAGE_SIZE
+        || !Number.isInteger(normalizedPage.totalElements) || normalizedPage.totalElements < 0
+        || !Number.isInteger(normalizedPage.totalPages) || normalizedPage.totalPages < 0
+        || !Number.isInteger(normalizedPage.dueCustomerCount) || normalizedPage.dueCustomerCount < 0
+        || normalizedList.length > CUSTOMER_PAGE_SIZE) {
+        throw new Error('Customer list API returned invalid pagination details.');
       }
 
-      const normalizedList = list.map((item) => normalizeCustomerRecord(item, EMPTY_CUSTOMER));
       setCustomers(normalizedList);
+      setPageInfo(normalizedPage);
+      setCustomerPage(normalizedPage.number);
       setSelectedCustomerId((currentId) => {
         if (normalizedList.length === 0) return '';
         if (currentId && normalizedList.some((item) => String(item.id) === String(currentId))) return currentId;
-        return String(normalizedList[0].id || '');
+        return String(normalizedList[0].id ?? '');
       });
     } catch (loadError) {
       setError(loadError.message || 'Unable to load customer records.');
       setCustomers([]);
+      setPageInfo({
+        number: 0,
+        size: CUSTOMER_PAGE_SIZE,
+        totalElements: 0,
+        totalPages: 0,
+        dueCustomerCount: 0,
+      });
+      setCustomerPage(0);
       setSelectedCustomerId('');
     } finally {
       setLoading(false);
@@ -213,11 +218,26 @@ const CustomerPage = () => {
 
           const normalizedCustomer = normalizeCustomerRecord(detailPayload, EMPTY_CUSTOMER);
           setCustomers([normalizedCustomer]);
+          setCustomerPage(0);
+          setPageInfo({
+            number: 0,
+            size: CUSTOMER_PAGE_SIZE,
+            totalElements: 1,
+            totalPages: 1,
+            dueCustomerCount: normalizedCustomer.dueBalance > 0 ? 1 : 0,
+          });
           setSelectedCustomerId(String(normalizedCustomer.id || ''));
         } catch (loadError) {
           if (!active) return;
           setError(loadError.message || 'Unable to load customer details.');
           setCustomers([]);
+          setPageInfo({
+            number: 0,
+            size: CUSTOMER_PAGE_SIZE,
+            totalElements: 0,
+            totalPages: 0,
+            dueCustomerCount: 0,
+          });
           setSelectedCustomerId('');
         } finally {
           if (active) setLoading(false);
@@ -227,7 +247,8 @@ const CustomerPage = () => {
 
       const initialSearch = searchParams.get('query') || '';
       setSearchTerm(initialSearch);
-      loadCustomers(initialSearch);
+      setAppliedSearch(initialSearch);
+      loadCustomers(initialSearch, 0);
     };
 
     loadCustomerDetail();
@@ -236,7 +257,9 @@ const CustomerPage = () => {
 
   const handleSearchSubmit = async (event) => {
     event.preventDefault();
-    await loadCustomers(searchTerm.trim());
+    const query = searchTerm.trim();
+    setAppliedSearch(query);
+    await loadCustomers(query, 0);
   };
 
   const handleSendPaymentReminder = () => {
@@ -264,10 +287,7 @@ const CustomerPage = () => {
     ? Math.max(selectedCustomer.dueBalance, 0)
     : 0;
   const reminderPhoneAvailable = Boolean(normalizePhoneNumber(selectedCustomer.phone));
-  const dueCustomers = useMemo(
-    () => customers.filter((customer) => Number(customer.dueBalance || 0) > 0),
-    [customers]
-  );
+  const dueCustomerCount = pageInfo.dueCustomerCount;
 
   const handleDailyReminderToggle = async (enabled) => {
     setDailyRemindersEnabled(enabled);
@@ -283,7 +303,7 @@ const CustomerPage = () => {
   };
 
   useEffect(() => {
-    if (!dailyRemindersEnabled || dueCustomers.length === 0) return undefined;
+    if (!dailyRemindersEnabled || dueCustomerCount === 0) return undefined;
     if (!('Notification' in window) || Notification.permission !== 'granted') return undefined;
 
     const dueKey = `ib-daily-reminder-notified:${new Date().toLocaleDateString('en-CA')}`;
@@ -291,14 +311,14 @@ const CustomerPage = () => {
 
     const timer = window.setTimeout(() => {
       new Notification('Customer payment reminders ready', {
-        body: `${dueCustomers.length} customer${dueCustomers.length === 1 ? '' : 's'} have outstanding balances.`,
+        body: `${dueCustomerCount} customer${dueCustomerCount === 1 ? '' : 's'} have outstanding balances.`,
         tag: 'ib-daily-payment-reminders',
       });
       localStorage.setItem(dueKey, '1');
     }, 3000);
 
     return () => window.clearTimeout(timer);
-  }, [dailyRemindersEnabled, dueCustomers.length]);
+  }, [dailyRemindersEnabled, dueCustomerCount]);
 
   return (
     <div className="customer-page">
@@ -325,7 +345,14 @@ const CustomerPage = () => {
           />
           <button type="submit" className="primary-btn">Search</button>
         </form>
-        <button type="button" className="secondary-btn" onClick={() => loadCustomers(searchTerm.trim())}>Refresh</button>
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={() => loadCustomers(appliedSearch, customerPage)}
+          disabled={loading}
+        >
+          Refresh
+        </button>
       </div>
 
       {loading ? (
@@ -338,7 +365,7 @@ const CustomerPage = () => {
       ) : (
         <div className="customer-layout">
           <aside className="customer-list-panel">
-            {customers.map((customer) => (
+            {visibleCustomers.map((customer) => (
               <button
                 type="button"
                 key={customer.id || `${customer.phone}-${customer.customerName}`}
@@ -354,6 +381,35 @@ const CustomerPage = () => {
                 <span className="customer-due-pill">₹{Number(customer.dueBalance || 0).toLocaleString('en-IN')}</span>
               </button>
             ))}
+            {customerPageCount > 1 && (
+              <nav className="customer-pagination" aria-label="Customer list pagination">
+                <span className="customer-pagination-range">
+                  Showing {customerPage * CUSTOMER_PAGE_SIZE + 1}–
+                  {Math.min((customerPage + 1) * CUSTOMER_PAGE_SIZE, pageInfo.totalElements)} of {pageInfo.totalElements}
+                </span>
+                <div className="customer-pagination-actions">
+                  <button
+                    type="button"
+                    className="customer-page-button"
+                    onClick={() => loadCustomers(appliedSearch, Math.max(customerPage - 1, 0))}
+                    disabled={loading || customerPage === 0}
+                    aria-label="Previous customer page"
+                  >
+                    Previous
+                  </button>
+                  <span aria-current="page">{customerPage + 1} / {customerPageCount}</span>
+                  <button
+                    type="button"
+                    className="customer-page-button"
+                    onClick={() => loadCustomers(appliedSearch, Math.min(customerPage + 1, customerPageCount - 1))}
+                    disabled={loading || customerPage >= customerPageCount - 1}
+                    aria-label="Next customer page"
+                  >
+                    Next
+                  </button>
+                </div>
+              </nav>
+            )}
           </aside>
 
           <section className="customer-details-panel">
@@ -401,8 +457,8 @@ const CustomerPage = () => {
                   />
                   Daily reminder notification
                 </label>
-                {dueCustomers.length > 0 && (
-                  <span className="daily-reminder-count">{dueCustomers.length} customer{dueCustomers.length === 1 ? '' : 's'} in the due queue</span>
+                {dueCustomerCount > 0 && (
+                  <span className="daily-reminder-count">{dueCustomerCount} customer{dueCustomerCount === 1 ? '' : 's'} in the due queue</span>
                 )}
               </div>
             </section>

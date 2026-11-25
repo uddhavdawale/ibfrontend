@@ -27,6 +27,11 @@ import {
   roundCurrency,
 } from '../modules/tax/gstConfig';
 import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
+import {
+  findProductsByScannedCode,
+  getProductCodes,
+  normalizeBarcode,
+} from '../modules/barcode/barcodeLookup';
 
 const PAYMENT_SCREENSHOT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_PAYMENT_SCREENSHOT_SIZE = 5 * 1024 * 1024;
@@ -144,6 +149,35 @@ const normalizePaymentMethod = (method) => {
   if (normalizedMethod.includes('WALLET')) return 'WALLET';
   return 'OTHER';
 };
+const normalizeBillingProduct = (product) => {
+  const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
+  const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice) || 0;
+
+  return {
+    ...product,
+    id: product.id ?? product.productId,
+    name: product.name || product.itemName || product.productName || '',
+    sku: product.sku || product.code || '',
+    barcode: product.barcode
+      ?? product.barCode
+      ?? product.barcodeValue
+      ?? product.ean
+      ?? product.ean8
+      ?? product.ean13
+      ?? product.upc
+      ?? product.gtin
+      ?? '',
+    category: product.category || product.categoryName || product.group || 'default',
+    price: sellingPrice,
+    mrp: mrpValue,
+    hsn: getProductHsnCode(product),
+    gst: getProductGstRate(product),
+    gstRate: getProductGstRate(product),
+    gstRateStatus: getProductGstRateStatus(product),
+    stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
+    salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
+  };
+};
 
 const parseWhatsAppRequestedItems = (requestText, products) => {
   const segments = String(requestText || '')
@@ -183,15 +217,31 @@ const BillingPage = () => {
   
   // POS State
   const [cart, setCart] = useState([]);
+  const cartStateRef = useRef(cart);
+  const setCartWithRef = (nextCartOrUpdater) => {
+    const nextCart = typeof nextCartOrUpdater === 'function'
+      ? nextCartOrUpdater(cartStateRef.current)
+      : nextCartOrUpdater;
+    cartStateRef.current = nextCart;
+    setCart(nextCart);
+  };
   const [quantityDrafts, setQuantityDrafts] = useState({});
+  const [cartPriceDrafts, setCartPriceDrafts] = useState({});
   const [cartNotice, setCartNotice] = useState('');
   const [latestAddedProductId, setLatestAddedProductId] = useState(null);
   const cartItemsRef = useRef(null);
   const cartItemRefs = useRef(new Map());
-  const [customer, setCustomer] = useState({ name: '', phone: '', email: '', state: '' });
+  const [customer, setCustomer] = useState({ name: '', phone: '', email: '', address: '', state: '' });
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [customerSelectionLocked, setCustomerSelectionLocked] = useState(false);
   const [searchProduct, setSearchProduct] = useState('');
+  const [isScannerTestMode, setIsScannerTestMode] = useState(false);
+  const [scannerTestNotice, setScannerTestNotice] = useState('');
+  const [isBarcodeLookupActive, setIsBarcodeLookupActive] = useState(false);
+  const productSearchInputRef = useRef(null);
+  const barcodeLookupInProgressRef = useRef(false);
+  const barcodeLookupQueueRef = useRef([]);
+  const barcodeProductCacheRef = useRef(new Map());
   const [invoiceNo, setInvoiceNo] = useState('INV-001');
   const [invoiceRecoveryInvoiceNo, setInvoiceRecoveryInvoiceNo] = useState(() => {
     if (typeof window === 'undefined') return '';
@@ -345,28 +395,7 @@ const BillingPage = () => {
       if (!data || !response?.ok) throw new Error(`HTTP ${response?.status || 500}`);
 
       const productList = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-      const productsWithGst = productList.map(product => {
-        const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
-        const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice ?? 0) || 0;
-        const category = product.category || product.categoryName || product.group || 'default';
-        const gstRate = getProductGstRate(product);
-        const gstRateStatus = getProductGstRateStatus(product);
-
-        return {
-          id: product.id ?? product.productId,
-          name: product.name || product.itemName || product.productName,
-          sku: product.sku || product.code || '',
-          category,
-          price: sellingPrice,
-          mrp: mrpValue,
-          hsn: getProductHsnCode(product),
-          gst: gstRate,
-          gstRate,
-          gstRateStatus,
-          stock: Number(product.quantity ?? product.stock ?? product.ItemQty ?? product.qty ?? 0) || 0,
-          salesCount: Number(product.salesCount ?? product.soldQty ?? product.purchaseCount ?? product.popularity ?? 0) || 0,
-        };
-      });
+      const productsWithGst = productList.map(normalizeBillingProduct);
       setProducts(productsWithGst);
     } catch (error) {
       logger.error('Billing product fetch failed', error);
@@ -436,7 +465,7 @@ const BillingPage = () => {
   const filteredProducts = [...products]
     .filter(p =>
       p.name.toLowerCase().includes(searchProduct.toLowerCase()) ||
-      p.sku?.toLowerCase().includes(searchProduct.toLowerCase())
+      getProductCodes(p).some((code) => code.includes(normalizeBarcode(searchProduct)))
     )
     .sort((a, b) => {
       const aValue = getProductPriority(a);
@@ -563,25 +592,150 @@ const BillingPage = () => {
   
   // Add to cart
   const addToCart = (product) => {
-    if (!isBillingWritable) return;
+    if (!isBillingWritable || isScannerTestMode) return;
     if (product.stock <= 0) {
       alert(`${product.name} - Out of stock!`);
       return;
     }
-    const existing = cart.find(item => item.id === product.id);
+    const currentCart = cartStateRef.current;
+    const existing = currentCart.find(item => item.id === product.id);
     if (existing) {
       if (existing.qty >= product.stock) {
         alert('Stock limit reached!');
         return;
       }
-      setCart(currentCart => currentCart.map(item =>
+      setCartWithRef(currentCart => currentCart.map(item =>
         item.id === product.id ? { ...item, qty: item.qty + 1 } : item
       ));
     } else {
-      setCart(currentCart => [...currentCart, { ...product, qty: 1 }]);
+      setCartWithRef([...currentCart, { ...product, qty: 1 }]);
     }
     setCartNotice(`${product.name} added to cart`);
     setLatestAddedProductId(product.id);
+  };
+
+  const processScannedBarcode = async (scannedCode) => {
+    const cachedProduct = barcodeProductCacheRef.current.get(scannedCode);
+    const localMatches = cachedProduct
+      ? [cachedProduct]
+      : findProductsByScannedCode(products, scannedCode);
+
+    if (localMatches.length > 1) {
+      const notice = 'The scanner sent a code, but it matches multiple products. Correct the product codes before billing.';
+      if (isScannerTestMode) setScannerTestNotice(`${notice} The cart was not changed.`);
+      else setCartNotice(notice);
+      return;
+    }
+    if (localMatches.length === 1) {
+      if (isScannerTestMode) {
+        setScannerTestNotice(`Scan received: ${localMatches[0].name} was found. The cart was not changed.`);
+      } else {
+        addToCart(localMatches[0]);
+      }
+      if (normalizeBarcode(productSearchInputRef.current?.value) === scannedCode) {
+        setSearchProduct('');
+      }
+      return;
+    }
+
+    try {
+      const query = new URLSearchParams({
+        page: '0',
+        size: '20',
+        search: scannedCode,
+      });
+      const response = await apiFetch(`${API_ENDPOINTS.products}?${query}`);
+      if (!response.ok) {
+        throw new Error(`Barcode lookup failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const productList = Array.isArray(payload?.content)
+        ? payload.content
+        : Array.isArray(payload?.page?.content)
+          ? payload.page.content
+          : Array.isArray(payload)
+            ? payload
+            : [];
+      const matches = findProductsByScannedCode(
+        productList.map(normalizeBillingProduct),
+        scannedCode,
+      );
+
+      if (matches.length > 1) {
+        const notice = 'The scanner sent a code, but it matches multiple products. Correct the product codes before billing.';
+        if (isScannerTestMode) setScannerTestNotice(`${notice} The cart was not changed.`);
+        else setCartNotice(notice);
+      } else if (matches.length === 1) {
+        const [product] = matches;
+        barcodeProductCacheRef.current.set(scannedCode, product);
+        setProducts((currentProducts) => (
+          currentProducts.some((currentProduct) => String(currentProduct.id) === String(product.id))
+            ? currentProducts
+            : [...currentProducts, product]
+        ));
+        if (isScannerTestMode) {
+          setScannerTestNotice(`Scan received: ${product.name} was found. The cart was not changed.`);
+        } else {
+          addToCart(product);
+        }
+        if (normalizeBarcode(productSearchInputRef.current?.value) === scannedCode) {
+          setSearchProduct('');
+        }
+      } else {
+        if (isScannerTestMode) {
+          setScannerTestNotice('Scanner input received, but no matching product was found in this store. The cart was not changed.');
+        } else {
+          setCartNotice('No product matches this barcode. Check the code or product setup and try again.');
+        }
+      }
+    } catch (error) {
+      logger.warn('Barcode product lookup failed', error);
+      if (isScannerTestMode) {
+        setScannerTestNotice('Scanner input received, but the product lookup failed. Check your connection; the cart was not changed.');
+      } else {
+        setCartNotice('Could not look up this barcode. Check your connection and scan again.');
+      }
+    }
+  };
+
+  const handleProductSearchKeyDown = async (event) => {
+    if (event.key !== 'Enter' || !isBillingWritable) return;
+
+    const scannedCode = normalizeBarcode(searchProduct);
+    if (!scannedCode) return;
+
+    event.preventDefault();
+    if (barcodeLookupInProgressRef.current) {
+      barcodeLookupQueueRef.current.push(scannedCode);
+      setCartNotice('Barcode queued. It will be added after the current lookup.');
+      return;
+    }
+
+    barcodeLookupInProgressRef.current = true;
+    setIsBarcodeLookupActive(true);
+    try {
+      let nextCode = scannedCode;
+      while (nextCode) {
+        await processScannedBarcode(nextCode);
+        nextCode = barcodeLookupQueueRef.current.shift() || '';
+      }
+    } finally {
+      barcodeLookupInProgressRef.current = false;
+      setIsBarcodeLookupActive(false);
+    }
+  };
+
+  const toggleScannerTestMode = () => {
+    const nextMode = !isScannerTestMode;
+    setIsScannerTestMode(nextMode);
+    setScannerTestNotice(nextMode
+      ? 'Test mode is on. Scan a product; it will not be added to the cart.'
+      : '');
+    if (nextMode) {
+      setSearchProduct('');
+      productSearchInputRef.current?.focus();
+    }
   };
 
   useEffect(() => {
@@ -597,6 +751,7 @@ const BillingPage = () => {
       name: draftCustomer.name || '',
       phone: draftCustomer.phone || '',
       email: draftCustomer.email || '',
+      address: draftCustomer.address || draftCustomer.receiptAddress || '',
       state: normalizeIndianGstState(draftCustomer.state || draftCustomer.placeOfSupplyState),
     });
 
@@ -614,7 +769,7 @@ const BillingPage = () => {
       matchedItems = parseWhatsAppRequestedItems(orderDraft.requestText, products);
     }
 
-    setCart(matchedItems);
+    setCartWithRef(matchedItems);
     setCartNotice(matchedItems.length
       ? `${matchedItems.length} WhatsApp/repeat order item${matchedItems.length === 1 ? '' : 's'} loaded`
       : 'Order loaded; select matching products from the catalog');
@@ -632,7 +787,7 @@ const BillingPage = () => {
       alert('Stock exceeded!');
       return;
     }
-    setCart(currentCart => currentCart.map(item =>
+    setCartWithRef(currentCart => currentCart.map(item =>
       item.id === id ? { ...item, qty } : item
     ));
   };
@@ -649,10 +804,38 @@ const BillingPage = () => {
     if (!Number.isInteger(quantity) || quantity < 0) return;
     updateQty(id, quantity);
   };
+
+  const commitCartPrice = (productId, value) => {
+    if (!isBillingWritable) return;
+    const price = Number(value);
+    if (!Number.isFinite(price) || price <= 0) {
+      setCartPriceDrafts((drafts) => {
+        const nextDrafts = { ...drafts };
+        delete nextDrafts[productId];
+        return nextDrafts;
+      });
+      setCartNotice('Enter a valid cart amount greater than zero.');
+      return;
+    }
+    const roundedPrice = roundCurrency(price);
+    setCartPriceDrafts((drafts) => {
+      const nextDrafts = { ...drafts };
+      delete nextDrafts[productId];
+      return nextDrafts;
+    });
+    setCartWithRef((currentCart) => currentCart.map((item) =>
+      item.id === productId ? { ...item, price: roundedPrice } : item
+    ));
+  };
   
   const removeFromCart = (id) => {
     if (!isBillingWritable) return;
-    setCart(currentCart => currentCart.filter(item => item.id !== id));
+    setCartWithRef(currentCart => currentCart.filter(item => item.id !== id));
+    setCartPriceDrafts((drafts) => {
+      const nextDrafts = { ...drafts };
+      delete nextDrafts[id];
+      return nextDrafts;
+    });
   };
   
   // ✅ FIXED: Invoice number generation
@@ -903,6 +1086,12 @@ const BillingPage = () => {
     const safeCustomerName = escapeHtml(invoiceData.customerName);
     const safeCustomerPhone = escapeHtml(invoiceData.customerPhone);
     const safeCustomerEmail = escapeHtml(invoiceData.customerEmail || 'N/A');
+    const safeCustomerAddress = escapeHtml(String(
+      invoiceData.customerAddress
+      || invoiceData.receiptAddress
+      || invoiceData.customer?.address
+      || ''
+    ).trim());
     const safeCustomerState = escapeHtml(placeOfSupplyLabel);
     const safePaymentMethod = escapeHtml(invoiceData.paymentMethod || 'Cash');
     const safePaymentStatus = escapeHtml(invoiceData.paymentStatus);
@@ -918,20 +1107,6 @@ const BillingPage = () => {
       const safeItemName = escapeHtml(item.name || '-');
       const safeHsn = escapeHtml(item.hsn || '9999');
       const safeQuantity = escapeHtml(item.qty);
-      if (isNonGst) {
-        return `
-          <tr>
-            <td>${index + 1}</td>
-            <td>${safeItemName}</td>
-            <td>${safeHsn}</td>
-            <td>${safeQuantity}</td>
-            <td>₹${enteredUnitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-            <td>₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-            <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-          </tr>
-        `;
-      }
-
       const taxComponentCells = taxComponentType === 'IGST'
         ? `<td>₹${igstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>`
         : `<td>₹${cgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td><td>₹${sgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>`;
@@ -943,7 +1118,7 @@ const BillingPage = () => {
           <td>${safeQuantity}</td>
           <td>₹${enteredUnitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
           <td>₹${taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-          <td>${escapeHtml(item.gst ?? 0)}%</td>
+          <td>${isNonGst ? 0 : escapeHtml(item.gst ?? item.gstRate ?? 0)}%</td>
           ${taxComponentCells}
           <td>₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
         </tr>
@@ -1068,6 +1243,12 @@ const BillingPage = () => {
               display: inline-block;
               min-width: 86px;
               color: var(--invoice-dark);
+            }
+
+            .customer-address {
+              grid-column: 1 / -1;
+              overflow-wrap: anywhere;
+              white-space: pre-wrap;
             }
 
             .status-pill {
@@ -1412,6 +1593,7 @@ const BillingPage = () => {
               <div class="customer-grid">
                 <div><strong>Customer:</strong> ${safeCustomerName}</div>
                 <div><strong>Phone:</strong> ${safeCustomerPhone}</div>
+                ${safeCustomerAddress ? `<div class="customer-address"><strong>Address:</strong> ${safeCustomerAddress}</div>` : ''}
                 <div><strong>Email:</strong> ${safeCustomerEmail}</div>
                 ${safeCustomerState ? `<div><strong>Place of supply:</strong> ${safeCustomerState}</div>` : ''}
                 <div><strong>Payment:</strong> ${safePaymentMethod}</div>
@@ -1426,8 +1608,9 @@ const BillingPage = () => {
                       <th>HSN</th>
                       <th>Qty</th>
                       <th>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Rate incl.' : 'Rate'}</th>
-                      <th>${invoiceData.taxPricingMode === TAX_PRICE_MODES.INCLUSIVE ? 'Taxable' : 'Amount'}</th>
-                      ${invoiceData.billType === BILL_TYPES.NON_GST ? '' : `<th>GST%</th>${taxComponentType === 'IGST' ? '<th>IGST</th>' : '<th>CGST</th><th>SGST</th>'}`}
+                      <th>Taxable</th>
+                      <th>GST%</th>
+                      ${taxComponentType === 'IGST' ? '<th>IGST</th>' : '<th>CGST</th><th>SGST</th>'}
                       <th>Total</th>
                     </tr>
                   </thead>
@@ -1527,6 +1710,9 @@ const BillingPage = () => {
       const payload = {
         customerName: customer.name || 'Walk-in Customer',
         customerPhone: customer.phone || '0000000000',
+        customerAddress: customer.address?.trim() || '',
+        receiptAddress: customer.address?.trim() || '',
+        customerState: placeOfSupplyState || '',
         paymentMethod,
         paymentStatus: initialPaymentStatus,
         status: initialPaymentStatus,
@@ -1777,6 +1963,8 @@ const BillingPage = () => {
         customerName: savedInvoice?.customerName || customer.name || 'Walk-in Customer',
         customerPhone: customer.phone || '0000000000',
         customerEmail: customer.email || '',
+        customerAddress: customer.address?.trim() || '',
+        receiptAddress: customer.address?.trim() || '',
         customerState: authoritativePlaceOfSupplyState,
         placeOfSupplyState: authoritativePlaceOfSupplyState,
         paymentMethod,
@@ -1813,8 +2001,8 @@ const BillingPage = () => {
       openInvoiceWindow(previewInvoice);
 
       await refreshProducts();
-      setCart([]);
-      setCustomer({ name: '', phone: '', email: '', state: '' });
+      setCartWithRef([]);
+      setCustomer({ name: '', phone: '', email: '', address: '', state: '' });
       setInvoiceNo(generatedInvoiceNo);
     } catch (error) {
       if (invoiceRequestStarted && (!invoiceResponseReceived || invoiceOutcomeUncertain)) {
@@ -2090,69 +2278,78 @@ const BillingPage = () => {
         <div className="billing-left">
           <div className="customer-section">
             <h3>👤 Customer Details</h3>
-            <div className="customer-name-field-wrap">
-              <input 
-                placeholder="Customer Name" 
-                value={customer.name}
-                onChange={e => {
-                  const nextValue = e.target.value;
-                  setCustomer({ ...customer, name: nextValue });
-                  setCustomerSelectionLocked(false);
-                  if (!nextValue.trim()) {
-                    setCustomerSuggestions([]);
-                  }
-                }}
+            <div className="customer-fields-grid">
+              <div className="customer-name-field-wrap">
+                <input
+                  placeholder="Customer name"
+                  aria-label="Customer name"
+                  autoComplete="name"
+                  value={customer.name}
+                  onChange={e => {
+                    const nextValue = e.target.value;
+                    setCustomer({ ...customer, name: nextValue });
+                    setCustomerSelectionLocked(false);
+                    if (!nextValue.trim()) {
+                      setCustomerSuggestions([]);
+                    }
+                  }}
+                  className="input-field"
+                  disabled={!isBillingWritable}
+                />
+                {!customerSelectionLocked && customerSuggestions.length > 0 && (
+                  <div className="customer-suggestions">
+                    {customerSuggestions.map((suggestion) => (
+                      <button
+                        key={suggestion.key}
+                        type="button"
+                        className="customer-suggestion-item"
+                        onClick={() => {
+                          setCustomer({
+                            name: suggestion.name,
+                            phone: suggestion.phone || customer.phone,
+                            email: suggestion.email || customer.email,
+                            address: suggestion.address || customer.address,
+                            state: normalizeIndianGstState(suggestion.state) || customer.state,
+                          });
+                          setCustomerSuggestions([]);
+                          setCustomerSelectionLocked(true);
+                        }}
+                      >
+                        <span className="customer-suggestion-name">{suggestion.name}</span>
+                        {suggestion.phone && <span className="customer-suggestion-meta">{suggestion.phone}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <input
+                placeholder="Phone"
+                aria-label="Customer phone"
+                autoComplete="tel"
+                inputMode="tel"
+                value={customer.phone}
+                onChange={e => setCustomer({ ...customer, phone: e.target.value })}
                 className="input-field"
                 disabled={!isBillingWritable}
               />
-              {!customerSelectionLocked && customerSuggestions.length > 0 && (
-                <div className="customer-suggestions">
-                  {customerSuggestions.map((suggestion) => (
-                    <button
-                      key={suggestion.key}
-                      type="button"
-                      className="customer-suggestion-item"
-                      onClick={() => {
-                        setCustomer({
-                          name: suggestion.name,
-                          phone: suggestion.phone || customer.phone,
-                          email: suggestion.email || customer.email,
-                          state: normalizeIndianGstState(suggestion.state) || customer.state,
-                        });
-                        setCustomerSuggestions([]);
-                        setCustomerSelectionLocked(true);
-                      }}
-                    >
-                      <span className="customer-suggestion-name">{suggestion.name}</span>
-                      {suggestion.phone && <span className="customer-suggestion-meta">{suggestion.phone}</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <input 
-              placeholder="📱 Phone" 
-              value={customer.phone}
-              onChange={e => setCustomer({...customer, phone: e.target.value})}
-              className="input-field"
-              disabled={!isBillingWritable}
-            />
-            <input 
-              placeholder="✉️ Email (optional)" 
-              value={customer.email}
-              onChange={e => setCustomer({...customer, email: e.target.value})}
-              className="input-field"
-              disabled={!isBillingWritable}
-            />
-            {isGstBill && (
+              <input
+                placeholder="Email (optional)"
+                aria-label="Customer email (optional)"
+                autoComplete="email"
+                inputMode="email"
+                value={customer.email}
+                onChange={e => setCustomer({ ...customer, email: e.target.value })}
+                className="input-field"
+                disabled={!isBillingWritable}
+              />
               <label className="place-of-supply-control" htmlFor="place-of-supply-state">
-                <span>Buyer’s place-of-supply state *</span>
+                <span>{isGstBill ? 'Place of supply *' : 'State (optional)'}</span>
                 <select
                   id="place-of-supply-state"
                   value={placeOfSupplyState}
                   onChange={(event) => setCustomer({ ...customer, state: event.target.value })}
                   className="input-field"
-                  required
+                  required={isGstBill}
                   disabled={!isBillingWritable}
                 >
                   <option value="">Select state</option>
@@ -2160,22 +2357,56 @@ const BillingPage = () => {
                     <option key={code} value={code}>{name}</option>
                   ))}
                 </select>
-                {issuerStateCode && (
-                  <small>Invoice issuer state: {INDIAN_GST_STATES.find(({ code }) => code === issuerStateCode)?.name || issuerStateCode}</small>
+                {isGstBill && issuerStateCode && (
+                  <small>Issuer: {INDIAN_GST_STATES.find(({ code }) => code === issuerStateCode)?.name || issuerStateCode}</small>
                 )}
               </label>
-            )}
+              <textarea
+                placeholder="Receipt address (optional)"
+                aria-label="Receipt address (optional)"
+                autoComplete="street-address"
+                value={customer.address}
+                onChange={(event) => setCustomer({ ...customer, address: event.target.value })}
+                className="input-field receipt-address-input"
+                rows="2"
+                maxLength="500"
+                disabled={!isBillingWritable}
+              />
+            </div>
           </div>
 
           <div className="products-section">
             <div className="section-header">
               <h3>📦 Products ({filteredProducts.length})</h3>
-              <input 
-                className="search-input"
-                placeholder="🔍 Search products or scan barcode..."
-                value={searchProduct}
-                onChange={e => setSearchProduct(e.target.value)}
-              />
+              <div className="barcode-search-controls">
+                <input
+                  className="search-input"
+                  placeholder="Search products or scan barcode..."
+                  aria-label="Search products or scan barcode"
+                  title="Scan a barcode and press Enter, or search by product name or code."
+                  ref={productSearchInputRef}
+                  value={searchProduct}
+                  onChange={e => {
+                    setSearchProduct(e.target.value);
+                    setScannerTestNotice('');
+                  }}
+                  onKeyDown={handleProductSearchKeyDown}
+                />
+                <button
+                  type="button"
+                  className="scanner-test-button"
+                  onClick={toggleScannerTestMode}
+                  disabled={!isBillingWritable || isBarcodeLookupActive}
+                  aria-pressed={isScannerTestMode}
+                >
+                  {isScannerTestMode ? 'Stop scanner test' : 'Test scanner'}
+                </button>
+              </div>
+              {isScannerTestMode && (
+                <p className="scanner-test-status" role="status" aria-live="polite">
+                  {scannerTestNotice || 'Test mode is on. Scan a product; it will not be added to the cart.'}
+                </p>
+              )}
             </div>
             <div className="products-grid">
               {productLoadError ? (
@@ -2187,7 +2418,12 @@ const BillingPage = () => {
                 </div>
               ) : filteredProducts.length > 0 ? (
                 filteredProducts.map(product => (
-                  <div key={product.id} className="product-card" onClick={() => isBillingWritable && addToCart(product)}>
+                  <div
+                    key={product.id}
+                    className={`product-card${isScannerTestMode ? ' scanner-test-product-disabled' : ''}`}
+                    onClick={() => isBillingWritable && !isScannerTestMode && addToCart(product)}
+                    aria-disabled={isScannerTestMode}
+                  >
                     <div className="product-info">
                       <div className="product-card-topline">
                         <h4>{product.name}</h4>
@@ -2248,9 +2484,32 @@ const BillingPage = () => {
                     <div className="cart-item-left">
                       <h4>{item.name}</h4>
                       <div className="cart-price-row">
-                        <span className="price-display">
-                          ₹{item.price.toLocaleString('en-IN', {minimumFractionDigits: 2})}
-                        </span>
+                        <label className="cart-unit-price">
+                          <span>Unit price</span>
+                          <span className="cart-unit-price-control">
+                            ₹
+                            <input
+                              type="number"
+                              className="cart-price-input"
+                              min="0.01"
+                              step="0.01"
+                              value={cartPriceDrafts[item.id] ?? String(item.price)}
+                              aria-label={`Unit price for ${item.name}`}
+                              disabled={!isBillingWritable}
+                              onChange={(event) => setCartPriceDrafts((drafts) => ({
+                                ...drafts,
+                                [item.id]: event.target.value,
+                              }))}
+                              onBlur={(event) => commitCartPrice(item.id, event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  event.currentTarget.blur();
+                                }
+                              }}
+                            />
+                          </span>
+                        </label>
                         {isGstBill ? (
                           <span className="gst-equation">
                             {!hasGstConfiguration
@@ -2432,8 +2691,8 @@ const BillingPage = () => {
                       type="button"
                       onClick={() => {
                         clearInvoiceRecoveryRequired();
-                        setCart([]);
-                        setCustomer({ name: '', phone: '', email: '', state: '' });
+                        setCartWithRef([]);
+                        setCustomer({ name: '', phone: '', email: '', address: '', state: '' });
                       }}
                     >
                       Invoice was saved - clear cart

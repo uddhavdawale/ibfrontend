@@ -239,27 +239,63 @@
 }
 
 .customer-section, .products-section { margin-bottom: 30px; }
-.customer-section input, .customer-section select, .search-input {
-  width: 100%; padding: 12px 16px; border: 2px solid var(--billing-border); background: var(--billing-input-bg); color: var(--billing-text); border-radius: 8px; margin-bottom: 12px; font-size: 16px;
+.customer-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+.customer-fields-grid > input,
+.customer-name-field-wrap > input,
+.customer-fields-grid select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--billing-border);
+  background: var(--billing-input-bg);
+  color: var(--billing-text);
+  border-radius: 8px;
+  margin: 0;
+  font-size: 14px;
+}
+.customer-section textarea.receipt-address-input {
+  width: 100%;
+  min-width: 0;
+  grid-column: 1 / -1;
+  resize: vertical;
+  min-height: 52px;
+  max-height: 90px;
+  padding: 8px 10px;
+  border: 1px solid var(--billing-border);
+  background: var(--billing-input-bg);
+  color: var(--billing-text);
+  border-radius: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-family: inherit;
 }
 .place-of-supply-control {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
+  min-width: 0;
+  gap: 4px;
+  margin: 0;
   color: var(--billing-text-soft);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
 }
 .place-of-supply-control select {
-  margin-bottom: 0;
+  font-weight: 400;
 }
 .place-of-supply-control small {
   color: var(--billing-text-faint);
   font-weight: 500;
+  font-size: 10px;
 }
-.customer-section input:focus,
-.customer-section select:focus,
+.customer-fields-grid input:focus,
+.customer-fields-grid select:focus,
+.customer-fields-grid textarea:focus,
 .search-input:focus {
   border-color: rgba(37, 99, 235, 0.6);
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
@@ -267,6 +303,10 @@
 }
 .customer-name-field-wrap {
   position: relative;
+  min-width: 0;
+}
+.customer-name-field-wrap > input {
+  display: block;
 }
 .customer-suggestions {
   position: absolute;
@@ -314,6 +354,70 @@
   white-space: nowrap;
 }
 .search-input:focus { border-color: #2563eb; outline: none; }
+.products-section > .section-header {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--billing-border);
+}
+.products-section > .section-header h3 {
+  margin: 0;
+  white-space: nowrap;
+}
+.products-section > .section-header .scanner-test-status {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.barcode-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.barcode-search-controls .search-input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--billing-border);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.scanner-test-button {
+  flex: 0 0 auto;
+  height: 42px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--billing-border);
+  border-radius: 8px;
+  background: var(--billing-panel);
+  color: var(--billing-text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.scanner-test-button:hover:not(:disabled) {
+  border-color: var(--billing-primary);
+}
+.scanner-test-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.scanner-test-status {
+  margin: -4px 0 12px;
+  color: var(--billing-text-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.scanner-test-product-disabled {
+  cursor: default;
+  opacity: 0.65;
+}
 .product-card-topline {
   display: flex;
   align-items: center;
@@ -335,6 +439,31 @@
   padding: 16px; border: 2px solid var(--billing-border); border-radius: 8px; cursor: pointer; transition: all 0.2s; background: var(--billing-panel-soft); color: var(--billing-text);
 }
 .product-card:hover { border-color: #2563eb; background: rgba(37,99,235,0.06); }
+.cart-unit-price {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--billing-text-faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+.cart-unit-price-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--billing-text);
+  font-size: 14px;
+}
+.cart-price-input {
+  width: 96px;
+  padding: 5px 6px;
+  border: 1px solid var(--billing-border);
+  border-radius: 6px;
+  background: var(--billing-input-bg);
+  color: var(--billing-text);
+  font-weight: 700;
+  font-size: 14px;
+}
 .cart-item { 
   display: flex; justify-content: space-between; align-items: center; padding: 15px 0; border-bottom: 1px solid var(--billing-border);
   color: var(--billing-text);
@@ -784,6 +913,15 @@
     border-radius: 14px;
   }
 
+  .products-section > .section-header {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .products-section > .section-header h3 {
+    white-space: normal;
+  }
+
   .product-card-topline {
     flex-direction: column;
     align-items: flex-start;
@@ -863,7 +1001,15 @@
 }
 
 @media (max-width: 420px) {
-  .customer-section input, .search-input {
+  .customer-fields-grid > input,
+  .customer-name-field-wrap > input,
+  .customer-fields-grid select,
+  .customer-section textarea.receipt-address-input {
+    font-size: 13px;
+    padding: 8px;
+  }
+
+  .search-input {
     font-size: 15px;
     padding: 12px 14px;
   }

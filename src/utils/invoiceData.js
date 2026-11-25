@@ -89,6 +89,12 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
 
   const customerName = invoiceData.customer?.name ?? invoiceData.customerName ?? 'Walk-in Customer';
   const customerPhone = invoiceData.customer?.phone ?? invoiceData.customerPhone ?? '0000000000';
+  const customerAddress = String(
+    invoiceData.customer?.address
+    || invoiceData.customerAddress
+    || invoiceData.receiptAddress
+    || ''
+  ).trim();
   const paymentMethod = invoiceData.paymentMethod ?? invoiceData.payment ?? 'UPI';
   const paymentStatus = invoiceData.paymentStatus ?? invoiceData.status ?? 'pending';
   const invoiceNumber = invoiceData.invoiceNo ?? 'INV-0000';
@@ -128,8 +134,8 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     grandTotal,
     taxPricingMode,
     taxComponentType,
-    placeOfSupplyState: invoiceData.placeOfSupplyState ?? '',
-    customerState: invoiceData.customerState ?? invoiceData.placeOfSupplyState ?? '',
+    placeOfSupplyState: invoiceData.placeOfSupplyState || invoiceData.customerState || '',
+    customerState: invoiceData.customerState || invoiceData.placeOfSupplyState || '',
     totalQty,
     receivedAmount,
     previousBalance,
@@ -137,6 +143,7 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     currentBalance,
     customerName,
     customerPhone,
+    customerAddress,
     paymentMethod,
     paymentStatus,
     invoiceNumber,

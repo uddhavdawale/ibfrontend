@@ -4,6 +4,7 @@ export const API_BASE_URL =
 export const API_ENDPOINTS = {
   login: `${API_BASE_URL}/api/login`,
   signup: `${API_BASE_URL}/api/auth/signup`,
+  contact: `${API_BASE_URL}/api/contact`,
   passwordRecovery: `${API_BASE_URL}/api/auth/password/forgot`,
   passwordReset: `${API_BASE_URL}/api/auth/password/reset`,
   users: `${API_BASE_URL}/api/users`,
@@ -22,9 +23,25 @@ export const API_ENDPOINTS = {
   customerProfileById: (id) => `${API_BASE_URL}/api/customer_profiles/${id}`,
   customerByPhone: (phone) => `${API_BASE_URL}/api/customers/phone/${encodeURIComponent(phone)}`,
   customerProfileByPhone: (phone) => `${API_BASE_URL}/api/customer_profiles/phone/${encodeURIComponent(phone)}`,
+  customerProfilesPage: (page = 0, size = 25, search = '') => {
+    const params = new URLSearchParams({ page: String(page), size: String(size) });
+    if (search.trim()) params.set('search', search.trim());
+    return `${API_BASE_URL}/api/customer_profiles/page?${params}`;
+  },
   customerSearch: (query = '') => `${API_BASE_URL}/api/customers/search?query=${encodeURIComponent(query)}`,
   customerProfilesSearch: (query = '') => `${API_BASE_URL}/api/customer_profiles/search?query=${encodeURIComponent(query)}`,
   products: `${API_BASE_URL}/api/products`,
+  productsPage: (page = 0, size = 25, search = '') => {
+    const params = new URLSearchParams({
+      page: String(page),
+      size: String(size),
+      sortBy: 'id',
+      sortDir: 'desc',
+    });
+    if (search.trim()) params.set('search', search.trim());
+    return `${API_BASE_URL}/api/products?${params}`;
+  },
+  inventoryValue: `${API_BASE_URL}/api/products/inventory-value`,
   billingProducts: `${API_BASE_URL}/api/billing/products`,
   productsWithSize: (size = 1000) => `${API_BASE_URL}/api/products?size=${size}`,
   billingProductsPage: (page = 0, size = 100) => `${API_BASE_URL}/api/billing/products?page=${page}&size=${size}`,
@@ -62,6 +79,8 @@ export const API_ENDPOINTS = {
   cashCollectionTicketProofById: (id) => `${API_BASE_URL}/api/cash-collection-tickets/${encodeURIComponent(id)}/payment-proof`,
   dashboardSummary: `${API_BASE_URL}/api/dashboard/summary`,
   dashboardLegacy: `${API_BASE_URL}/api/dashboard`,
+  customerLedger: `${API_BASE_URL}/api/customer-ledger`,
+  customerLedgerExport: `${API_BASE_URL}/api/customer-ledger/export`,
   metrics: `${API_BASE_URL}/api/metrics`,
   salesLastSixMonths: `${API_BASE_URL}/api/sales/last-six-months`,
   gstSummary: `${API_BASE_URL}/api/gst/summary`,

@@ -34,7 +34,11 @@ const InventoryPage = () => {
   const navigate = useNavigate();
   
   const [products, setProducts] = useState([]);
+  const [totalProducts, setTotalProducts] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [inventoryValue, setInventoryValue] = useState(null);
+  const [inventoryValueLoading, setInventoryValueLoading] = useState(true);
+  const [inventoryValueError, setInventoryValueError] = useState('');
   const [currentPage, setCurrentPage] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
@@ -87,21 +91,47 @@ const InventoryPage = () => {
       }));
 
       setProducts(normalizedProducts);
+      setTotalProducts(Number(pagePayload?.totalElements ?? normalizedProducts.length) || 0);
       setTotalPages(safeTotalPages);
       setCurrentPage(Math.min(pageNumber, safeTotalPages > 0 ? safeTotalPages - 1 : 0));
     } catch (error) {
       logger.error('Product fetch failed', error);
       setProducts([]);
+      setTotalProducts(0);
       setTotalPages(0);
       setCurrentPage(0);
     } finally {
       setLoading(false);
     }
   };
+
+  const fetchInventoryValue = async () => {
+    setInventoryValueLoading(true);
+    setInventoryValueError('');
+    try {
+      const response = await apiFetch(API_ENDPOINTS.inventoryValue);
+      if (!response.ok) {
+        throw new Error(`Could not load inventory value (${response.status})`);
+      }
+      const payload = await response.json();
+      const value = Number(payload?.inventoryValue);
+      if (!Number.isFinite(value)) {
+        throw new Error('Inventory value API returned an invalid amount.');
+      }
+      setInventoryValue(value);
+    } catch (error) {
+      logger.error('Inventory value fetch failed', error);
+      setInventoryValue(null);
+      setInventoryValueError('Unable to load total inventory value.');
+    } finally {
+      setInventoryValueLoading(false);
+    }
+  };
   
   useEffect(() => {
     setRole(getCurrentUserRole());
     fetchProducts();
+    fetchInventoryValue();
   }, []);
   
   const handleSearch = (term) => {
@@ -161,7 +191,10 @@ const saveProduct = async (e, isEdit = false) => {
     setEditingItem(null);
     e.target.reset();
 
-    await fetchProducts(currentPage, searchTerm);
+    await Promise.all([
+      fetchProducts(currentPage, searchTerm),
+      fetchInventoryValue(),
+    ]);
   } catch (error) {
     logger.error('Product save failed', error);
     alert('Save failed');
@@ -178,7 +211,10 @@ const saveProduct = async (e, isEdit = false) => {
         method: 'DELETE',
       });
       if (!response.ok) throw new Error(`Delete failed (${response.status})`);
-      fetchProducts(currentPage, searchTerm);
+      await Promise.all([
+        fetchProducts(currentPage, searchTerm),
+        fetchInventoryValue(),
+      ]);
     }
   };
   
@@ -191,6 +227,7 @@ const saveProduct = async (e, isEdit = false) => {
   const handleInventoryUploadSuccess = async () => {
     if (!isInventoryWritable) return;
     await fetchProducts(currentPage, searchTerm);
+    await fetchInventoryValue();
     setShowUploadModal(false);
   };
 
@@ -211,9 +248,15 @@ const saveProduct = async (e, isEdit = false) => {
     setLastExportAt(now);
   };
 
+  const handleInventoryRefresh = async () => {
+    await Promise.all([
+      fetchProducts(currentPage, searchTerm),
+      fetchInventoryValue(),
+    ]);
+  };
+
   const lowStockProducts = products.filter(item => Number(item.quantity || 0) <= Number(item.minStock || 0));
   const totalUnits = products.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-  const totalInventoryValue = products.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);
   const topCategories = Object.entries(
     products.reduce((acc, item) => {
       const category = item.category || item.group || 'General';
@@ -230,7 +273,7 @@ const saveProduct = async (e, isEdit = false) => {
         </button>
         <div>
           <h1>📦 Inventory Management</h1>
-          <p>{products.length} of {totalPages * PAGE_SIZE} products</p>
+          <p>{products.length} of {totalProducts} products</p>
           {!isInventoryWritable && <p className="error-text">Read-only mode: inventory viewer access.</p>}
         </div>
       </header>
@@ -244,6 +287,16 @@ const saveProduct = async (e, isEdit = false) => {
           className="search-input"
         />
         <div className="inventory-actions">
+          <button
+            type="button"
+            className={`inventory-refresh-btn ${loading || inventoryValueLoading ? 'is-loading' : ''}`}
+            onClick={handleInventoryRefresh}
+            disabled={loading || inventoryValueLoading}
+            aria-label="Refresh inventory"
+            title="Refresh inventory"
+          >
+            ↻
+          </button>
           <div className="export-controls">
             <select
               className="export-select"
@@ -260,6 +313,9 @@ const saveProduct = async (e, isEdit = false) => {
           </div>
           <button className="add-btn secondary" onClick={() => setShowUploadModal(true)} disabled={!isInventoryWritable}>
             ⬆️ Upload Inventory
+          </button>
+          <button className="add-btn secondary" onClick={() => navigate('/inventory/report')}>
+            Inventory Report
           </button>
           <button className="add-btn primary" onClick={() => setShowAddModal(true)} disabled={!isInventoryWritable}>
             ➕ Add Product
@@ -280,8 +336,15 @@ const saveProduct = async (e, isEdit = false) => {
         </div>
         <div className="insight-card">
           <span className="insight-label">Inventory value</span>
-          <strong>₹{totalInventoryValue.toLocaleString('en-IN')}</strong>
-          <small>Stock at current price</small>
+          <strong>
+            {inventoryValueLoading
+              ? 'Loading…'
+              : inventoryValue === null
+                ? 'Unavailable'
+                : `₹${inventoryValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </strong>
+          <small>All products at current selling price</small>
+          {inventoryValueError && <small className="inventory-value-error" role="alert">{inventoryValueError}</small>}
         </div>
         <div className="insight-card">
           <span className="insight-label">Top category</span>

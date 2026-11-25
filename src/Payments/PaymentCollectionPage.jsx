@@ -257,35 +257,6 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
     if (canViewCashierBalances || canSubmitTicket) loadCashBalances();
   }, [canSubmitTicket, canViewCashierBalances, loadCashBalances]);
 
-  useEffect(() => {
-    if (!canViewCashierBalances && !canSubmitTicket) return undefined;
-
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') {
-        loadCashBalances(cashBalancePage);
-        if (canAccessTickets) loadTickets(ticketPage);
-      }
-    };
-
-    const intervalId = window.setInterval(refreshWhenVisible, 60 * 1000);
-    window.addEventListener('focus', refreshWhenVisible);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', refreshWhenVisible);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-    };
-  }, [
-    canAccessTickets,
-    canSubmitTicket,
-    canViewCashierBalances,
-    cashBalancePage,
-    loadCashBalances,
-    loadTickets,
-    ticketPage,
-  ]);
-
   const loadTicketRecipients = useCallback(async () => {
     setStoreAdminsLoading(true);
     setStoreAdminsError('');

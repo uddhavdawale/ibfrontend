@@ -16,7 +16,7 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
     invoiceData.shopProfile || readStoredShopProfile()
   );
   const shopDisplayName = getShopDisplayName(activeShopProfile);
-  const { rows, subtotal, gstTotal, grandTotal, taxPricingMode, taxComponentType, placeOfSupplyState, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
+  const { rows, subtotal, gstTotal, grandTotal, taxPricingMode, taxComponentType, placeOfSupplyState, receivedAmount, previousBalance, balanceAmount, currentBalance, customerName, customerPhone, customerAddress, paymentMethod, paymentStatus, invoiceNumber, issueDate } = normalized;
   const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
 
   const rupeeSymbol = 'Rs.';
@@ -109,10 +109,25 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
 
   // Bill-to panel
   const billToY = 45;
+  const customerDetailsWidth = 88;
+  const addressLines = customerAddress
+    ? pdf.splitTextToSize(`Address: ${customerAddress}`, customerDetailsWidth)
+    : [];
+  const placeOfSupplyLabel = placeOfSupplyState
+    ? `Place of supply: ${getIndianGstStateName(placeOfSupplyState) || placeOfSupplyState}`
+    : '';
+  const stateLines = placeOfSupplyLabel
+    ? pdf.splitTextToSize(placeOfSupplyLabel, customerDetailsWidth)
+    : [];
+  const addressY = billToY + 25;
+  const stateY = addressY + (addressLines.length ? addressLines.length * 4.2 + (stateLines.length ? 1 : 0) : 0);
+  const detailsBottomY = stateY + stateLines.length * 4.2;
+  const billToHeight = Math.max(29, detailsBottomY - billToY + 4);
+
   pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(left, billToY, right - left, 29, 2, 2, 'F');
+  pdf.roundedRect(left, billToY, right - left, billToHeight, 2, 2, 'F');
   pdf.setDrawColor(226, 232, 240);
-  pdf.roundedRect(left, billToY, right - left, 29, 2, 2, 'S');
+  pdf.roundedRect(left, billToY, right - left, billToHeight, 2, 2, 'S');
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8.5);
@@ -127,9 +142,8 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.8);
   pdf.text(`Phone: ${customerPhone}`, left + 5, billToY + 19);
-  if (placeOfSupplyState) {
-    pdf.text(`Place of supply: ${getIndianGstStateName(placeOfSupplyState) || placeOfSupplyState}`, left + 5, billToY + 25);
-  }
+  if (addressLines.length) pdf.text(addressLines, left + 5, addressY);
+  if (stateLines.length) pdf.text(stateLines, left + 5, stateY);
 
   pdf.text(`Method: ${paymentMethod}`, 120, billToY + 13);
   pdf.text(`Status: ${invoiceStatus}`, 120, billToY + 19);
@@ -174,7 +188,7 @@ export const buildInvoicePdf = async (invoiceData = {}) => {
   autoTable(pdf, {
     head: tableHead,
     body: rows,
-    startY: 80,
+    startY: billToY + billToHeight + 6,
     theme: 'grid',
     tableWidth: right - left,
     styles: {
