@@ -363,6 +363,7 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
         throw new Error(payload.message || payload.error || `Unable to load payment report (${response.status}).`);
       }
       const requiredSummaryFields = [
+        'netSales',
         'totalCollected',
         'totalRefunds',
         'totalTransactions',
@@ -802,8 +803,12 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
   return (
     <main className="payment-collection-page">
       <header className="payment-page-header">
-        <div>
-          {!isCashSeller && <button type="button" className="payment-back-link" onClick={navigateToSell}>← Sell orders</button>}
+        {!isCashSeller && (
+          <button type="button" className="payment-back-link" onClick={navigateToSell}>
+            ← Sell orders
+          </button>
+        )}
+        <div className="payment-page-heading">
           <h1>{isCashSeller ? 'My cash collections' : 'Payment collections'}</h1>
           <p>{isCashSeller
             ? 'Review your recorded cash sales and submit the amount due to the store admin.'
@@ -855,7 +860,8 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
 
       {error && <p className="payment-error" role="alert">{error}</p>}
 
-      <section className="payment-summary-grid" aria-label="Collection totals">
+      <section className="payment-summary-grid" aria-label="Sales and collection totals">
+        <article><span>Net sales (invoice dates)</span><strong>{formatMoney(summary.netSales)}</strong></article>
         <article><span>Net collected</span><strong>{formatMoney(summary.totalCollected)}</strong></article>
         <article><span>Refunds</span><strong>{formatMoney(summary.totalRefunds)}</strong></article>
         <article><span>Transactions</span><strong>{Number(summary.totalTransactions || 0).toLocaleString('en-IN')}</strong></article>
@@ -863,6 +869,9 @@ const PaymentCollectionPage = ({ onNavigateToSell }) => {
         <article><span>UPI + card</span><strong>{formatMoney(Number(summary.upiCollected || 0) + Number(summary.cardCollected || 0))}</strong></article>
         <article><span>Outstanding dues</span><strong>{formatMoney(summary.outstandingAmount)}</strong></article>
       </section>
+      <p className="payment-filter-hint">
+        Net sales uses the selected invoice-date range and excludes cancelled invoices. Collection totals use receipt/refund dates; cancellation changes them only after an actual refund is recorded.
+      </p>
 
       {refundSuccess && <p className="payment-success" role="status">{refundSuccess}</p>}
       <section className="payment-report-panel">
