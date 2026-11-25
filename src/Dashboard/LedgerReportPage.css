@@ -192,6 +192,23 @@
   overflow-x: auto;
 }
 
+.ledger-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--ledger-border);
+  color: var(--ledger-muted);
+  font-size: 0.84rem;
+}
+
+.ledger-page-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .ledger-table {
   width: 100%;
   border-collapse: collapse;
@@ -313,6 +330,12 @@
 
   .ledger-toolbar {
     grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .ledger-pagination {
+    align-items: flex-start;
+    flex-direction: column;
     padding: 14px;
   }
 }

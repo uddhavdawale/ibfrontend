@@ -35,6 +35,7 @@ function App() {
           <div className="nav-actions">
             <span className="nav-pill">Made for Indian retail</span>
             <span className="nav-pill muted">Stock · Billing · Reports</span>
+            <Link to="/contact" className="nav-contact">Contact us</Link>
             <div className="theme-switcher" aria-label="Theme selector">
               {themeOptions.map((option) => (
                 <button

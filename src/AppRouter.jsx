@@ -8,9 +8,11 @@ import App from './App.jsx';
 import InventoryPage from './Inventory/Inventory.jsx';
 import BillingPage from './Billing/BillingPage.jsx';
 import SignupPage from './Login/SignupPage.jsx';
+import ContactPage from './Contact/ContactPage.jsx';
 import SellPage from './sell/SellPage.jsx';
 const PaymentCollectionPage = lazy(() => import('./Payments/PaymentCollectionPage.jsx'));
 const LedgerReportPage = lazy(() => import('./Dashboard/LedgerReportPage.jsx'));
+const InventoryReportPage = lazy(() => import('./Inventory/InventoryReport.jsx'));
 const AdminHsnTaxRatesPage = lazy(() => import('./Admin/AdminHsnTaxRatesPage.jsx'));
 import MfaScreen from './auth/mfa/MfaScreen.jsx';
 import AccessDenied from './Security/AccessDenied.jsx';
@@ -378,8 +380,11 @@ const AppRoutes = () => {
       <Route path="/profile" element={isAuthenticated ? <ProfilePage username={user?.name || ''} onLogout={logoutUser} /> : <Navigate to="/login" replace />} />
       <Route path="/billing" element={isAuthenticated ? (canOpenBilling ? <BillingPage /> : <Navigate to="/access-denied" state={{ from: '/billing', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/ledger" element={isAuthenticated ? (canOpenBilling ? <Suspense fallback={<div className="loading-screen" role="status">Loading customer ledger…</div>}><LedgerReportPage /></Suspense> : <Navigate to="/access-denied" state={{ from: '/ledger', role }} replace />) : <Navigate to="/login" replace />} />
+      <Route path="/inventory/report" element={isAuthenticated ? (canOpenInventory ? <Suspense fallback={<div className="loading-screen" role="status">Loading inventory report…</div>}><InventoryReportPage /></Suspense> : <Navigate to="/access-denied" state={{ from: '/inventory/report', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/inventory" element={isAuthenticated ? (canOpenInventory ? <InventoryPage /> : <Navigate to="/access-denied" state={{ from: '/inventory', role }} replace />) : <Navigate to="/login" replace />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/contact" element={<ContactPage />} />
+      <Route path="/contact" element={<ContactPage />} />
       <Route path="/customer" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
       <Route path="/customers" element={isAuthenticated ? <CustomerPage /> : <Navigate to="/login" replace />} />
       <Route path="/sell" element={isAuthenticated ? (canOpenSellOrders ? <SellPage /> : <Navigate to="/access-denied" state={{ from: '/sell', role }} replace />) : <Navigate to="/login" replace />} />
