@@ -1,7 +1,8 @@
 export const normalizeInvoiceData = (invoiceData = {}) => {
   const items = Array.isArray(invoiceData.items) ? invoiceData.items : [];
   const rupee = 'Rs.';
-  const isNonGstInvoice = String(invoiceData.billType ?? '').toLowerCase() === 'non-gst' || String(invoiceData.billType ?? '').toLowerCase() === 'non gst';
+  const billType = String(invoiceData.billType ?? '').toLowerCase();
+  const isNonGstInvoice = ['non-gst', 'non gst', 'non_gst'].includes(billType);
   const taxPricingMode = String(invoiceData.taxPricingMode ?? '').toLowerCase() === 'inclusive'
     || invoiceData.taxInclusive
     ? 'inclusive'
@@ -109,19 +110,23 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     const row = [
       String(index + 1),
       item.item || item.name || '-',
-      item.hsn || '9999',
+    ];
+    if (!isNonGstInvoice) row.push(item.hsn || '9999');
+    row.push(
       String(qty),
       `${rupee}${rate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `${rupee}${taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `${isNonGstInvoice ? 0 : gstPercent}%`,
-    ];
-    if (taxComponentType === 'IGST' && !isNonGstInvoice) {
-      row.push(`${rupee}${igstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-    } else {
-      row.push(
-        `${rupee}${cgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        `${rupee}${sgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      );
+      `${rupee}${taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    );
+    if (!isNonGstInvoice) {
+      row.push(`${gstPercent}%`);
+      if (taxComponentType === 'IGST') {
+        row.push(`${rupee}${igstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+      } else {
+        row.push(
+          `${rupee}${cgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `${rupee}${sgstValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        );
+      }
     }
     row.push(`${rupee}${total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
     return row;
@@ -134,7 +139,7 @@ export const normalizeInvoiceData = (invoiceData = {}) => {
     grandTotal,
     taxPricingMode,
     taxComponentType,
-    placeOfSupplyState: invoiceData.placeOfSupplyState || invoiceData.customerState || '',
+    placeOfSupplyState: isNonGstInvoice ? '' : invoiceData.placeOfSupplyState || invoiceData.customerState || '',
     customerState: invoiceData.customerState || invoiceData.placeOfSupplyState || '',
     totalQty,
     receivedAmount,

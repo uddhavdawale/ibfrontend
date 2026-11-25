@@ -1250,6 +1250,10 @@ const OrderDetail = ({
   const totalQty = Array.isArray(order?.items)
     ? order.items.reduce((sum, i) => sum + Number(i.qty || 0), 0)
     : 0;
+  const billType = String(order?.billType ?? '').trim().toLowerCase();
+  const isGstInvoice = billType
+    ? billType === 'gst'
+    : order?.isGstInvoice !== false;
   const invoiceIssuerProfile = resolveInvoiceIssuerProfile(order, shopProfile);
 
   return (
@@ -1258,7 +1262,7 @@ const OrderDetail = ({
       <div className="detail-header">
         <div className="invoice-shop-info">
           <h2>{getShopDisplayName(invoiceIssuerProfile)}</h2>
-          <p>GSTIN: {invoiceIssuerProfile.gstin || invoiceIssuerProfile.gstNumber || ''}</p>
+          {isGstInvoice && <p>GSTIN: {invoiceIssuerProfile.gstin || invoiceIssuerProfile.gstNumber || ''}</p>}
           <p>{invoiceIssuerProfile.address || ''}</p>
           {invoiceIssuerProfile.phone && <p>📞 {invoiceIssuerProfile.phone}</p>}
           {invoiceIssuerProfile.email && <p>✉️ {invoiceIssuerProfile.email}</p>}
@@ -1304,12 +1308,16 @@ const OrderDetail = ({
               <tr>
                 <th>S.No</th>
                 <th>Item</th>
-                <th>HSN</th>
+                {isGstInvoice && <th>HSN</th>}
                 <th>Qty</th>
                 <th>Rate</th>
                 <th>Amount (₹)</th>
-                <th>GST (%)</th>
-                <th>GST (₹)</th>
+                {isGstInvoice && (
+                  <>
+                    <th>GST (%)</th>
+                    <th>GST (₹)</th>
+                  </>
+                )}
                 <th>Total (₹)</th>
               </tr>
             </thead>
@@ -1321,12 +1329,16 @@ const OrderDetail = ({
                   <tr key={item.sn}>
                     <td>{item.sn}</td>
                     <td>{item.item}</td>
-                    <td>{item.hsn}</td>
+                    {isGstInvoice && <td>{item.hsn}</td>}
                     <td>{item.qty}</td>
                     <td>₹{item.rate.toFixed(2)}</td>
                     <td>₹{amount.toFixed(2)}</td>
-                    <td>{item.gst}%</td>
-                    <td>₹{gstValue.toFixed(2)}</td>
+                    {isGstInvoice && (
+                      <>
+                        <td>{item.gst}%</td>
+                        <td>₹{gstValue.toFixed(2)}</td>
+                      </>
+                    )}
                     <td>₹{item.total.toFixed(2)}</td>
                   </tr>
                 );
@@ -1349,8 +1361,12 @@ const OrderDetail = ({
           <div>Subtotal (₹):</div>
           <div>₹{order.subtotal.toLocaleString()}</div>
 
-          <div>GST Total (₹):</div>
-          <div>₹{order.totalGst.toLocaleString()}</div>
+          {isGstInvoice && (
+            <>
+              <div>GST Total (₹):</div>
+              <div>₹{order.totalGst.toLocaleString()}</div>
+            </>
+          )}
 
           <div className="grand-total-row">
             <strong>Grand Total (₹):</strong>
