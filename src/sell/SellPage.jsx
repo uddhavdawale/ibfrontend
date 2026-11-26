@@ -6,13 +6,14 @@ import { API_ENDPOINTS, apiFetch } from "../Config/api";
 import { buildInvoicePdf } from "../utils/invoicePdf";
 import { openWhatsAppChat } from "../utils/whatsapp";
 import createSecureIdempotencyKey from "../utils/createSecureIdempotencyKey";
+import CancelledOrderRefundDialog from "./CancelledOrderRefundDialog";
 import {
   getCurrentShopProfile,
   getShopDisplayName,
   readStoredShopProfile,
   resolveInvoiceIssuerProfile,
 } from "../modules/shopProfile/shopProfileService";
-import { canWriteBilling, getCurrentUserRole } from "../Security/storeRoles";
+import { canWriteBilling, getCurrentUserRole, isStoreAdmin, isSystemAdmin } from "../Security/storeRoles";
 import { normalizeWhatsAppPhone } from "../utils/whatsappCommerce";
 
 const exportSellOrdersData = (orders, format = "csv") => {
@@ -488,62 +489,26 @@ const fetchLatestInvoicePaymentState = async (order, fallbackSoldBy) => {
   );
 };
 
-const getExchangeableItems = (order) => {
-  const groupedItems = new Map();
-  let unavailableItemCount = 0;
+const getSellOrderKey = (order) => `${order?.billType || 'gst'}:${order?.id}`;
 
-  (Array.isArray(order?.items) ? order.items : []).forEach((item) => {
-    const productId = Number(item.productId);
-    const quantity = Number(item.qty ?? item.quantity ?? 0);
-    const rawUnitPrice = item.rate ?? item.unitPrice ?? item.price;
-    const unitPrice = Number(rawUnitPrice ?? 0);
-    const hasUnitPrice = item.unitPriceAvailable
-      ?? (rawUnitPrice !== undefined && rawUnitPrice !== null && rawUnitPrice !== '');
-
-    if (!Number.isSafeInteger(productId) || productId <= 0
-      || !Number.isFinite(quantity) || quantity <= 0
-      || !hasUnitPrice || !Number.isFinite(unitPrice) || unitPrice < 0) {
-      unavailableItemCount += 1;
-      return;
-    }
-
-    const key = String(productId);
-    const existing = groupedItems.get(key);
-    const returnedValue = quantity * unitPrice;
-
-    if (existing) {
-      existing.soldQuantity += quantity;
-      existing.returnedValue += returnedValue;
-    } else {
-      groupedItems.set(key, {
-        productId,
-        productName: String(item.item ?? item.name ?? item.productName ?? `Product ${productId}`),
-        soldQuantity: quantity,
-        returnedValue,
-      });
-    }
-  });
-
-  return {
-    items: Array.from(groupedItems.values()).map((item) => ({
-      ...item,
-      unitPrice: item.returnedValue / item.soldQuantity,
-    })),
-    unavailableItemCount,
-  };
-};
+const isNonGstSellOrder = (order) => (
+  String(order?.billType || '').toLowerCase().includes('non')
+  || order?.isGstInvoice === false
+);
 
 const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User") => {
   const invoiceId = invoiceSummary?.id ?? invoiceSummary?.invoiceId;
   if (!invoiceId) return invoiceSummary;
 
-  const candidateUrls = [
-    API_ENDPOINTS.invoiceById(invoiceId),
-    API_ENDPOINTS.invoiceDetailsById(invoiceId),
-    API_ENDPOINTS.invoiceItemsById(invoiceId),
-    API_ENDPOINTS.invoiceLegacyById(invoiceId),
-    API_ENDPOINTS.invoiceLegacyDetailById(invoiceId)
-  ];
+  const candidateUrls = isNonGstSellOrder(invoiceSummary)
+    ? [API_ENDPOINTS.nonGstInvoiceById(invoiceId)]
+    : [
+      API_ENDPOINTS.invoiceById(invoiceId),
+      API_ENDPOINTS.invoiceDetailsById(invoiceId),
+      API_ENDPOINTS.invoiceItemsById(invoiceId),
+      API_ENDPOINTS.invoiceLegacyById(invoiceId),
+      API_ENDPOINTS.invoiceLegacyDetailById(invoiceId)
+    ];
 
   for (const url of candidateUrls) {
     try {
@@ -560,7 +525,7 @@ const fetchInvoiceDetail = async (invoiceSummary, fallbackSoldBy = "Current User
   return invoiceSummary;
 };
 
-const SellPage = ({ onOpenPaymentReport }) => {
+const SellPage = ({ onOpenPaymentReport, onOrderCancelled }) => {
   const navigate = useNavigate();
   const [activeOrder, setActiveOrder] = useState(null);
   const [sellOrders, setSellOrders] = useState([]);
@@ -574,6 +539,7 @@ const SellPage = ({ onOpenPaymentReport }) => {
   const [exportFormat, setExportFormat] = useState('csv');
   const [openActionMenuFor, setOpenActionMenuFor] = useState(null);
   const [cancellingOrderId, setCancellingOrderId] = useState(null);
+  const [cancelledRefundTarget, setCancelledRefundTarget] = useState(null);
   const [exchangeTarget, setExchangeTarget] = useState(null);
   const [exchangeReason, setExchangeReason] = useState('');
   const [exchangeNewInvoiceAmount, setExchangeNewInvoiceAmount] = useState('');
@@ -622,6 +588,7 @@ const SellPage = ({ onOpenPaymentReport }) => {
   });
   const pageSize = 5;
   const canManageSellOrders = canWriteBilling(role);
+  const canRefundCancelledOrders = isStoreAdmin(role) || isSystemAdmin(role);
   const paymentReceiptIdentifier = paymentResult?.receiptNo
     || paymentResult?.receiptNumber
     || paymentResult?.receipt_no
@@ -753,29 +720,67 @@ const SellPage = ({ onOpenPaymentReport }) => {
       return;
     }
 
-    if (!order || ['cancelled', 'return'].includes(String(order.status || '').toLowerCase())) {
+    if (!order || ['cancelled', 'canceled', 'return', 'returned'].includes(String(order.status || '').toLowerCase())) {
       setError('Cancelled or fully returned orders cannot be exchanged.');
       return;
     }
 
     setExchangeMessage('');
     setExchangeError('');
-    let orderWithItems = order;
-    if (!Array.isArray(orderWithItems.items) || orderWithItems.items.length === 0) {
-      setCancellingOrderId(order.id);
-      try {
-        orderWithItems = await fetchInvoiceDetail(order, loggedInSeller);
-      } finally {
-        setCancellingOrderId(null);
-      }
+    setError('');
+    setExchangeTarget(null);
+    const invoiceId = Number(order.id);
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+      setError('This order does not have a valid invoice ID and cannot be exchanged.');
+      return;
     }
 
-    const { items } = getExchangeableItems(orderWithItems);
-    setExchangeTarget(orderWithItems);
-    setExchangeReason('');
-    setExchangeNewInvoiceAmount('');
-    setExchangeQuantities(Object.fromEntries(items.map((item) => [String(item.productId), '0'])));
-    setOpenActionMenuFor(null);
+    setCancellingOrderId(getSellOrderKey(order));
+    try {
+      const billType = order.billType || 'gst';
+      const response = await apiFetch(API_ENDPOINTS.returnAvailability(invoiceId, billType), {
+        headers: { Accept: 'application/json' },
+      });
+      const payload = await response.json().catch(() => []);
+      if (response.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (response.status === 403) {
+        throw new Error('You do not have permission to exchange this order.');
+      }
+      if (!response.ok) {
+        throw new Error(payload?.message || `Unable to load available exchange quantities (${response.status}).`);
+      }
+      if (!Array.isArray(payload) || payload.length === 0) {
+        throw new Error('No remaining quantities are available to exchange for this order.');
+      }
+
+      const items = payload.map((item) => ({
+        productId: Number(item.productId),
+        productName: String(item.productName || `Product ${item.productId}`),
+        soldQuantity: Number(item.soldQuantity),
+        availableQuantity: Number(item.availableQuantity),
+        unitPrice: Number(item.unitPrice),
+      }));
+      if (items.some((item) => !Number.isSafeInteger(item.productId) || item.productId <= 0
+        || !Number.isSafeInteger(item.soldQuantity) || item.soldQuantity <= 0
+        || !Number.isSafeInteger(item.availableQuantity) || item.availableQuantity <= 0
+        || item.availableQuantity > item.soldQuantity
+        || !Number.isFinite(item.unitPrice) || item.unitPrice < 0)) {
+        throw new Error('The server returned invalid exchange quantities. Refresh the order and retry.');
+      }
+
+      setExchangeTarget({ ...order, adjustmentItems: items });
+      setExchangeReason('');
+      setExchangeNewInvoiceAmount('');
+      setExchangeQuantities(Object.fromEntries(items.map((item) => [String(item.productId), '0'])));
+      setOpenActionMenuFor(null);
+    } catch (loadError) {
+      setError(loadError.message || 'Unable to load exchange quantities.');
+    } finally {
+      setCancellingOrderId(null);
+    }
   };
 
   const submitExchange = async (event) => {
@@ -800,13 +805,13 @@ const SellPage = ({ onOpenPaymentReport }) => {
       return;
     }
 
-    const { items: exchangeableItems } = getExchangeableItems(exchangeTarget);
+    const exchangeableItems = exchangeTarget.adjustmentItems || [];
     const hasInvalidQuantity = exchangeableItems.some((item) => {
       const quantity = Number(exchangeQuantities[String(item.productId)] || 0);
-      return !Number.isFinite(quantity) || quantity < 0 || quantity > item.soldQuantity;
+      return !Number.isSafeInteger(quantity) || quantity < 0 || quantity > item.availableQuantity;
     });
     if (hasInvalidQuantity) {
-      setExchangeError('Return quantities must be between zero and the quantity sold.');
+      setExchangeError('Return quantities must be whole numbers within the available quantity.');
       return;
     }
 
@@ -835,6 +840,7 @@ const SellPage = ({ onOpenPaymentReport }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           invoiceId,
+          billType: exchangeTarget.billType || 'gst',
           reason: exchangeReason.trim(),
           newInvoiceAmount,
           items,
@@ -1103,7 +1109,7 @@ const SellPage = ({ onOpenPaymentReport }) => {
     }
 
     if (action === 'sell') {
-      setCancellingOrderId(order.id);
+      setCancellingOrderId(getSellOrderKey(order));
       try {
         await selectOrder(order);
       } finally {
@@ -1114,6 +1120,11 @@ const SellPage = ({ onOpenPaymentReport }) => {
 
     if (action === 'cancelled') {
       await cancelOrder(order);
+      return;
+    }
+
+    if (action === 'refundCancelled') {
+      openCancelledOrderRefund(order);
       return;
     }
 
@@ -1450,7 +1461,10 @@ const OrderDetail = ({
 
   const revenueSummary = filteredOrders.reduce(
     (totals, order) => {
-      totals.revenue += Number(order.grandTotal || 0);
+      const status = String(order.status || '').toLowerCase();
+      if (!['cancelled', 'canceled'].includes(status)) {
+        totals.revenue += Number(order.grandTotal || 0);
+      }
       totals.paid += order.status === "paid" ? 1 : 0;
       totals.pending += ['pending', 'partial'].includes(order.status) ? 1 : 0;
       return totals;
@@ -1467,8 +1481,8 @@ const OrderDetail = ({
 
   const visibleOrders = filteredOrders.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
   const exchangeData = exchangeTarget
-    ? getExchangeableItems(exchangeTarget)
-    : { items: [], unavailableItemCount: 0 };
+    ? { items: exchangeTarget.adjustmentItems || [] }
+    : { items: [] };
 
   const handleSellOrderExport = () => {
     const now = Date.now();
@@ -1487,55 +1501,52 @@ const OrderDetail = ({
     setLastExportAt(now);
   };
 
-  const markOrderCancelled = (orderId) => {
+  const markOrderCancelled = (targetOrder) => {
     setSellOrders((orders) =>
       orders.map((order) =>
-        String(order.id) === String(orderId)
+        String(order.id) === String(targetOrder.id) && order.billType === targetOrder.billType
           ? { ...order, status: 'cancelled' }
           : order
       )
     );
 
     setActiveOrder((current) => (
-      current && String(current.id) === String(orderId)
+      current && String(current.id) === String(targetOrder.id) && current.billType === targetOrder.billType
         ? { ...current, status: 'cancelled' }
         : current
     ));
   };
 
-  const markOrderReturned = (orderId) => {
+  const markOrderReturned = (targetOrder) => {
     setSellOrders((orders) =>
       orders.map((order) =>
-        String(order.id) === String(orderId)
+        String(order.id) === String(targetOrder.id) && order.billType === targetOrder.billType
           ? { ...order, status: 'return' }
           : order
       )
     );
 
     setActiveOrder((current) => (
-      current && String(current.id) === String(orderId)
+      current && String(current.id) === String(targetOrder.id) && current.billType === targetOrder.billType
         ? { ...current, status: 'return' }
         : current
     ));
   };
 
-  const executeOrderRequests = async (requests = []) => {
-    for (const request of requests) {
-      try {
-        const options = {
-          method: request.method,
-          headers: request.body ? { 'Content-Type': 'application/json' } : {},
-          ...(request.body ? { body: JSON.stringify(request.body) } : {}),
-        };
-
-        const response = await apiFetch(request.url, options);
-        if (response.ok) return true;
-      } catch (requestError) {
-        console.warn('Order action attempt failed:', requestError);
-      }
+  const openCancelledOrderRefund = (order) => {
+    if (!canRefundCancelledOrders) {
+      setError('Only a store admin can record a refund for a cancelled order.');
+      return;
     }
-
-    return false;
+    if (!['cancelled', 'canceled'].includes(String(order?.status || '').toLowerCase())) {
+      setError('Only cancelled orders can be refunded from this flow.');
+      return;
+    }
+    setError('');
+    setCancelledRefundTarget({
+      ...order,
+      billType: isNonGstSellOrder(order) ? 'non-gst' : 'gst',
+    });
   };
 
   const cancelOrder = async (order) => {
@@ -1545,7 +1556,7 @@ const OrderDetail = ({
     }
 
     if (!order || !order.id) return;
-    if (String(order.status || '').toLowerCase() === 'cancelled') {
+    if (['cancelled', 'canceled'].includes(String(order.status || '').toLowerCase())) {
       alert('This order is already cancelled.');
       return;
     }
@@ -1554,37 +1565,30 @@ const OrderDetail = ({
     if (!allowCancel) return;
 
     setOpenActionMenuFor(null);
-    setCancellingOrderId(order.id);
-
-    const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
-    const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
-    const cancelPayload = {
-      status: 'cancelled',
-      paymentStatus: 'cancelled',
-      cancelled: true,
-      cancelReason: 'Cancelled from sell page',
-    };
-
-    const requests = [
-      { url: `${invoiceUrl}/cancel`, method: 'POST' },
-      { url: `${invoiceLegacyUrl}/cancel`, method: 'POST' },
-      { url: invoiceUrl, method: 'PATCH', body: cancelPayload },
-      { url: invoiceLegacyUrl, method: 'PATCH', body: cancelPayload },
-      { url: invoiceUrl, method: 'PUT', body: cancelPayload },
-      { url: invoiceLegacyUrl, method: 'PUT', body: cancelPayload },
-      { url: invoiceUrl, method: 'DELETE' },
-      { url: invoiceLegacyUrl, method: 'DELETE' },
-    ];
-
+    setCancellingOrderId(getSellOrderKey(order));
     try {
-      const cancelled = await executeOrderRequests(requests);
-
-      if (cancelled) {
-        markOrderCancelled(order.id);
-        alert('Order cancelled successfully.');
-      } else {
-        alert('Unable to cancel this order from server. Please try again.');
+      const invoiceUrl = isNonGstSellOrder(order)
+        ? API_ENDPOINTS.nonGstInvoiceById(order.id)
+        : API_ENDPOINTS.invoiceById(order.id);
+      const response = await apiFetch(`${invoiceUrl}/cancel`, { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        navigate('/login', { replace: true });
+        return;
       }
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || payload?.error || `Unable to cancel this order (${response.status}).`);
+      }
+
+      markOrderCancelled(order);
+      onOrderCancelled?.();
+      if (canRefundCancelledOrders) {
+        openCancelledOrderRefund({ ...order, status: 'cancelled' });
+      } else {
+        alert('Order cancelled successfully. A store admin can select Process refund from the cancelled order menu or use Payment Report.');
+      }
+    } catch (cancelError) {
+      alert(cancelError.message || 'Unable to cancel this order. Please try again.');
     } finally {
       setCancellingOrderId(null);
     }
@@ -1597,67 +1601,67 @@ const OrderDetail = ({
     }
 
     if (!order || !order.id) return;
-    if (String(order.status || '').toLowerCase() === 'return') {
+    if (['return', 'returned'].includes(String(order.status || '').toLowerCase())) {
       alert('This order is already marked as return.');
       return;
     }
 
-    const allowReturn = window.confirm(`Mark order ${order.invoiceNo} as return?`);
+    const allowReturn = window.confirm(`Return all remaining quantities for order ${order.invoiceNo}?`);
     if (!allowReturn) return;
 
-    setCancellingOrderId(order.id);
-
-    const invoiceUrl = API_ENDPOINTS.invoiceById(order.id);
-    const invoiceLegacyUrl = API_ENDPOINTS.invoiceLegacyById(order.id);
-    const normalizedInvoiceIdentifier = order.invoiceNo || order.id;
-    const returnByInvoiceUrl = API_ENDPOINTS.returnByInvoice(normalizedInvoiceIdentifier);
-    const returnByInvoiceFallbackUrl = API_ENDPOINTS.returnByInvoice(order.id);
-    const returnItems = (Array.isArray(order.items) ? order.items : []).map((item, index) => ({
-      productId: Number(item.productId ?? item.id ?? item.product_id ?? index + 1) || index + 1,
-      productName: String(item.productName ?? item.item ?? item.name ?? `Item ${index + 1}`).trim(),
-      quantity: Number(item.quantity ?? item.qty ?? 0) || 0,
-      unitPrice: Number(item.unitPrice ?? item.rate ?? item.price ?? 0) || 0,
-    })).filter((item) => Number(item.quantity) > 0);
-
-    const returnPayload = {
-      invoiceId: Number(order.id),
-      reason: 'Damaged item',
-      returnItems,
-    };
-
-    const requests = [
-      {
-        url: API_ENDPOINTS.returns,
-        method: 'POST',
-        body: returnPayload,
-      },
-      {
-        url: returnByInvoiceUrl,
-        method: 'POST',
-        body: returnPayload,
-      },
-      {
-        url: returnByInvoiceFallbackUrl,
-        method: 'POST',
-        body: returnPayload,
-      },
-      { url: `${invoiceUrl}/return`, method: 'POST', body: returnPayload },
-      { url: `${invoiceLegacyUrl}/return`, method: 'POST', body: returnPayload },
-      { url: invoiceUrl, method: 'PATCH', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
-      { url: invoiceLegacyUrl, method: 'PATCH', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
-      { url: invoiceUrl, method: 'PUT', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
-      { url: invoiceLegacyUrl, method: 'PUT', body: { ...returnPayload, status: 'return', paymentStatus: 'return', returned: true } },
-    ];
-
+    setCancellingOrderId(getSellOrderKey(order));
     try {
-      const markedReturned = await executeOrderRequests(requests);
-
-      if (markedReturned) {
-        markOrderReturned(order.id);
-        alert('Order marked as return successfully.');
-      } else {
-        alert('Unable to mark this order as return from server. Please try again.');
+      const invoiceId = Number(order.id);
+      if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+        throw new Error('This order does not have a valid invoice ID.');
       }
+      const billType = order.billType || 'gst';
+      const availabilityResponse = await apiFetch(API_ENDPOINTS.returnAvailability(invoiceId, billType), {
+        headers: { Accept: 'application/json' },
+      });
+      const availableItems = await availabilityResponse.json().catch(() => []);
+      if (availabilityResponse.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (!availabilityResponse.ok) {
+        throw new Error(availableItems?.message || `Unable to check remaining return quantities (${availabilityResponse.status}).`);
+      }
+      if (!Array.isArray(availableItems) || availableItems.length === 0) {
+        throw new Error('No remaining quantities are available to return for this order.');
+      }
+      const items = availableItems.map((item) => ({
+        productId: Number(item.productId),
+        quantity: Number(item.availableQuantity),
+      }));
+      if (items.some((item) => !Number.isSafeInteger(item.productId) || item.productId <= 0
+        || !Number.isSafeInteger(item.quantity) || item.quantity <= 0)) {
+        throw new Error('The server returned invalid remaining return quantities. Refresh the order and retry.');
+      }
+
+      const response = await apiFetch(API_ENDPOINTS.returns, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId,
+          billType,
+          reason: 'Return from sell orders',
+          items,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.message || payload?.error || `Unable to return this order (${response.status}).`);
+      }
+
+      markOrderReturned(order);
+      alert('Order returned successfully.');
+    } catch (returnError) {
+      alert(returnError.message || 'Unable to return this order. Please try again.');
     } finally {
       setCancellingOrderId(null);
     }
@@ -1779,7 +1783,7 @@ const OrderDetail = ({
         {visibleOrders.map((order) => (
           (() => {
             const orderKey = `${order.billType}:${order.id}`;
-            const isRowActionBusy = String(cancellingOrderId) === String(order.id);
+            const isRowActionBusy = cancellingOrderId === orderKey;
             return (
           <div
             key={orderKey}
@@ -1840,23 +1844,33 @@ const OrderDetail = ({
                     type="button"
                     className="order-action-menu-item"
                     onClick={() => handleThreeDotMenuAction(order, 'cancelled')}
-                    disabled={isRowActionBusy}
+                    disabled={isRowActionBusy || !canManageSellOrders || ['cancelled', 'canceled', 'return', 'returned'].includes(String(order.status || '').toLowerCase())}
                   >
-                    Cancelled Order
+                    Cancel order
                   </button>
+                  {canRefundCancelledOrders && ['cancelled', 'canceled'].includes(String(order.status || '').toLowerCase()) && (
+                    <button
+                      type="button"
+                      className="order-action-menu-item"
+                      onClick={() => handleThreeDotMenuAction(order, 'refundCancelled')}
+                      disabled={isRowActionBusy}
+                    >
+                      Process refund
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="order-action-menu-item"
                     onClick={() => handleThreeDotMenuAction(order, 'return')}
-                    disabled={isRowActionBusy}
+                    disabled={isRowActionBusy || !canManageSellOrders || ['cancelled', 'canceled', 'return', 'returned'].includes(String(order.status || '').toLowerCase())}
                   >
-                    Return Order
+                    Return order
                   </button>
                   <button
                     type="button"
                     className="order-action-menu-item"
                     onClick={() => handleThreeDotMenuAction(order, 'exchange')}
-                    disabled={isRowActionBusy || !canManageSellOrders || ['cancelled', 'return'].includes(String(order.status || '').toLowerCase())}
+                    disabled={isRowActionBusy || !canManageSellOrders || ['cancelled', 'canceled', 'return', 'returned'].includes(String(order.status || '').toLowerCase())}
                   >
                     Exchange Order
                   </button>
@@ -2291,14 +2305,8 @@ const OrderDetail = ({
               ×
             </button>
             <h2 id="exchange-order-title">Exchange order {exchangeTarget.invoiceNo}</h2>
-            <p>Select quantities being returned. Returned stock and exchange credit are calculated by the backend.</p>
+            <p>Select quantities still available to return. Stock and exchange credit are calculated by the backend.</p>
             <p className="exchange-order-note">Replacement items or invoices are not created here. Create any replacement bill separately from Billing.</p>
-
-            {exchangeData.unavailableItemCount > 0 && (
-              <p className="exchange-order-warning" role="status">
-                {exchangeData.unavailableItemCount} invoice item(s) do not include a valid product ID or unit price and cannot be returned here.
-              </p>
-            )}
 
             {exchangeData.items.length > 0 ? (
               <div className="exchange-items-table-wrap">
@@ -2307,8 +2315,9 @@ const OrderDetail = ({
                     <tr>
                       <th>Product</th>
                       <th>Sold</th>
+                      <th>Available</th>
                       <th>Unit price</th>
-                      <th>Return qty</th>
+                      <th>Exchange qty</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2316,13 +2325,14 @@ const OrderDetail = ({
                       <tr key={item.productId}>
                         <td>{item.productName}</td>
                         <td>{item.soldQuantity}</td>
+                        <td>{item.availableQuantity}</td>
                         <td>₹{item.unitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td>
                           <input
                             type="number"
                             min="0"
-                            max={item.soldQuantity}
-                            step="any"
+                            max={item.availableQuantity}
+                            step="1"
                             value={exchangeQuantities[String(item.productId)] || '0'}
                             onChange={(event) => {
                               setExchangeQuantities((current) => ({
@@ -2331,7 +2341,7 @@ const OrderDetail = ({
                               }));
                               setExchangeError('');
                             }}
-                            aria-label={`Return quantity for ${item.productName}`}
+                            aria-label={`Exchange quantity for ${item.productName}`}
                           />
                         </td>
                       </tr>
@@ -2341,7 +2351,7 @@ const OrderDetail = ({
               </div>
             ) : (
               <p className="exchange-order-warning" role="alert">
-                No invoice items with valid product IDs are available to exchange.
+                No remaining invoice quantities are available to exchange.
               </p>
             )}
 
@@ -2393,6 +2403,12 @@ const OrderDetail = ({
             </form>
           </section>
         </div>
+      )}
+      {cancelledRefundTarget && canRefundCancelledOrders && (
+        <CancelledOrderRefundDialog
+          order={cancelledRefundTarget}
+          onClose={() => setCancelledRefundTarget(null)}
+        />
       )}
     </div>
   );

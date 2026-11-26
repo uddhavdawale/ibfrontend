@@ -866,6 +866,91 @@
 .payment-dialog-cancel { min-height: 40px; padding: 9px 14px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; color: #334155; font-weight: 700; cursor: pointer; }
 .payment-dialog-error { margin: 0; color: #b91c1c; }
 
+.sell-dashboard .cancelled-order-refund-dialog {
+  width: min(100%, 680px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.cancelled-refund-warning {
+  padding: 10px 12px;
+  border: 1px solid #f3d08b;
+  border-radius: 10px;
+  background: #fff8e8;
+  color: #7c4a03 !important;
+  font-size: .9rem;
+}
+
+.cancelled-refund-success,
+.cancelled-refund-empty {
+  margin: 10px 0;
+  color: #334155;
+}
+
+.cancelled-refund-success {
+  color: #166534;
+  font-weight: 700;
+}
+
+.cancelled-refund-payment-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.cancelled-refund-payment-list h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 1rem;
+}
+
+.cancelled-refund-payment-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+}
+
+.cancelled-refund-payment-list article > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cancelled-refund-payment-list article span {
+  color: #475569;
+  font-size: .85rem;
+}
+
+.cancelled-refund-select-button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e3a5f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cancelled-refund-confirm {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 8px !important;
+}
+
+.payment-dialog-form .cancelled-refund-confirm input[type="checkbox"] {
+  flex: 0 0 auto;
+  min-height: 16px;
+  width: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
 .sell-dashboard .btn-share-whatsapp:hover,
 .sell-dashboard .btn-share-email:hover,
 .sell-dashboard .btn-print:hover {
@@ -1178,6 +1263,11 @@
 @media (max-width: 560px) {
   .sell-dashboard .exchange-order-dialog {
     padding: 20px 14px;
+  }
+
+  .cancelled-refund-payment-list article {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .sell-dashboard .exchange-items-table th,

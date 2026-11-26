@@ -26,6 +26,10 @@ import {
   normalizeIndianGstState,
   roundCurrency,
 } from '../modules/tax/gstConfig';
+import {
+  MAHARASHTRA_DISTRICTS,
+  MAHARASHTRA_TALUKAS_BY_DISTRICT,
+} from './maharashtraLocations';
 import { canWriteBilling, getCurrentUserRole } from '../Security/storeRoles';
 import {
   findProductsByScannedCode,
@@ -149,6 +153,12 @@ const normalizePaymentMethod = (method) => {
   if (normalizedMethod.includes('WALLET')) return 'WALLET';
   return 'OTHER';
 };
+const buildReceiptAddress = (customer = {}) => (
+  [customer.address, customer.taluka, customer.district, customer.pincode]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+    .join(', ')
+);
 const normalizeBillingProduct = (product) => {
   const sellingPrice = Number(product.price ?? product.sellingPrice ?? product.salePrice ?? product.unitPrice ?? 0) || 0;
   const mrpValue = Number(product.mrp ?? product.mrpAmount ?? product.maximumRetailPrice ?? product.maxRetailPrice ?? sellingPrice) || 0;
@@ -210,6 +220,86 @@ const parseWhatsAppRequestedItems = (requestText, products) => {
   }, []);
 };
 
+const LocationComboBox = ({ id, label, value, options, placeholder, onChange, disabled = false }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const filteredOptions = options.filter((option) => (
+    option.toLowerCase().includes(String(value || '').trim().toLowerCase())
+  ));
+
+  const selectOption = (option) => {
+    onChange(option);
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="customer-location-control">
+      <label htmlFor={id}>{label} (optional)</label>
+      <div
+        className="customer-location-combobox"
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setIsOpen(false);
+        }}
+      >
+        <input
+          id={id}
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? `${id}-options` : undefined}
+          autoComplete="off"
+          placeholder={placeholder}
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setIsOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              setIsOpen(true);
+            } else if (event.key === 'Escape') {
+              setIsOpen(false);
+            } else if (event.key === 'Enter' && isOpen && filteredOptions.length > 0) {
+              event.preventDefault();
+              selectOption(filteredOptions[0]);
+            }
+          }}
+          className="input-field"
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          className="customer-location-toggle"
+          aria-label={`Show ${label.toLowerCase()} options`}
+          aria-expanded={isOpen}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setIsOpen((current) => !current)}
+          disabled={disabled || options.length === 0}
+        >
+          <span aria-hidden="true">▾</span>
+        </button>
+        {isOpen && filteredOptions.length > 0 && (
+          <div id={`${id}-options`} className="customer-location-options" role="listbox">
+            {filteredOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={value === option}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectOption(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const BillingPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -231,7 +321,16 @@ const BillingPage = () => {
   const [latestAddedProductId, setLatestAddedProductId] = useState(null);
   const cartItemsRef = useRef(null);
   const cartItemRefs = useRef(new Map());
-  const [customer, setCustomer] = useState({ name: '', phone: '', email: '', address: '', state: '' });
+  const [customer, setCustomer] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    address: '',
+    state: '',
+    district: '',
+    taluka: '',
+    pincode: '',
+  });
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [customerSelectionLocked, setCustomerSelectionLocked] = useState(false);
   const [searchProduct, setSearchProduct] = useState('');
@@ -753,6 +852,9 @@ const BillingPage = () => {
       email: draftCustomer.email || '',
       address: draftCustomer.address || draftCustomer.receiptAddress || '',
       state: normalizeIndianGstState(draftCustomer.state || draftCustomer.placeOfSupplyState),
+      district: draftCustomer.district || '',
+      taluka: draftCustomer.taluka || '',
+      pincode: draftCustomer.pincode || '',
     });
 
     let matchedItems = [];
@@ -1687,6 +1789,11 @@ const BillingPage = () => {
       alert(`Invoice ${invoiceRecoveryInvoiceNo} may already have been saved. Check the invoice history before allowing another submission.`);
       return;
     }
+    const receiptAddress = buildReceiptAddress(customer);
+    if (receiptAddress.length > 500) {
+      alert('The complete receipt address must be 500 characters or fewer.');
+      return;
+    }
 
     invoiceSubmissionInProgressRef.current = true;
     setIsSubmittingInvoice(true);
@@ -1722,8 +1829,8 @@ const BillingPage = () => {
       const payload = {
         customerName: customer.name || 'Walk-in Customer',
         customerPhone: customer.phone || '0000000000',
-        customerAddress: customer.address?.trim() || '',
-        receiptAddress: customer.address?.trim() || '',
+        customerAddress: receiptAddress,
+        receiptAddress,
         customerState: placeOfSupplyState || '',
         paymentMethod,
         paymentStatus: initialPaymentStatus,
@@ -1975,8 +2082,8 @@ const BillingPage = () => {
         customerName: savedInvoice?.customerName || customer.name || 'Walk-in Customer',
         customerPhone: customer.phone || '0000000000',
         customerEmail: customer.email || '',
-        customerAddress: customer.address?.trim() || '',
-        receiptAddress: customer.address?.trim() || '',
+        customerAddress: receiptAddress,
+        receiptAddress,
         customerState: authoritativePlaceOfSupplyState,
         placeOfSupplyState: authoritativePlaceOfSupplyState,
         paymentMethod,
@@ -2014,7 +2121,16 @@ const BillingPage = () => {
 
       await refreshProducts();
       setCartWithRef([]);
-      setCustomer({ name: '', phone: '', email: '', address: '', state: '' });
+      setCustomer({
+        name: '',
+        phone: '',
+        email: '',
+        address: '',
+        state: '',
+        district: '',
+        taluka: '',
+        pincode: '',
+      });
       setInvoiceNo(generatedInvoiceNo);
     } catch (error) {
       if (invoiceRequestStarted && (!invoiceResponseReceived || invoiceOutcomeUncertain)) {
@@ -2286,8 +2402,98 @@ const BillingPage = () => {
       )}
 
       <div className="billing-layout">
-        {/* Left: Customer + Products */}
+        {/* Left: Product selection + Customer */}
         <div className="billing-left">
+          <div className="products-section">
+            <div className="section-header">
+              <h3>📦 Products ({filteredProducts.length})</h3>
+              <div className="barcode-search-controls">
+                <input
+                  className="search-input"
+                  placeholder="Search products or scan barcode..."
+                  aria-label="Search products or scan barcode"
+                  title="Scan a barcode and press Enter, or search by product name or code."
+                  ref={productSearchInputRef}
+                  value={searchProduct}
+                  onChange={e => {
+                    setSearchProduct(e.target.value);
+                    setScannerTestNotice('');
+                  }}
+                  onKeyDown={handleProductSearchKeyDown}
+                />
+                <button
+                  type="button"
+                  className="scanner-test-button"
+                  onClick={toggleScannerTestMode}
+                  disabled={!isBillingWritable || isBarcodeLookupActive}
+                  aria-pressed={isScannerTestMode}
+                >
+                  {isScannerTestMode ? 'Stop scanner test' : 'Test scanner'}
+                </button>
+              </div>
+              {isScannerTestMode && (
+                <p className="scanner-test-status" role="status" aria-live="polite">
+                  {scannerTestNotice || 'Test mode is on. Scan a product; it will not be added to the cart.'}
+                </p>
+              )}
+            </div>
+            <div className="products-grid">
+              {productLoadError ? (
+                <div className="product-load-error" role="alert">
+                  <span>{productLoadError}</span>
+                  <button type="button" className="product-load-retry" onClick={refreshProducts}>
+                    Retry
+                  </button>
+                </div>
+              ) : filteredProducts.length > 0 ? (
+                filteredProducts.map(product => (
+                  <div
+                    key={product.id}
+                    className={`product-card${isScannerTestMode ? ' scanner-test-product-disabled' : ''}`}
+                    onClick={() => isBillingWritable && !isScannerTestMode && addToCart(product)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        if (isBillingWritable && !isScannerTestMode) addToCart(product);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={isBillingWritable && !isScannerTestMode ? 0 : -1}
+                    aria-disabled={!isBillingWritable || isScannerTestMode}
+                  >
+                    <div className="product-info">
+                      <div className="product-card-topline">
+                        <h4>{product.name}</h4>
+                        {Number(product.salesCount ?? 0) > 0 && (
+                          <span className="product-popular-tag">Popular</span>
+                        )}
+                      </div>
+                      <p className="price-gst">
+                        ₹{product.price.toLocaleString()}
+                        {isGstBill && (
+                          hasValidGstConfiguration(product)
+                            ? taxPriceMode === TAX_PRICE_MODES.INCLUSIVE
+                              ? ` (incl. ${product.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'})`
+                              : ` + ${product.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'}`
+                            : ` (${getGstConfigurationMessage(product)})`
+                        )}
+                        {Number(product.mrp ?? 0) > 0 && (
+                          <span className="mrp-tag"> | MRP ₹{Number(product.mrp).toLocaleString()}</span>
+                        )}
+                      </p>
+                      <small>
+                        HSN: {product.hsn || 'Missing'} | Stock: {product.stock}
+                        {Number(product.salesCount ?? 0) > 0 ? ` | Sold: ${product.salesCount}` : ''}
+                      </small>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="no-products">No products found</div>
+              )}
+            </div>
+          </div>
+
           <div className="customer-section">
             <h3>👤 Customer Details</h3>
             <div className="customer-fields-grid">
@@ -2322,6 +2528,9 @@ const BillingPage = () => {
                             email: suggestion.email || customer.email,
                             address: suggestion.address || customer.address,
                             state: normalizeIndianGstState(suggestion.state) || customer.state,
+                            district: suggestion.district || '',
+                            taluka: suggestion.taluka || '',
+                            pincode: suggestion.pincode || '',
                           });
                           setCustomerSuggestions([]);
                           setCustomerSelectionLocked(true);
@@ -2373,105 +2582,75 @@ const BillingPage = () => {
                   <small>Issuer: {INDIAN_GST_STATES.find(({ code }) => code === issuerStateCode)?.name || issuerStateCode}</small>
                 )}
               </label>
-              <textarea
-                placeholder="Receipt address (optional)"
-                aria-label="Receipt address (optional)"
-                autoComplete="street-address"
-                value={customer.address}
-                onChange={(event) => setCustomer({ ...customer, address: event.target.value })}
-                className="input-field receipt-address-input"
-                rows="2"
-                maxLength="500"
-                disabled={!isBillingWritable}
-              />
-            </div>
-          </div>
-
-          <div className="products-section">
-            <div className="section-header">
-              <h3>📦 Products ({filteredProducts.length})</h3>
-              <div className="barcode-search-controls">
-                <input
-                  className="search-input"
-                  placeholder="Search products or scan barcode..."
-                  aria-label="Search products or scan barcode"
-                  title="Scan a barcode and press Enter, or search by product name or code."
-                  ref={productSearchInputRef}
-                  value={searchProduct}
-                  onChange={e => {
-                    setSearchProduct(e.target.value);
-                    setScannerTestNotice('');
-                  }}
-                  onKeyDown={handleProductSearchKeyDown}
-                />
-                <button
-                  type="button"
-                  className="scanner-test-button"
-                  onClick={toggleScannerTestMode}
-                  disabled={!isBillingWritable || isBarcodeLookupActive}
-                  aria-pressed={isScannerTestMode}
-                >
-                  {isScannerTestMode ? 'Stop scanner test' : 'Test scanner'}
-                </button>
-              </div>
-              {isScannerTestMode && (
-                <p className="scanner-test-status" role="status" aria-live="polite">
-                  {scannerTestNotice || 'Test mode is on. Scan a product; it will not be added to the cart.'}
-                </p>
-              )}
-            </div>
-            <div className="products-grid">
-              {productLoadError ? (
-                <div className="product-load-error" role="alert">
-                  <span>{productLoadError}</span>
-                  <button type="button" className="product-load-retry" onClick={refreshProducts}>
-                    Retry
-                  </button>
+              <details className="customer-address-details">
+                <summary>
+                  <span>Receipt address (optional)</span>
+                  <small>Street, district, taluka and pincode</small>
+                </summary>
+                <div className="customer-address-fields">
+                  <LocationComboBox
+                    id="customer-district"
+                    label="District"
+                    value={customer.district}
+                    options={placeOfSupplyState === '27' ? MAHARASHTRA_DISTRICTS : []}
+                    placeholder="Type or select district"
+                    onChange={(district) => setCustomer((current) => ({
+                      ...current,
+                      district,
+                      taluka: MAHARASHTRA_TALUKAS_BY_DISTRICT[district]?.includes(current.taluka)
+                        ? current.taluka
+                        : '',
+                    }))}
+                    disabled={!isBillingWritable}
+                  />
+                  <LocationComboBox
+                    id="customer-taluka"
+                    label="Taluka"
+                    value={customer.taluka}
+                    options={placeOfSupplyState === '27'
+                      ? MAHARASHTRA_TALUKAS_BY_DISTRICT[customer.district] || []
+                      : []}
+                    placeholder="Type or select taluka"
+                    onChange={(taluka) => setCustomer((current) => ({ ...current, taluka }))}
+                    disabled={!isBillingWritable}
+                  />
+                  <label className="customer-location-control" htmlFor="customer-pincode">
+                    <span>Pincode (optional)</span>
+                    <input
+                      id="customer-pincode"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="postal-code"
+                      maxLength="6"
+                      placeholder="Pincode"
+                      value={customer.pincode}
+                      onChange={(event) => setCustomer((current) => ({
+                        ...current,
+                        pincode: event.target.value.replace(/\D/g, ''),
+                      }))}
+                      className="input-field"
+                      disabled={!isBillingWritable}
+                    />
+                  </label>
+                  <textarea
+                    placeholder="Street address (optional)"
+                    aria-label="Street address (optional)"
+                    autoComplete="street-address"
+                    value={customer.address}
+                    onChange={(event) => setCustomer({ ...customer, address: event.target.value })}
+                    className="input-field receipt-address-input"
+                    rows="2"
+                    maxLength="500"
+                    disabled={!isBillingWritable}
+                  />
                 </div>
-              ) : filteredProducts.length > 0 ? (
-                filteredProducts.map(product => (
-                  <div
-                    key={product.id}
-                    className={`product-card${isScannerTestMode ? ' scanner-test-product-disabled' : ''}`}
-                    onClick={() => isBillingWritable && !isScannerTestMode && addToCart(product)}
-                    aria-disabled={isScannerTestMode}
-                  >
-                    <div className="product-info">
-                      <div className="product-card-topline">
-                        <h4>{product.name}</h4>
-                        {Number(product.salesCount ?? 0) > 0 && (
-                          <span className="product-popular-tag">Popular</span>
-                        )}
-                      </div>
-                      <p className="price-gst">
-                        ₹{product.price.toLocaleString()}
-                        {isGstBill && (
-                          hasValidGstConfiguration(product)
-                            ? taxPriceMode === TAX_PRICE_MODES.INCLUSIVE
-                              ? ` (incl. ${product.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'})`
-                              : ` + ${product.gstRate}% ${isInterStateSupply ? 'IGST' : 'GST'}`
-                            : ` (${getGstConfigurationMessage(product)})`
-                        )}
-                        {Number(product.mrp ?? 0) > 0 && (
-                          <span className="mrp-tag"> | MRP ₹{Number(product.mrp).toLocaleString()}</span>
-                        )}
-                      </p>
-                      <small>
-                        HSN: {product.hsn || 'Missing'} | Stock: {product.stock}
-                        {Number(product.salesCount ?? 0) > 0 ? ` | Sold: ${product.salesCount}` : ''}
-                      </small>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="no-products">No products found</div>
-              )}
+              </details>
             </div>
           </div>
         </div>
 
         {/* Right: Cart + Payment */}
-        <div className="billing-right">
+        <div className="billing-right" id="billing-cart">
           <div className="cart-section">
             <h3>🛒 Cart ({cart.length} products · {cartQuantity} units)</h3>
             <p className="cart-live-notice" aria-live="polite">{cartNotice}</p>
@@ -2704,7 +2883,16 @@ const BillingPage = () => {
                       onClick={() => {
                         clearInvoiceRecoveryRequired();
                         setCartWithRef([]);
-                        setCustomer({ name: '', phone: '', email: '', address: '', state: '' });
+                        setCustomer({
+                          name: '',
+                          phone: '',
+                          email: '',
+                          address: '',
+                          state: '',
+                          district: '',
+                          taluka: '',
+                          pincode: '',
+                        });
                       }}
                     >
                       Invoice was saved - clear cart
@@ -2731,6 +2919,18 @@ const BillingPage = () => {
           </div>
         </div>
       </div>
+      <a
+        className="mobile-cart-shortcut"
+        href="#billing-cart"
+        aria-label={`View cart with ${cart.length} products, ${cartQuantity} units, total ₹${grandTotal.toLocaleString('en-IN')}`}
+      >
+        <span className="mobile-cart-count">
+          <strong>Cart ({cart.length})</strong>
+          <small>{cartQuantity} units</small>
+        </span>
+        <strong>₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+        <span className="mobile-cart-action">View cart ↓</span>
+      </a>
     </div>
   );
 };
