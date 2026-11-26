@@ -157,13 +157,17 @@ const CustomerLedgerPage = ({ onBackToDashboard }) => {
   return (
     <div className="ledger-page">
       <header className="ledger-header">
-        <div>
-          <p className="ledger-eyebrow">Smart business reports</p>
-          <h1>Customer ledger</h1>
-          <p>Review invoice charges, payments, and customer balances using this shop’s invoice and payment records.</p>
+        <div className="ledger-header-main">
+          <button type="button" className="ledger-button secondary" onClick={backToDashboard}>
+            ← Back to dashboard
+          </button>
+          <div className="ledger-header-copy">
+            <p className="ledger-eyebrow">Smart business reports</p>
+            <h1>Customer ledger</h1>
+            <p>Review invoice charges, payments, and customer balances using this shop’s invoice and payment records.</p>
+          </div>
         </div>
         <div className="ledger-header-actions">
-          <button type="button" className="ledger-button secondary" onClick={backToDashboard}>Back to dashboard</button>
           <button type="button" className="ledger-button secondary" onClick={refreshLedger} disabled={loading}>Refresh</button>
           <button
             type="button"
