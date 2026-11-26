@@ -13,6 +13,8 @@ const normalizePendingPaymentCustomer = (invoice) => {
     invoice?.paymentStatus ?? invoice?.payment_status ?? invoice?.status ?? 'pending'
   ).trim().toLowerCase();
 
+  if (rawStatus === 'cancelled' || rawStatus === 'canceled') return null;
+
   const isPending = rawStatus === 'pending' || rawStatus === 'partial' || rawStatus === 'unpaid' || paidAmount < totalAmount;
   if (!isPending) return null;
 
@@ -61,7 +63,11 @@ const fetchPendingPaymentCustomers = async () => {
   return [];
 };
 
-const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
+const PendingPaymentsCard = ({
+  defaultTotal = 0,
+  summaryAvailable = false,
+  summaryLoading = false
+}) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -87,14 +93,11 @@ const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
   }, []);
 
   const total = useMemo(() => {
-    if (Number(defaultTotal) > 0) {
-      return Number(defaultTotal);
-    }
-    if (customers.length > 0) {
-      return customers.reduce((sum, customer) => sum + Number(customer.amount || 0), 0);
-    }
-    return Number(defaultTotal || 0);
-  }, [customers, defaultTotal]);
+    const summaryTotal = Number(defaultTotal);
+    if (summaryAvailable && Number.isFinite(summaryTotal) && summaryTotal >= 0) return summaryTotal;
+    return customers.reduce((sum, customer) => sum + Number(customer.amount || 0), 0);
+  }, [customers, defaultTotal, summaryAvailable]);
+  const isLoading = loading || summaryLoading;
 
   const uniqueCustomers = useMemo(() => {
     const duplicateCounts = new Map();
@@ -130,8 +133,8 @@ const PendingPaymentsCard = ({ defaultTotal = 0 }) => {
           <strong className="stat-value">₹{total.toLocaleString('en-IN')}</strong>
           <span className="stat-label">Pending Payments</span>
         </span>
-        <span className={`stat-change ${loading ? '' : total > 0 ? 'negative' : 'positive'}`}>
-          {loading ? 'Loading…' : total > 0 ? 'View details' : 'No outstanding'}
+        <span className={`stat-change ${isLoading ? '' : total > 0 ? 'negative' : 'positive'}`}>
+          {isLoading ? 'Loading…' : total > 0 ? 'View details' : 'No outstanding'}
         </span>
       </button>
 

@@ -85,61 +85,6 @@ const extractListPayload = (payload) => {
   return [];
 };
 
-const parseDateLikeValue = (value) => {
-  if (!value && value !== 0) return null;
-
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-
-  if (typeof value === 'number') {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  const direct = new Date(raw);
-  if (!Number.isNaN(direct.getTime())) return direct;
-
-  const shortMonthMatch = raw.match(/^(\d{1,2})[-\s/]([A-Za-z]{3})[-\s/](\d{4})$/);
-  if (shortMonthMatch) {
-    const monthMap = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-    };
-    const day = Number(shortMonthMatch[1]);
-    const month = monthMap[String(shortMonthMatch[2]).toLowerCase()];
-    const year = Number(shortMonthMatch[3]);
-    if (Number.isFinite(day) && Number.isFinite(month) && Number.isFinite(year)) {
-      const parsed = new Date(year, month, day);
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
-    }
-  }
-
-  return null;
-};
-
-const isSameLocalDay = (a, b) => (
-  a.getFullYear() === b.getFullYear()
-  && a.getMonth() === b.getMonth()
-  && a.getDate() === b.getDate()
-);
-
-const getOrderDateValue = (order = {}) => (
-  order.createdAt
-  ?? order.invoiceDate
-  ?? order.orderDate
-  ?? order.date
-  ?? order.createdDate
-  ?? order.timestamp
-  ?? order.created_on
-  ?? null
-);
-
-const LIVE_ORDERS_SAMPLE_SIZE = 60;
-
 const normalizeInventoryItem = (product) => {
   const qty = normalizeNumber(product.quantity ?? product.stock ?? product.qty ?? product.ItemQty ?? 0, 0);
   const min = normalizeNumber(
@@ -223,6 +168,7 @@ function Dashboard({ username, onLogout }) {
   const [securityContext, setSecurityContext] = useState({ tenantId: null, userId: null, role: null });
   const [dashboardInfoMessage, setDashboardInfoMessage] = useState('');
   const [dashboardDataStatus, setDashboardDataStatus] = useState('loading');
+  const [hasDashboardSummary, setHasDashboardSummary] = useState(false);
   const [dashboardLastUpdated, setDashboardLastUpdated] = useState(null);
   const [sessionRole, setSessionRole] = useState(() => getCurrentUserRole());
   const [dashboardRefreshToken, setDashboardRefreshToken] = useState(0);
@@ -367,6 +313,7 @@ function Dashboard({ username, onLogout }) {
     let dashboardRequestFailed = false;
 
     setDashboardDataStatus('loading');
+    setHasDashboardSummary(false);
     if (isManualRefresh && active) {
       setIsDashboardRefreshing(true);
     }
@@ -414,40 +361,13 @@ function Dashboard({ username, onLogout }) {
             ordersToday: normalizeNumber(summaryPayload?.ordersToday ?? summaryPayload?.orders ?? 0)
           };
           setMetrics(normalizedSummary);
+          setHasDashboardSummary(true);
 
           const summaryTopSoldProducts = Array.isArray(summaryPayload?.topSoldProducts)
             ? summaryPayload.topSoldProducts.map(normalizeTopSoldProductFromSummary)
             : [];
 
           setTopSoldProducts(summaryTopSoldProducts.slice(0, 10));
-        } else {
-          dashboardLoadFailed = true;
-        }
-
-        const [liveGstOrdersPayload, liveNonGstOrdersPayload] = await Promise.all([
-          fetchJsonWithFallback([
-            API_ENDPOINTS.invoicesPage(0, LIVE_ORDERS_SAMPLE_SIZE),
-            API_ENDPOINTS.ordersPage(0, LIVE_ORDERS_SAMPLE_SIZE),
-          ]),
-          fetchJsonWithFallback([
-            API_ENDPOINTS.nonGstInvoicesPage(0, LIVE_ORDERS_SAMPLE_SIZE),
-          ]),
-        ]);
-
-        if (active && (liveGstOrdersPayload || liveNonGstOrdersPayload)) {
-          hasDashboardData = true;
-          if (!liveGstOrdersPayload || !liveNonGstOrdersPayload) dashboardLoadFailed = true;
-          const today = new Date();
-          const countTodayOrders = (payload) => {
-            const orders = extractListPayload(unwrapResponsePayload(payload));
-            return orders.filter((order) => {
-              const parsedDate = parseDateLikeValue(getOrderDateValue(order));
-              return parsedDate ? isSameLocalDay(parsedDate, today) : false;
-            }).length;
-          };
-
-          const todayOrdersCount = countTodayOrders(liveGstOrdersPayload) + countTodayOrders(liveNonGstOrdersPayload);
-          setMetrics((prev) => ({ ...prev, ordersToday: todayOrdersCount }));
         } else {
           dashboardLoadFailed = true;
         }
@@ -514,6 +434,31 @@ function Dashboard({ username, onLogout }) {
     loadDashboardData();
     return () => { active = false; };
   }, [dashboardRefreshToken]);
+
+  const refreshDashboardSummary = async () => {
+    try {
+      const summary = await fetchJsonWithFallback([
+        API_ENDPOINTS.dashboardSummary,
+        API_ENDPOINTS.dashboardLegacy,
+        API_ENDPOINTS.metrics
+      ]);
+      if (!summary) {
+        throw new Error('Dashboard summary could not be refreshed.');
+      }
+
+      const payload = unwrapResponsePayload(summary);
+      setMetrics((current) => ({
+        ...current,
+        salesToday: normalizeNumber(payload?.salesToday ?? payload?.sales ?? 0),
+        pendingPayments: normalizeNumber(payload?.pendingPayments ?? payload?.pending ?? 0),
+        ordersToday: normalizeNumber(payload?.ordersToday ?? payload?.orders ?? 0)
+      }));
+      setHasDashboardSummary(true);
+      setDashboardLastUpdated(new Date());
+    } catch (error) {
+      console.warn('Dashboard summary could not be refreshed after order cancellation.', error);
+    }
+  };
 
   // ALL YOUR EXISTING FUNCTIONS (UNCHANGED)
   const deleteItem = (id) => {
@@ -687,7 +632,11 @@ function Dashboard({ username, onLogout }) {
                 </div>
                 <div className="stat-change positive">Today</div>
               </div>
-              <PendingPaymentsCard defaultTotal={metrics.pendingPayments} />
+              <PendingPaymentsCard
+                defaultTotal={metrics.pendingPayments}
+                summaryAvailable={hasDashboardSummary}
+                summaryLoading={dashboardDataStatus === 'loading'}
+              />
               <LowStockCard items={inventoryData} loading={dashboardDataStatus === 'loading'} />
               <div className="stat-card orders-card">
                 <div className="stat-info">
@@ -860,7 +809,10 @@ function Dashboard({ username, onLogout }) {
 
       case 'sell':
         return canShowSellTab
-          ? <SellPage onOpenPaymentReport={() => setActiveTab('payments')} />
+          ? <SellPage
+              onOpenPaymentReport={() => setActiveTab('payments')}
+              onOrderCancelled={refreshDashboardSummary}
+            />
           : <div className="chart-card top-sold-card"><div className="top-sold-empty">You do not have access to sell orders.</div></div>;
       case 'payments':
         return canShowPaymentReportTab
