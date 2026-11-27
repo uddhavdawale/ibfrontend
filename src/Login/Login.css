@@ -635,6 +635,10 @@
     grid-template-columns: 1fr;
   }
 
+  .login-card {
+    order: -1;
+  }
+
   .login-visual {
     min-height: 330px;
     padding: 36px 28px;

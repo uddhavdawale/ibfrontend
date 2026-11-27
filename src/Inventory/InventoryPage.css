@@ -619,6 +619,11 @@
     flex-wrap: wrap;
   }
 
+  .inventory-page .inventory-controls > .search-input,
+  .inventory-page .inventory-actions {
+    flex: 0 0 auto;
+  }
+
   .inventory-page .back-btn {
     align-self: flex-start;
   }
@@ -692,6 +697,10 @@
   .inventory-page .inventory-actions > *,
   .inventory-page .export-controls {
     width: 100%;
+  }
+
+  .inventory-page .inventory-actions > * {
+    flex: 0 0 auto;
   }
 
   .inventory-page .export-controls {
