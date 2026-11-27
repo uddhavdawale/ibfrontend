@@ -1790,18 +1790,18 @@ const OrderDetail = ({
             className="order-row"
             onClick={() => selectOrder(order)}
           >
-            <span>#{order.invoiceNo}</span>
-            <span>{order.customer.name}</span>
-            <span>₹{order.grandTotal.toLocaleString()}</span>
-            <span>{order.date}</span>
-            <span>{order.soldBy || loggedInSeller}</span>
-            <span>₹{Number(order.dueCollection || 0).toLocaleString('en-IN')}</span>
-            <span>
+            <span data-label="Invoice">#{order.invoiceNo}</span>
+            <span data-label="Customer">{order.customer.name}</span>
+            <span data-label="Amount">₹{order.grandTotal.toLocaleString()}</span>
+            <span data-label="Date">{order.date}</span>
+            <span data-label="Sold by">{order.soldBy || loggedInSeller}</span>
+            <span data-label="Due collection">₹{Number(order.dueCollection || 0).toLocaleString('en-IN')}</span>
+            <span data-label="Status">
               <span className={`status-badge ${order.status}`}>
                 {order.status}
               </span>
             </span>
-            <span className="order-actions" onClick={(event) => event.stopPropagation()}>
+            <span className="order-actions" data-label="Actions" onClick={(event) => event.stopPropagation()}>
               <button
                 type="button"
                 className="order-action-btn"
