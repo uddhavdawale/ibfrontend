@@ -220,6 +220,8 @@
 
 .ledger-table-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .ledger-pagination {
@@ -333,6 +335,13 @@
   line-height: 1.5;
 }
 
+.ledger-table-scroll-hint {
+  display: none;
+  margin: 8px 14px 0;
+  color: var(--ledger-muted);
+  font-size: 0.78rem;
+}
+
 @media (max-width: 900px) {
   .ledger-header {
     align-items: flex-start;
@@ -388,5 +397,15 @@
     align-items: flex-start;
     flex-direction: column;
     padding: 14px;
+  }
+
+  .ledger-table-scroll-hint {
+    display: block;
+  }
+
+  .ledger-page-controls {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
   }
 }

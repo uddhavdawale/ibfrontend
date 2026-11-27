@@ -1471,3 +1471,90 @@
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 720px) {
+  .sell-dashboard .orders-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .sell-dashboard .list-header {
+    display: none;
+  }
+
+  .sell-dashboard .order-row {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .sell-dashboard .order-row > span {
+    display: grid;
+    grid-template-columns: minmax(96px, 0.75fr) minmax(0, 1.25fr);
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .sell-dashboard .order-row > span::before {
+    color: var(--sell-text-faint);
+    content: attr(data-label);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .sell-dashboard .order-row > .order-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .sell-dashboard .order-row > .order-actions::before {
+    margin-right: auto;
+  }
+
+  .sell-dashboard .order-action-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  .sell-dashboard .sell-kpi-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sell-dashboard .page-header {
+    align-items: stretch;
+  }
+
+  .sell-dashboard .sell-page-actions,
+  .sell-dashboard .export-controls {
+    width: 100%;
+  }
+
+  .sell-dashboard .export-controls {
+    justify-content: space-between;
+  }
+
+  .sell-dashboard .items-list {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sell-dashboard .items-list table {
+    min-width: 680px;
+  }
+}
+
+@media (max-width: 560px) {
+  .sell-dashboard .sell-kpi-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sell-dashboard .order-row > span {
+    grid-template-columns: minmax(84px, 0.65fr) minmax(0, 1.35fr);
+  }
+}

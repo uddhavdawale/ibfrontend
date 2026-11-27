@@ -347,6 +347,8 @@
   border: 1px solid var(--inv-border);
   border-radius: 20px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
   box-shadow: 0 14px 28px var(--inv-shadow);
 }
 
@@ -567,6 +569,34 @@
   color: white;
 }
 
+.inventory-page .table-scroll-hint {
+  display: none;
+  margin: 8px 4px 0;
+  color: var(--inv-text-faint);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 900px) {
+  .inventory-page .inventory-insights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inventory-page .inventory-controls {
+    flex-wrap: wrap;
+  }
+
+  .inventory-page .search-input {
+    flex: 1 1 260px;
+  }
+
+  .inventory-page .inventory-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 768px) {
   .inventory-page {
     padding: 18px 14px 26px;
@@ -574,7 +604,7 @@
 
   .inventory-page .inventory-insights,
   .inventory-page .inventory-reminder-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .inventory-page .page-header,
@@ -587,6 +617,15 @@
     width: 100%;
     margin-left: 0;
     flex-wrap: wrap;
+  }
+
+  .inventory-page .back-btn {
+    align-self: flex-start;
+  }
+
+  .inventory-page .action-btn {
+    width: 38px;
+    height: 38px;
   }
 
   .inventory-page .inventory-actions > * {
@@ -628,6 +667,45 @@
 
   .inventory-page .modal form {
     grid-template-columns: 1fr;
+  }
+
+  .inventory-page .table-scroll-hint {
+    display: block;
+  }
+}
+
+@media (max-width: 520px) {
+  .inventory-page {
+    padding: 14px 10px 24px;
+  }
+
+  .inventory-page .inventory-insights,
+  .inventory-page .inventory-reminder-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inventory-page .inventory-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inventory-page .inventory-actions > *,
+  .inventory-page .export-controls {
+    width: 100%;
+  }
+
+  .inventory-page .export-controls {
+    justify-content: space-between;
+  }
+
+  .inventory-page .pagination {
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.82rem;
+  }
+
+  .inventory-page .pagination button {
+    padding: 9px 10px;
   }
 }
 

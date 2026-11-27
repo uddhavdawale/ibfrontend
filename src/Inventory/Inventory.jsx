@@ -414,6 +414,7 @@ const saveProduct = async (e, isEdit = false) => {
           </tbody>
         </table>
       </div>
+      <p className="table-scroll-hint">Swipe horizontally to view all inventory columns.</p>
 
       <div className="pagination">
         <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 0 || totalPages === 0}>

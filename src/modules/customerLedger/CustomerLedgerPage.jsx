@@ -294,6 +294,7 @@ const CustomerLedgerPage = ({ onBackToDashboard }) => {
             </tbody>
           </table>
         </div>
+        <p className="ledger-table-scroll-hint">Swipe horizontally to view all ledger columns.</p>
         <nav className="ledger-pagination" aria-label="Customer ledger pagination">
           <span className="ledger-page-range">
             Showing {firstVisibleRecord}–{lastVisibleRecord} of {totalRecords} records
