@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import './ProfilePage.css';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_ENDPOINTS, apiFetch, getCurrentUserProfile } from '../Config/api';
+import WhatsAppIntegrationSettings from '../modules/integrations/WhatsAppIntegrationSettings';
+import { getCurrentUserRole, isStoreAdmin } from '../Security/storeRoles';
 
 const DOCUMENT_FIELDS = [
   { key: 'logo', label: 'Shop logo', accept: 'image/png,image/jpeg,image/webp', types: ['image/png', 'image/jpeg', 'image/webp'] },
@@ -67,6 +69,11 @@ const ProfilePage = ({ username = "User", onLogout }) => {
   const [shopProfileError, setShopProfileError] = useState('');
   const [shopProfileMessage, setShopProfileMessage] = useState('');
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const canManageIntegrations = isStoreAdmin(getCurrentUserRole());
+  const activeSection = canManageIntegrations && searchParams.get('tab') === 'integrations'
+    ? 'integrations'
+    : 'profile';
 
   useEffect(() => {
     let active = true;
@@ -203,7 +210,7 @@ const ProfilePage = ({ username = "User", onLogout }) => {
       {/* HEADER */}
       <div className="profile-header">
         <div className="profile-back">
-          <button className="back-btn" onClick={() => window.history.back()}>
+          <button type="button" className="back-btn" onClick={() => navigate('/dashboard')}>
             ← Back
           </button>
         </div>
@@ -227,12 +234,37 @@ const ProfilePage = ({ username = "User", onLogout }) => {
         </div>
       </div>
 
+      <nav className="profile-tabs" aria-label="Profile sections">
+        <button
+          type="button"
+          className={`profile-tab ${activeSection === 'profile' ? 'active' : ''}`}
+          aria-current={activeSection === 'profile' ? 'page' : undefined}
+          onClick={() => setSearchParams({})}
+        >
+          Profile
+        </button>
+        {canManageIntegrations && (
+          <button
+            type="button"
+            className={`profile-tab ${activeSection === 'integrations' ? 'active' : ''}`}
+            aria-current={activeSection === 'integrations' ? 'page' : undefined}
+            onClick={() => setSearchParams({ tab: 'integrations' })}
+          >
+            Integrations
+          </button>
+        )}
+      </nav>
+
       {/* PROFILE CONTENT */}
       <div className="profile-content">
         {profileError && (
           <div className="profile-error">{profileError}</div>
         )}
 
+        {activeSection === 'integrations' ? (
+          <WhatsAppIntegrationSettings />
+        ) : (
+          <>
         {loading ? (
           <div className="profile-card loading-state">Loading profile...</div>
         ) : (
@@ -366,6 +398,8 @@ const ProfilePage = ({ username = "User", onLogout }) => {
             </form>
           )}
         </section>
+            </>
+          )}
 
         {/* ACTIONS */}
         <div className="profile-actions">

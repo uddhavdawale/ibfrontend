@@ -16,6 +16,8 @@ export const API_ENDPOINTS = {
   logout: `${API_BASE_URL}/api/auth/logout`,
   userProfile: `${API_BASE_URL}/api/users/me`,
   shopProfile: `${API_BASE_URL}/api/shop/me`,
+  whatsappIntegration: `${API_BASE_URL}/api/integrations/whatsapp`,
+  whatsappWebhook: `${API_BASE_URL}/api/v1/webhooks/whatsapp`,
   userDashboard: `${API_BASE_URL}/api/users/me/dashboard`,
   customers: `${API_BASE_URL}/api/customers`,
   customerProfiles: `${API_BASE_URL}/api/customer_profiles`,

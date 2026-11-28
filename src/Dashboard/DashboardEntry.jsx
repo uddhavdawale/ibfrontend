@@ -943,10 +943,16 @@ function Dashboard({ username, onLogout }) {
 
             {showProfileMenu && (
               <div className="profile-dropdown">
-                <button className="menu-item" onClick={() => handleQuickMenuAction('/Profile')}>
+                <button className="menu-item" onClick={() => handleQuickMenuAction('/profile')}>
                   <span className="menu-item-icon">👤</span>
                   <span className="menu-item-label">Profile</span>
                 </button>
+                {canManageUsers && (
+                  <button className="menu-item" onClick={() => handleQuickMenuAction('/profile?tab=integrations')}>
+                    <span className="menu-item-icon">🔌</span>
+                    <span className="menu-item-label">Integrations</span>
+                  </button>
+                )}
                 {canOpenAdminPanel && (
                   <button className="menu-item" onClick={() => { setShowProfileMenu(false); handleQuickMenuAction('/admin/dashboard'); }}>
                     <span className="menu-item-icon">🛡️</span>
